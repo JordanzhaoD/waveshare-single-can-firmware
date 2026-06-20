@@ -2478,6 +2478,19 @@ static void handleStatus()
     server.send(200, "application/json", j);
 }
 
+// GET /config — 返回运行时 FSD 开关供 UI 回填 (loadLegacyFsdConfig 读 conf.fsdRuntime.*)。
+// 历史问题：曾只注册 POST /config，GET 无路由 → fetchJson('/config') 取 null →
+// 重启后 legacyOffset 输入框/overrideSpeedLimit 开关恒显示默认（NVS 实际已持久）。
+// 返回的 fsdRuntime 块与 handleConfig POST 接收的 {fsdRuntime:{...}} 契约对齐。
+static void handleConfigGet()
+{
+    String j = "{\"fsdRuntime\":{";
+    j += "\"legacyOffset\":" + String(nvsLegacyOffset);
+    j += ",\"overrideSpeedLimit\":" + String(nvsOverrideSpeedLimit ? "true" : "false");
+    j += "}}";
+    server.send(200, "application/json", j);
+}
+
 static void handleConfig()
 {
     // --- FSD runtime JSON body ({fsdRuntime:{legacyOffset,overrideSpeedLimit}}) ---
@@ -6709,6 +6722,7 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 
     server.on("/", HTTP_GET, handleRoot);
     server.on("/status", HTTP_GET, handleStatus);
+    server.on("/config", HTTP_GET, handleConfigGet);
     server.on("/config", HTTP_POST, handleConfig);
     server.on("/mode_hw", HTTP_GET, handleModeHw);
     server.on("/mode_hw", HTTP_POST, handleModeHw);

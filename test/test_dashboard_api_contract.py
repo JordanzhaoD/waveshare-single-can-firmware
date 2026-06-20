@@ -667,6 +667,33 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("bootCan:next?'1':'0'", self.ui)
         self.assertIn("data.bootCan=bt.checked?'1':'0'", self.ui)
 
+    def test_config_get_route_returns_fsd_runtime_for_ui_reload(self) -> None:
+        """Regression: GET /config 必须存在并返回 fsdRuntime 块供 UI 回填。
+
+        UI loadLegacyFsdConfig() 用 fetchJson('/config') 取 conf，再读
+        conf.fsdRuntime.legacyOffset / conf.fsdRuntime.overrideSpeedLimit 回填
+        Legacy 速度偏移输入框与重写限速开关。曾因只注册了 POST /config、缺 GET
+        路由，导致 fetchJson('/config') 取 null → 重启后输入框/开关恒显示默认
+        （NVS 实际已持久化，只是 UI 读不出来）。此测试锁住 GET /config 路由、
+        handler 返回 fsdRuntime 嵌套块，以及前后端字段契约对齐。
+        """
+        # GET /config 路由 + handler 必须存在（POST 路由同时保留）
+        self.assertIn('server.on("/config", HTTP_GET, handleConfigGet);', self.dash)
+        self.assertIn('server.on("/config", HTTP_POST, handleConfig);', self.dash)
+        handler = re.search(r"static void handleConfigGet\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(handler, "handleConfigGet handler missing")
+        body = handler.group(0)
+        # 返回 fsdRuntime 嵌套块，含 legacyOffset/overrideSpeedLimit（与 POST 契约对齐）
+        self.assertIn("fsdRuntime", body)
+        self.assertIn("legacyOffset", body)
+        self.assertIn("nvsLegacyOffset", body)
+        self.assertIn("overrideSpeedLimit", body)
+        self.assertIn("nvsOverrideSpeedLimit", body)
+        # UI 从 /config 的 fsdRuntime 读这两个字段（前后端契约对齐）
+        self.assertIn("fetchJson('/config')", self.ui)
+        self.assertIn("conf.fsdRuntime.legacyOffset", self.ui)
+        self.assertIn("conf.fsdRuntime.overrideSpeedLimit", self.ui)
+
     def test_status_mux_json_is_closed_before_phase1_fields(self) -> None:
         """The /status JSON must close mux[] before appending Phase 1 root fields."""
         match = re.search(r"static void handleStatus\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)
