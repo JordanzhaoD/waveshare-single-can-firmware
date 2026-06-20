@@ -1,0 +1,76 @@
+{
+  "name": "EV Open Can Tools Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/base:trixie",
+
+  // Features to install in the dev container.
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "configureZshAsDefaultShell": true
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "installTools": false
+    },
+    "ghcr.io/devcontainer-community/devcontainer-features/clang-format:1": {}
+  },
+
+  // Forward specific USB serial devices from the host for flashing.
+  // https://docs.platformio.org/en/latest/core/installation/udev-rules.html
+  // "runArgs": ["--device=/dev/ttyUSB0", "--device=/dev/ttyACM0"],
+
+  // Insecure alternative: forwards all host devices (uncomment if the above doesn't work).
+  // "runArgs": ["--privileged", "-v", "/dev:/dev"],
+
+  // Post-create command to install project dependencies and perform any additional setup.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  // Configure tool-specific properties.
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "platformio.platformio-ide",
+        "charliermarsh.ruff",
+        "esbenp.prettier-vscode",
+        "redhat.vscode-yaml",
+        "github.vscode-github-actions"
+      ],
+      "settings": {
+        // Telemetry opt-outs.
+        "telemetry.telemetryLevel": "off",
+        "platformio-ide.disableTelemetrySending": true,
+        "redhat.telemetry.enabled": false,
+
+        // Disable default formatters to avoid conflicts with language-specific formatters.
+        "editor.formatOnSave": false,
+
+        // C/C++ specific settings.
+        "C_Cpp.clang_format_style": "file",
+        "C_Cpp.default.configurationProvider": "platformio.platformio-ide",
+        "files.associations": {
+          "*.h": "cpp"
+        },
+        "[c][cpp]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "ms-vscode.cpptools"
+        },
+
+        // Python specific settings.
+        "[python]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.codeActionsOnSave": {
+            "source.fixAll": "explicit",
+            "source.organizeImports": "explicit"
+          }
+        },
+
+        // Prettier for other languages.
+        "[markdown][yaml][json][jsonc]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+      }
+    }
+  }
+}

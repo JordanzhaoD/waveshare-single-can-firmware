@@ -1,0 +1,16 @@
+{
+  "name": "AD Activation Legacy",
+  "version": "1.0.0",
+  "author": "ev-open-can-tools",
+  "description": "Legacy Autopilot activation latch. In dashboard builds this plugin enables the Legacy handler to send the 2.5.2-style 1006 mux 0 bit 46 activation frame.",
+  "rules": [
+    {
+      "id": 1006,
+      "mux": 0,
+      "send": true,
+      "ops": [
+        { "type": "set_bit", "bit": 46, "val": 1 }
+      ]
+    }
+  ]
+}

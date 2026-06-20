@@ -1,0 +1,35 @@
+{
+  "name": "0x370 Duplicate Counter",
+  "version": "1.0",
+  "author": "ev-open-can-tools",
+  "rules": [
+    {
+      "id": 880,
+      "match_byte": 4,
+      "match_mask": 192,
+      "match_val": 0,
+      "ops": [
+        {
+          "type": "set_byte",
+          "byte": 3,
+          "val": 182
+        },
+        {
+          "type": "set_bit",
+          "bit": 38,
+          "val": 1
+        },
+        {
+          "type": "counter",
+          "byte": 6,
+          "mask": 15,
+          "step": 1
+        },
+        {
+          "type": "checksum"
+        }
+      ],
+      "send": true
+    }
+  ]
+}

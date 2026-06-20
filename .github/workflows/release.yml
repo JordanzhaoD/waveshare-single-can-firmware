@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLATFORMIO_VERSION: "6.1.19"
+
+jobs:
+  platformio-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: waveshare_single_can_standalone
+            profile: --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
+              --enable ENHANCED_AUTOPILOT --enable DASH_SINGLE_CAN_STANDALONE
+            project_dir: .
+            artifact_name: firmware-waveshare-single-can
+            artifact_path: .pio/build/waveshare_single_can_standalone/firmware.bin
+            extra_python_packages: littlefs-python fatfs-ng pyyaml intelhex
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          build-essential git
+      - run: pip install "platformio==${PLATFORMIO_VERSION}"
+      - if: matrix.extra_python_packages != ''
+        run: pip install ${{ matrix.extra_python_packages }}
+      - run: cp platformio_profile.example.h platformio_profile.h
+      - run: python scripts/platformio_set_profile.py ${{ matrix.profile }}
+      - run: pio run -e ${{ matrix.env }}
+        working-directory: ${{ matrix.project_dir }}
+        env:
+          SKIP_DASH_CREDENTIAL_CHECK: "1"
+      - if: matrix.artifact_path != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+
+  release:
+    needs:
+      - platformio-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+      - name: Rename firmware files to unique names
+        run: |
+          for dir in release-assets/firmware-*/; do
+            name=$(basename "$dir")
+            for f in "$dir"*; do
+              ext="${f##*.}"
+              mv "$f" "release-assets/${name}.${ext}"
+            done
+          done
+      - name: Extract changelog section for this tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          awk -v v="$VER" 'BEGIN{f=0} /^## \[/{ if(f) exit; if($0 ~ "^## \\[" v "\\]") { f=1; print; next } } f { print }' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "Release ${TAG}" > release-notes.md
+          fi
+          echo "--- release-notes.md ---"
+          cat release-notes.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name,
+            'alpha') || contains(github.ref_name, 'rc') }}
+          draft: true
+          files: |
+            release-assets/firmware-rp2040.uf2
+            release-assets/firmware-m4.bin
+            release-assets/firmware-esp32.bin
+            release-assets/firmware-m5stack.bin
+            release-assets/firmware-esp32-featherwing.bin
+            release-assets/firmware-esp32-ext-mcp2515.bin
+            release-assets/firmware-esp32s2.bin
+            release-assets/firmware-lilygo-tcan485-hw3.bin
+            release-assets/firmware-lilygo-t2can-dual.bin
+            release-assets/firmware-m5stack-atoms3-mini.bin
+            release-assets/firmware-waveshare-esp32-s3.bin
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false

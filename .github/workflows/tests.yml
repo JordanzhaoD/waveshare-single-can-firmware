@@ -1,0 +1,109 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLATFORMIO_VERSION: "6.1.19"
+
+jobs:
+  release-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - run: python scripts/check_release_metadata.py
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          clang-format git
+      - run: clang-format --version
+      - run: |
+          git ls-files '*.cpp' '*.h' '*.hpp' \
+            ':!:include/web/mcp2515_dashboard_ui.h' \
+            | xargs -r clang-format --dry-run --Werror --style=file
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - run: python -m unittest discover -s test -p 'test_*.py'
+
+  native-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env:
+          - native
+          - native_dashboard
+          - native_bypass_tlssc_requirement
+          - native_log_buffer
+          - native_mcp2515_recovery
+          - native_nag
+          - native_injection_after_ap
+          - native_plugin_engine
+          - native_plugin_engine_custom_key
+          - native_hw3
+          - native_hw4
+          - native_legacy
+          - native_helpers
+          - native_twai
+          - native_bionic_steer
+          - native_wheel_dnd
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          build-essential git
+      - run: pip install "platformio==${PLATFORMIO_VERSION}"
+      - run: pio test -e ${{ matrix.env }}
+
+  platformio-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: waveshare_single_can_standalone
+            profile: --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
+              --enable ENHANCED_AUTOPILOT --enable DASH_SINGLE_CAN_STANDALONE
+            project_dir: .
+            extra_python_packages: littlefs-python fatfs-ng pyyaml intelhex
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          build-essential git
+      - run: pip install "platformio==${PLATFORMIO_VERSION}"
+      - if: matrix.extra_python_packages != ''
+        run: pip install ${{ matrix.extra_python_packages }}
+      - run: cp platformio_profile.example.h platformio_profile.h
+      - run: python scripts/platformio_set_profile.py ${{ matrix.profile }}
+      - run: pio run -e ${{ matrix.env }}
+        working-directory: ${{ matrix.project_dir }}
+        env:
+          SKIP_DASH_CREDENTIAL_CHECK: "1"

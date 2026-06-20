@@ -1,0 +1,105 @@
+# Build And Flash
+
+[Project Home](../) | [Documentation](index.md) | [Dashboard Guide](dashboard.md) | [Plugin System](plugins.md) | [Release Notes](../CHANGELOG.md)
+
+The project is PlatformIO-only. Pick the correct board environment in `platformio.ini`, then choose the matching driver and default vehicle mode in your local `platformio_profile.h`.
+
+## Supported PlatformIO Environments
+
+| Env | Board / target | Notes |
+| --- | --- | --- |
+| `feather_rp2040_can` | Adafruit Feather RP2040 CAN | MCP2515-based build, no web dashboard |
+| `feather_m4_can` | Adafruit Feather M4 CAN Express | Native CAN build, no web dashboard |
+| `esp32_twai` | Generic ESP32 dev board | TWAI dashboard build |
+| `lilygo_tcan485_hw3` | LILYGO TCAN485 | TWAI dashboard build with board-specific default pins |
+| `m5stack-atomic-can-base` | M5Stack Atom CAN Base | TWAI dashboard build with RGB status LED |
+| `m5stack-atoms3-mini-can-base` | M5Stack AtomS3 Mini CAN Base | TWAI dashboard build with RGB status LED and built-in injection toggle button |
+| `esp32_feather_v2_mcp2515` | Feather ESP32 V2 + external MCP2515 | Dashboard build using the new MCP2515 driver and web UI |
+| `esp32_ext_mcp2515` | ESP32-S3 + external MCP2515 | Dashboard build for SPI MCP2515 hardware |
+| `waveshare_ESP32_S3_RS485_CAN` | Waveshare ESP32-S3 RS485/CAN | TWAI dashboard build |
+
+## Waveshare 单 CAN 独立版
+
+`waveshare_single_can_standalone` 是微雪 ESP32-S3-RS485-CAN 的长期维护入口。它使用 ESP32-S3 内置 TWAI 单路 CAN，不初始化 MCP2515，也不暴露 CAN2、Bus2、Service Mode、Stalk/highbeam 或灯光特技执行入口。
+
+Build:
+
+```bash
+pio run -e waveshare_single_can_standalone
+```
+
+Upload:
+
+```bash
+pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbmodem21101
+```
+
+刷新后、首次接车前，先在 Dashboard 完成以下确认：
+
+1. 产品名称显示为 `Atlas Single CAN`。
+2. `/status.capabilities.singleCan=true`。
+3. `/status.capabilities.can2Available=false`。
+4. AP Gate 已开启，延迟注入默认 `2000 ms`，并确认 FSD 注入处于关闭状态。
+5. 已安装插件默认全部关闭，需手动逐个启用（状态持久化到 SPIFFS，重启后恢复）。
+6. GTW2047 重放倍率默认 `1x`，除非你主动调整。
+
+## Hardware Notes
+
+Some CAN boards and adapters include an onboard 120 ohm termination resistor. When installing on an existing vehicle CAN bus, do not add another termination point: cut or remove the board's 120 ohm resistor if the adapter has one fitted.
+
+## Selecting Driver, Vehicle, And Defaults
+
+Create your local build config first:
+
+```bash
+cp platformio_profile.example.h platformio_profile.h
+```
+
+Then edit `platformio_profile.h`:
+
+- choose one driver define
+- choose one vehicle define
+- set initial hotspot and OTA credentials
+- uncomment optional feature defines when you want compile-time defaults changed
+
+`platformio_profile.h` is ignored by git. Keep personal board choices, WiFi credentials, OTA credentials, and gateway keys there. Commit changes to `platformio_profile.example.h` only when you are changing the template for everyone.
+
+You can also use the helper script:
+
+```bash
+python scripts/platformio_set_profile.py --driver DRIVER_ESP32_EXT_MCP2515 --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION --enable ENHANCED_AUTOPILOT
+```
+
+Add `--enable INJECTION_AFTER_AP` when `ENHANCED_AUTOPILOT` should wait until AP is active before mux 1 injection.
+
+For `DRIVER_TWAI` dashboard builds, the helper script intentionally enables all optional feature defines so the dashboard can control those options at runtime; the selected vehicle then becomes the default UI mode.
+
+## Build
+
+```bash
+pio run -e esp32_ext_mcp2515
+```
+
+Replace `esp32_ext_mcp2515` with the environment you are targeting.
+
+## Flash
+
+```bash
+pio run -e esp32_ext_mcp2515 -t upload
+```
+
+For boards that need a different upload path or boot mode, use the normal PlatformIO upload flow for that board.
+
+## First Boot
+
+- ESP32 dashboard builds start their hotspot from `DASH_SSID` / `DASH_PASS`
+- Open `http://100.100.1.1/` after connecting to the hotspot
+- Change hotspot and OTA credentials after first boot
+- Use the `WiFi Internet` card if you want plugin downloads or OTA updates from GitHub releases
+- Use the `CAN Pins` card only on TWAI-based boards when you need non-default GPIO assignments
+
+## Build Outputs
+
+- RP2040 builds produce a `firmware.uf2`
+- ESP32 and ATSAME51 builds produce a `firmware.bin`
+- Manual dashboard OTA expects a `.bin` built for the exact target board
