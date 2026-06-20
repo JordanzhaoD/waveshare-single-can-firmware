@@ -90,17 +90,7 @@ jobs:
             'alpha') || contains(github.ref_name, 'rc') }}
           draft: true
           files: |
-            release-assets/firmware-rp2040.uf2
-            release-assets/firmware-m4.bin
-            release-assets/firmware-esp32.bin
-            release-assets/firmware-m5stack.bin
-            release-assets/firmware-esp32-featherwing.bin
-            release-assets/firmware-esp32-ext-mcp2515.bin
-            release-assets/firmware-esp32s2.bin
-            release-assets/firmware-lilygo-tcan485-hw3.bin
-            release-assets/firmware-lilygo-t2can-dual.bin
-            release-assets/firmware-m5stack-atoms3-mini.bin
-            release-assets/firmware-waveshare-esp32-s3.bin
+            release-assets/firmware-waveshare-single-can.bin
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ github.token }}

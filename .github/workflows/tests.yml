@@ -56,13 +56,11 @@ jobs:
         env:
           - native
           - native_dashboard
-          - native_bypass_tlssc_requirement
           - native_log_buffer
           - native_mcp2515_recovery
           - native_nag
           - native_injection_after_ap
           - native_plugin_engine
-          - native_plugin_engine_custom_key
           - native_hw3
           - native_hw4
           - native_legacy
