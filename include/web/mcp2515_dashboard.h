@@ -6141,7 +6141,7 @@ static void handleApStatus()
 #endif
 
 #ifndef DASH_GITHUB_REPO
-#define DASH_GITHUB_REPO "CHANGE_ME/waveshare-single-can-firmware"
+#define DASH_GITHUB_REPO "JordanzhaoD/waveshare-single-can-firmware"
 #endif
 
 static const char *GITHUB_REPO = DASH_GITHUB_REPO;

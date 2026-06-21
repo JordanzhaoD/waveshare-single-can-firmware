@@ -18,6 +18,7 @@ First open-source release of the Waveshare single-CAN standalone firmware.
 - AP Gate delayed-injection controls and AP injection state to the standalone driving status UI (desktop + mobile).
 - `GET /config` route so the UI reloads persisted FSD runtime state (legacy offset / override speed limit) on reconnect.
 - Factory-default WiFi credentials (`Atlas-FSD` / `12345678`) and OTA password baked into the open-source build; README and `flash.sh` prompt users to change them before real deployment.
+- OTA update channel pointed at the public release repo (`JordanzhaoD/waveshare-single-can-firmware`).
 
 ### Changed
 - Cleaned standalone desktop and mobile UI to remove CAN2/T-2CAN/Auto Shift product surfaces while preserving dual-CAN builds.
