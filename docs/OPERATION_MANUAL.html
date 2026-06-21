@@ -7,6 +7,7 @@
 @page { size: A4; margin: 18mm 15mm; }
 * { box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif; font-size: 10.8pt; line-height: 1.68; color: #1f2328; }
+img { max-width: 100%; max-height: 225mm; height: auto; object-fit: contain; border-radius: 6px; border: 1px solid #d0d7de; margin: 0.9em auto; display: block; page-break-inside: avoid; }
 h1 { font-size: 23pt; color: #0969da; border-bottom: 3px solid #0969da; padding-bottom: 10px; margin-top: 0; }
 h2 { font-size: 15.5pt; color: #0969da; margin-top: 1.7em; border-bottom: 1px solid #d0d7de; padding-bottom: 5px; page-break-after: avoid; }
 h3 { font-size: 12.6pt; color: #24292f; margin-top: 1.3em; page-break-after: avoid; }
@@ -294,6 +295,7 @@ pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbse
 桌面/车机/手机任意浏览器打开 <a href="http://100.100.1.1/">http://100.100.1.1/</a>，UI 自适应（桌面横屏 / 手机竖屏）。</div></div>
 <h3>6.1 驾驶状态中心</h3>
 <p>主界面，实时聚合显示：FSD 注入状态、车辆态势、硬件模式、驾驶风格、速度策略、CAN 总线状态。所有关键信息一屏掌握。</p>
+<p><img src="screenshots/driving-status.jpg" alt="驾驶状态中心主界面"></p>
 <h3>6.2 驾驶风格</h3>
 <p>切换驾驶模式：</p>
 <table>
@@ -317,6 +319,7 @@ pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbse
 </tr>
 </tbody></table>
 <p>同时显示 UI 状态、NVS 持久化状态、实际 CAN 运行状态。</p>
+<p><img src="screenshots/driving-style.jpg" alt="驾驶风格选择"></p>
 <h3>6.3 速度策略</h3>
 <p>速度偏移控制：</p>
 <ul>
@@ -325,6 +328,7 @@ pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbse
 <li><strong>自定义偏移</strong>：手动设定具体值</li>
 </ul>
 <p>实时偏移参数可视化，便于研究车辆速度响应。</p>
+<p><img src="screenshots/speed-policy.png" alt="速度策略配置面板"></p>
 <h3>6.4 硬件模式</h3>
 <p>FSD 协议模式切换（运行时）：</p>
 <table>
@@ -351,6 +355,7 @@ pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbse
 <td>FSD 计算机 4.0</td>
 </tr>
 </tbody></table>
+<p><img src="screenshots/hardware-mode.png" alt="硬件模式切换"></p>
 <div class="callout callout-warning"><div class="callout-title">⚠️ 注意</div><div class="callout-body">硬件模式选错
 模式与车辆硬件不匹配会导致 FSD 功能异常或无响应。不确定时用 <strong>Auto</strong>，或根据车辆实际硬件选。</div></div>
 <h3>6.5 CAN 诊断</h3>
@@ -361,6 +366,7 @@ pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbse
 <li><strong>LIVE TIMELINE</strong>：总线事件时间线</li>
 <li><strong>CAN 引脚信息</strong>：引脚状态</li>
 </ul>
+<p><img src="screenshots/can-diagnostic.png" alt="CAN 诊断面板"></p>
 <div class="callout callout-tip"><div class="callout-title">💡 提示</div><div class="callout-body">诊断价值
 CAN 诊断用于验证接线、排查通信问题。若 <strong>RX=0</strong>，检查接线 / 波特率 / 极性 / 共地。</div></div>
 <h3>6.6 FSD 防护</h3>
@@ -370,12 +376,15 @@ CAN 诊断用于验证接线、排查通信问题。若 <strong>RX=0</strong>，
 <li><strong>仿生方向盘</strong>：模拟人手扭矩曲线</li>
 <li><strong>bit-19 baseline</strong>：方向盘检测屏蔽的安全路径</li>
 </ul>
+<p><img src="screenshots/fsd-defense.png" alt="FSD 防护开关"></p>
 <div class="callout callout-danger"><div class="callout-title">⛔ 危险</div><div class="callout-body">防护开关谨慎
 防护功能是安全设计，<strong>不建议随意关闭</strong>。关闭可能影响车辆安全系统行为，务必清楚每个开关的影响。</div></div>
 <h3>6.7 DNS / 过滤</h3>
 <p>上游 DNS 设置与黑/白名单域名过滤规则管理（DNS 过滤功能）。</p>
+<p><img src="screenshots/dns-filter.png" alt="DNS 与过滤规则"></p>
 <h3>6.8 手机端（现场遥控）</h3>
 <p>手机浏览器自动切换竖屏布局，提供现场遥控视图：FSD 注入状态、CAN 总线状态、硬件模式、实时帧率，便于车旁操作。</p>
+<p><img src="screenshots/mobile-control.png" alt="手机端现场遥控（竖屏）"></p>
 <hr>
 <h2>7 系统配置</h2>
 <h3>7.1 修改 WiFi / OTA 凭据</h3>

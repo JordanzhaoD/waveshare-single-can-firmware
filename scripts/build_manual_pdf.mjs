@@ -48,6 +48,7 @@ const fullHtml = `<!DOCTYPE html>
 @page { size: A4; margin: 18mm 15mm; }
 * { box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif; font-size: 10.8pt; line-height: 1.68; color: #1f2328; }
+img { max-width: 100%; max-height: 225mm; height: auto; object-fit: contain; border-radius: 6px; border: 1px solid #d0d7de; margin: 0.9em auto; display: block; page-break-inside: avoid; }
 h1 { font-size: 23pt; color: #0969da; border-bottom: 3px solid #0969da; padding-bottom: 10px; margin-top: 0; }
 h2 { font-size: 15.5pt; color: #0969da; margin-top: 1.7em; border-bottom: 1px solid #d0d7de; padding-bottom: 5px; page-break-after: avoid; }
 h3 { font-size: 12.6pt; color: #24292f; margin-top: 1.3em; page-break-after: avoid; }
