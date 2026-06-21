@@ -16,6 +16,37 @@
 
 ---
 
+### 📱 界面预览
+
+**桌面端**（电脑/车机浏览器访问 `http://100.100.1.1/`）—— 驾驶舱 glassmorphism 风格，自适应横屏：
+
+<table>
+  <tr>
+    <td width="33%" align="center"><b>驾驶状态中心</b></td>
+    <td width="33%" align="center"><b>驾驶风格</b></td>
+    <td width="33%" align="center"><b>CAN 诊断</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/driving-status.jpg" alt="驾驶状态中心"></td>
+    <td><img src="docs/screenshots/driving-style.jpg" alt="驾驶风格"></td>
+    <td><img src="docs/screenshots/can-diagnostic.png" alt="CAN 诊断"></td>
+  </tr>
+  <tr>
+    <td align="center">FSD 注入状态 · 车辆态势 · 硬件模式 · 速度策略</td>
+    <td align="center">Auto/Sloth 驾驶模式 · 系统状态 · 紧急控制</td>
+    <td align="center">CAN1/CAN2 数据 · 错误帧 · 实时时间线</td>
+  </tr>
+</table>
+
+**手机端**（同一热点，手机浏览器自动切换竖屏布局）：
+
+<p align="center">
+  <img src="docs/screenshots/mobile-control.png" alt="现场遥控（手机版）" width="300">
+  <br><b>现场遥控</b> — FSD 注入 · CAN 总线状态 · 硬件模式 · 帧率
+</p>
+
+---
+
 ### 功能列表
 
 - **FSD 激活与注入**：支持 Legacy / HW3 / HW4 三种车辆协议模式，运行时可切换
