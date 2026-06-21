@@ -25,7 +25,7 @@ jobs:
         include:
           - env: waveshare_single_can_standalone
             profile: --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
-              --enable ENHANCED_AUTOPILOT --enable DASH_SINGLE_CAN_STANDALONE
+              --enable ENHANCED_AUTOPILOT
             project_dir: .
             artifact_name: firmware-waveshare-single-can
             artifact_path: .pio/build/waveshare_single_can_standalone/firmware.bin
