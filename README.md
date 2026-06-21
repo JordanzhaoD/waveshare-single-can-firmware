@@ -18,32 +18,46 @@
 
 ### 📱 界面预览
 
-**桌面端**（电脑/车机浏览器访问 `http://100.100.1.1/`）—— 驾驶舱 glassmorphism 风格，自适应横屏：
+通过板载 WiFi 热点提供驾驶舱风格 Web 控制面板（浏览器访问 `http://100.100.1.1/`，桌面/手机自适应）：
 
 <table>
   <tr>
-    <td width="33%" align="center"><b>驾驶状态中心</b></td>
-    <td width="33%" align="center"><b>驾驶风格</b></td>
-    <td width="33%" align="center"><b>CAN 诊断</b></td>
+    <td width="25%" align="center"><b>驾驶状态中心</b></td>
+    <td width="25%" align="center"><b>驾驶风格</b></td>
+    <td width="25%" align="center"><b>速度策略</b></td>
+    <td width="25%" align="center"><b>硬件模式</b></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/driving-status.jpg" alt="驾驶状态中心"></td>
-    <td><img src="docs/screenshots/driving-style.jpg" alt="驾驶风格"></td>
-    <td><img src="docs/screenshots/can-diagnostic.png" alt="CAN 诊断"></td>
+    <td align="center"><img src="docs/screenshots/driving-status.jpg" alt="驾驶状态中心" width="100%"></td>
+    <td align="center"><img src="docs/screenshots/driving-style.jpg" alt="驾驶风格" width="100%"></td>
+    <td align="center"><img src="docs/screenshots/speed-policy.png" alt="速度策略" width="100%"></td>
+    <td align="center"><img src="docs/screenshots/hardware-mode.png" alt="硬件模式" width="100%"></td>
   </tr>
   <tr>
-    <td align="center">FSD 注入状态 · 车辆态势 · 硬件模式 · 速度策略</td>
-    <td align="center">Auto/Sloth 驾驶模式 · 系统状态 · 紧急控制</td>
-    <td align="center">CAN1/CAN2 数据 · 错误帧 · 实时时间线</td>
+    <td align="center">FSD 注入 · 车辆态势</td>
+    <td align="center">Auto/Sloth 驾驶模式</td>
+    <td align="center">速度偏移 · 自动算法</td>
+    <td align="center">Legacy/HW3/HW4 切换</td>
+  </tr>
+  <tr>
+    <td align="center"><b>CAN 诊断</b></td>
+    <td align="center"><b>FSD 防护</b></td>
+    <td align="center"><b>DNS / 过滤</b></td>
+    <td align="center"><b>手机 · 现场遥控</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/can-diagnostic.png" alt="CAN 诊断" width="100%"></td>
+    <td align="center"><img src="docs/screenshots/fsd-defense.png" alt="FSD 防护" width="100%"></td>
+    <td align="center"><img src="docs/screenshots/dns-filter.png" alt="DNS/过滤" width="100%"></td>
+    <td align="center"><img src="docs/screenshots/mobile-control.png" alt="手机现场遥控" width="60%"></td>
+  </tr>
+  <tr>
+    <td align="center">CAN1/CAN2 · 错误帧 · 时间线</td>
+    <td align="center">slew rate · 仿生方向盘</td>
+    <td align="center">上游 DNS · 黑白名单</td>
+    <td align="center">竖屏自适应 · 帧率</td>
   </tr>
 </table>
-
-**手机端**（同一热点，手机浏览器自动切换竖屏布局）：
-
-<p align="center">
-  <img src="docs/screenshots/mobile-control.png" alt="现场遥控（手机版）" width="300">
-  <br><b>现场遥控</b> — FSD 注入 · CAN 总线状态 · 硬件模式 · 帧率
-</p>
 
 ---
 
