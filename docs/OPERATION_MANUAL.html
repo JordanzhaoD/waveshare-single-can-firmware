@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Atlas-FSD 操作手册</title>
+<style>
+@page { size: A4; margin: 18mm 15mm; }
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif; font-size: 10.8pt; line-height: 1.68; color: #1f2328; }
+h1 { font-size: 23pt; color: #0969da; border-bottom: 3px solid #0969da; padding-bottom: 10px; margin-top: 0; }
+h2 { font-size: 15.5pt; color: #0969da; margin-top: 1.7em; border-bottom: 1px solid #d0d7de; padding-bottom: 5px; page-break-after: avoid; }
+h3 { font-size: 12.6pt; color: #24292f; margin-top: 1.3em; page-break-after: avoid; }
+p { margin: 0.55em 0; }
+a { color: #0969da; text-decoration: none; word-break: break-all; }
+code { background: #eff1f3; padding: 1.5px 5px; border-radius: 4px; font-family: "SF Mono", "JetBrains Mono", Consolas, monospace; font-size: 0.86em; color: #cf222e; }
+pre { background: #161b22; color: #e6edf3; padding: 12px 14px; border-radius: 8px; overflow-x: auto; page-break-inside: avoid; font-size: 9.2pt; }
+pre code { background: transparent; color: inherit; padding: 0; font-size: 1em; }
+table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 9.8pt; page-break-inside: avoid; }
+th, td { border: 1px solid #d0d7de; padding: 6px 10px; text-align: left; vertical-align: top; }
+th { background: #f6f8fa; font-weight: 600; }
+tr:nth-child(even) td { background: #fafbfc; }
+blockquote { border-left: 3px solid #d0d7de; margin: 0.8em 0; padding: 0.4em 1em; color: #57606a; background: #f6f8fa; }
+.callout { border: 1px solid; border-left-width: 4px; border-radius: 7px; padding: 10px 14px; margin: 1em 0; page-break-inside: avoid; }
+.callout-title { font-weight: 700; margin-bottom: 5px; font-size: 10.5pt; }
+.callout-info, .callout-note { background: #ddf4ff; border-color: #0969da; color: #0a3069; }
+.callout-tip { background: #dafbe1; border-color: #1a7f37; color: #0a3622; }
+.callout-warning, .callout-bug { background: #fff8c5; border-color: #9a6700; color: #5d4204; }
+.callout-danger { background: #ffebe9; border-color: #cf222e; color: #82071e; }
+.callout-check, .callout-success { background: #dafbe1; border-color: #1a7f37; color: #0a3622; }
+.callout-question, .callout-faq { background: #ddf4ff; border-color: #0969da; color: #0a3069; }
+.callout-example { background: #f6f8fa; border-color: #8250df; color: #512598; }
+.callout-body p:first-child { margin-top: 0; }
+.callout-body p:last-child { margin-bottom: 0; }
+.callout-body code { background: rgba(0,0,0,0.06); }
+hr { border: none; border-top: 1px solid #d0d7de; margin: 1.6em 0; }
+ul, ol { padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+strong { color: #24292f; }
+</style>
+</head>
+<body>
+<h1>📗 Atlas-FSD 操作手册</h1>
+<div class="callout callout-info"><div class="callout-title">ℹ️ 信息</div><div class="callout-body">文档信息
+<strong>版本</strong>：v1.0.1-atlas-single-can ｜ <strong>适用固件</strong>：Waveshare 单 CAN standalone
+<strong>仓库</strong>：<a href="https://github.com/JordanzhaoD/waveshare-single-can-firmware">https://github.com/JordanzhaoD/waveshare-single-can-firmware</a>
+<strong>协议</strong>：GPL-3.0 ｜ <strong>最新版</strong>：见仓库</div></div>
+<div class="callout callout-danger"><div class="callout-title">⛔ 危险</div><div class="callout-body">免责声明
+本项目仅供<strong>研究、教育与工程学习</strong>目的，<strong>严禁在公共道路使用</strong>。可能违反当地交通法规与车辆制造商服务条款。使用本固件的一切法律与安全风险由使用者自行承担，作者不承担任何责任。</div></div>
+<h2>📑 目录</h2>
+<ol>
+<li><a href="#1-%E9%A1%B9%E7%9B%AE%E7%AE%80%E4%BB%8B">项目简介</a></li>
+<li><a href="#2-%E7%A1%AC%E4%BB%B6%E5%87%86%E5%A4%87">硬件准备</a></li>
+<li><a href="#3-%E6%8E%A5%E7%BA%BF">接线</a></li>
+<li><a href="#4-%E5%9B%BA%E4%BB%B6%E7%83%A7%E5%BD%95">固件烧录</a></li>
+<li><a href="#5-%E9%A6%96%E6%AC%A1%E8%BF%9E%E6%8E%A5">首次连接</a></li>
+<li><a href="#6-dashboard-%E5%8A%9F%E8%83%BD%E8%AF%A6%E8%A7%A3">Dashboard 功能详解</a></li>
+<li><a href="#7-%E7%B3%BB%E7%BB%9F%E9%85%8D%E7%BD%AE">系统配置</a></li>
+<li><a href="#8-ota-%E5%9B%BA%E4%BB%B6%E5%8D%87%E7%BA%A7">OTA 固件升级</a></li>
+<li><a href="#9-%E6%8F%92%E4%BB%B6%E7%AE%A1%E7%90%86">插件管理</a></li>
+<li><a href="#10-can-%E8%AF%8A%E6%96%AD">CAN 诊断</a></li>
+<li><a href="#11-%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5">故障排查</a></li>
+<li><a href="#12-%E5%AE%89%E5%85%A8%E4%B8%8E%E5%90%88%E8%A7%84">安全与合规</a></li>
+<li><a href="#13-faq">FAQ</a></li>
+</ol>
+<hr>
+<h2>1 项目简介</h2>
+<p><strong>Atlas-FSD</strong> 是一款开源的 Tesla FSD CAN 总线研究仪表盘。一块百元级的 ESP32-S3 开发板，接入车辆 party CAN 总线，通过板载 WiFi 热点提供驾驶舱风格的 Web 控制面板——手机/电脑/车机浏览器直接访问，无需 App。</p>
+<div class="callout callout-tip"><div class="callout-title">💡 提示</div><div class="callout-body">核心价值</p>
+<ul>
+<li>🔬 <strong>研究可视化</strong>：FSD 注入状态、车辆态势、CAN 帧实时可见</li>
+<li>💰 <strong>低成本</strong>：一块 ESP32-S3 板（约 ¥100）</li>
+<li>🌐 <strong>零 App</strong>：浏览器直连 <code>http://100.100.1.1/</code></li>
+<li>🔓 <strong>开源</strong>：GPL-3.0，可审计可改造</li>
+<li>🛡 <strong>安全门控</strong>：AP Injection Gate fail-closed 设计</li>
+</ul>
+</blockquote>
+<hr>
+<h2>2 硬件准备</h2>
+<blockquote>
+<p>[!check] 硬件清单</p>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>规格</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>开发板</td>
+<td>Waveshare ESP32-S3-RS485-CAN</td>
+<td>或兼容 ESP32-S3 单 CAN 板</td>
+</tr>
+<tr>
+<td>主控</td>
+<td>ESP32-S3</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Flash</td>
+<td>16 MB</td>
+<td>OTA + SPIFFS 分区</td>
+</tr>
+<tr>
+<td>CAN</td>
+<td>TWAI 单路</td>
+<td>GPIO15 TX / GPIO16 RX</td>
+</tr>
+<tr>
+<td>状态 LED</td>
+<td>GPIO14</td>
+<td>板载或外接</td>
+</tr>
+<tr>
+<td>USB-C 数据线</td>
+<td>—</td>
+<td>烧录用（注意是数据线，非纯充电线）</td>
+</tr>
+</tbody></table>
+</blockquote>
+<blockquote>
+<p>[!warning] 硬件确认
+烧录前确认开发板型号正确（ESP32-<strong>S3</strong>，非 ESP32），Flash <strong>16MB</strong>。型号或 Flash 大小不对会导致烧录失败或 bootloop。</div></div>
+<hr>
+<h2>3 接线</h2>
+<p>将开发板 TWAI 接入车辆 <strong>party CAN 总线</strong>（通常经维修连接器或 OBD-X197 接口的 party bus 引脚）：</p>
+<table>
+<thead>
+<tr>
+<th>开发板</th>
+<th>连接车辆</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>CAN High（TWAI TX 侧）</td>
+<td>party CAN High</td>
+</tr>
+<tr>
+<td>CAN Low（TWAI RX 侧）</td>
+<td>party CAN Low</td>
+</tr>
+<tr>
+<td>GND</td>
+<td>车身地（共地）</td>
+</tr>
+</tbody></table>
+<div class="callout callout-danger"><div class="callout-title">⛔ 危险</div><div class="callout-body">接线安全</p>
+<ul>
+<li><strong>断电操作</strong>：接线前关闭车辆，避免短路损坏开发板或车辆电路</li>
+<li><strong>极性正确</strong>：CAN High / CAN Low 不可接反，接反可能损坏开发板</li>
+<li><strong>公共地</strong>：开发板 GND 必须与车辆地共地，否则通信不稳定</li>
+<li><strong>初次台架</strong>：首次测试建议在台架/静态进行，确认接线无误</li>
+</ul>
+</blockquote>
+<hr>
+<h2>4 固件烧录</h2>
+<h3>4.1 准备工具</h3>
+<blockquote>
+<p>[!info] 依赖</p>
+<pre><code class="language-bash">pip install esptool
+</code></pre>
+</blockquote>
+<p>从 <a href="https://github.com/JordanzhaoD/waveshare-single-can-firmware/releases/latest">Release 页面</a>下载资产包（含 <code>merged-flash.bin</code>、分区 bin、<code>flash.sh</code>、<code>SHA256SUMS</code>），解压后进入目录。</p>
+<h3>4.2 方式一：一键合并烧录（推荐）</h3>
+<blockquote>
+<p>[!tip] merged-flash.bin 一键烧录</p>
+<pre><code class="language-bash">./flash.sh /dev/cu.usbserial-XXXX
+</code></pre>
+</blockquote>
+<p><code>flash.sh</code> 自动用 esptool 烧录 <code>merged-flash.bin</code>（含 bootloader + 分区表 + OTA 数据 + 固件）到偏移 <code>0x0</code>，一次完成。</p>
+<blockquote>
+<p>[!example] 串口名（按系统替换）</p>
+<table>
+<thead>
+<tr>
+<th>系统</th>
+<th>串口示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>macOS</td>
+<td><code>/dev/cu.usbserial-XXXX</code> 或 <code>/dev/cu.usbmodemXXXX</code></td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>/dev/ttyUSB0</code></td>
+</tr>
+<tr>
+<td>Windows</td>
+<td><code>COM3</code></td>
+</tr>
+</tbody></table>
+</blockquote>
+<h3>4.3 方式二：逐分区烧录（备选）</h3>
+<p>合并烧录失败时使用：</p>
+<blockquote>
+<p>[!tip] 逐分区烧录</p>
+<pre><code class="language-bash">./flash.sh --split /dev/cu.usbserial-XXXX
+</code></pre>
+</blockquote>
+<p>分区布局（<strong>地址必须准确</strong>）：</p>
+<table>
+<thead>
+<tr>
+<th>分区</th>
+<th>偏移</th>
+<th>文件</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>bootloader</td>
+<td><code>0x0</code></td>
+<td>bootloader.bin</td>
+</tr>
+<tr>
+<td>partitions</td>
+<td><code>0x8000</code></td>
+<td>partitions.bin</td>
+</tr>
+<tr>
+<td>ota_data_initial</td>
+<td><code>0x19000</code></td>
+<td>ota_data_initial.bin</td>
+</tr>
+<tr>
+<td>firmware (app0)</td>
+<td><code>0x20000</code></td>
+<td>firmware.bin</td>
+</tr>
+</tbody></table>
+<blockquote>
+<p>[!danger] 地址易错点</p>
+<ul>
+<li><code>firmware</code> 必须烧到 <strong><code>0x20000</code></strong>（<strong>不是</strong> <code>0x10000</code>，否则 bootloop）</li>
+<li><code>ota_data_initial</code> 必须烧 <strong><code>0x19000</code></strong>（缺失会导致 OTA slot 不可启动）</li>
+<li>顺序：先 bootloader → partitions → ota_data → firmware</li>
+</ul>
+</blockquote>
+<h3>4.4 方式三：源码自行编译</h3>
+<blockquote>
+<p>[!info] 源码编译烧录</p>
+<pre><code class="language-bash">git clone https://github.com/JordanzhaoD/waveshare-single-can-firmware
+cd waveshare-single-can-firmware
+pip install platformio
+cp platformio_profile.example.h platformio_profile.h
+# 编辑 platformio_profile.h 自定义凭据（见 §7）
+pio run -e waveshare_single_can_standalone
+pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbserial-XXXX
+</code></pre>
+</blockquote>
+<hr>
+<h2>5 首次连接</h2>
+<blockquote>
+<p>[!check] 首次连接 3 步</p>
+<ol>
+<li>烧录完成，开发板自动重启</li>
+<li>手机/电脑连接 WiFi 热点：<strong>SSID <code>Atlas-FSD</code></strong> / 密码 <strong><code>12345678</code></strong></li>
+<li>浏览器打开 <a href="http://100.100.1.1/">http://100.100.1.1/</a>，进入 Dashboard 驾驶舱界面</li>
+</ol>
+</blockquote>
+<blockquote>
+<p>[!tip] 出厂默认凭据（强烈建议修改，见 §7.1）</p>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>默认值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>WiFi SSID</td>
+<td><code>Atlas-FSD</code></td>
+</tr>
+<tr>
+<td>WiFi 密码</td>
+<td><code>12345678</code></td>
+</tr>
+<tr>
+<td>OTA 用户名</td>
+<td><code>admin</code></td>
+</tr>
+<tr>
+<td>OTA 密码</td>
+<td><code>12345678</code></td>
+</tr>
+</tbody></table>
+</blockquote>
+<blockquote>
+<p>[!warning] 连不上热点？
+若看不到 <code>Atlas-FSD</code> 热点：① 确认烧录成功（串口有启动日志）；② 默认凭据可能被自定义版本覆盖，用自定义 SSID；③ 按住 BOOT 键复位重新烧录。</div></div>
+<hr>
+<h2>6 Dashboard 功能详解</h2>
+<div class="callout callout-info"><div class="callout-title">ℹ️ 信息</div><div class="callout-body">访问方式
+桌面/车机/手机任意浏览器打开 <a href="http://100.100.1.1/">http://100.100.1.1/</a>，UI 自适应（桌面横屏 / 手机竖屏）。</div></div>
+<h3>6.1 驾驶状态中心</h3>
+<p>主界面，实时聚合显示：FSD 注入状态、车辆态势、硬件模式、驾驶风格、速度策略、CAN 总线状态。所有关键信息一屏掌握。</p>
+<h3>6.2 驾驶风格</h3>
+<p>切换驾驶模式：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Auto</strong></td>
+<td>自动（默认）</td>
+</tr>
+<tr>
+<td><strong>Sloth</strong></td>
+<td>舒缓（延迟响应）</td>
+</tr>
+<tr>
+<td><strong>MAX</strong></td>
+<td>激进（提前响应）</td>
+</tr>
+</tbody></table>
+<p>同时显示 UI 状态、NVS 持久化状态、实际 CAN 运行状态。</p>
+<h3>6.3 速度策略</h3>
+<p>速度偏移控制：</p>
+<ul>
+<li><strong>固定百分比</strong>：按百分比偏移车速报文</li>
+<li><strong>自动偏移</strong>：自动算法调节</li>
+<li><strong>自定义偏移</strong>：手动设定具体值</li>
+</ul>
+<p>实时偏移参数可视化，便于研究车辆速度响应。</p>
+<h3>6.4 硬件模式</h3>
+<p>FSD 协议模式切换（运行时）：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Auto</strong></td>
+<td>自动识别（推荐，不确定时用）</td>
+</tr>
+<tr>
+<td><strong>Legacy</strong></td>
+<td>AP1/AP2 早期车型</td>
+</tr>
+<tr>
+<td><strong>HW3.0</strong></td>
+<td>FSD 计算机 3.0</td>
+</tr>
+<tr>
+<td><strong>HW4.0</strong></td>
+<td>FSD 计算机 4.0</td>
+</tr>
+</tbody></table>
+<div class="callout callout-warning"><div class="callout-title">⚠️ 注意</div><div class="callout-body">硬件模式选错
+模式与车辆硬件不匹配会导致 FSD 功能异常或无响应。不确定时用 <strong>Auto</strong>，或根据车辆实际硬件选。</div></div>
+<h3>6.5 CAN 诊断</h3>
+<p>实时 CAN 总线诊断面板：</p>
+<ul>
+<li><strong>CAN1 / CAN2</strong>：RX/TX 计数、EFLG 错误标志</li>
+<li><strong>错误优先实时帧</strong>：异常帧优先显示</li>
+<li><strong>LIVE TIMELINE</strong>：总线事件时间线</li>
+<li><strong>CAN 引脚信息</strong>：引脚状态</li>
+</ul>
+<div class="callout callout-tip"><div class="callout-title">💡 提示</div><div class="callout-body">诊断价值
+CAN 诊断用于验证接线、排查通信问题。若 <strong>RX=0</strong>，检查接线 / 波特率 / 极性 / 共地。</div></div>
+<h3>6.6 FSD 防护</h3>
+<p>安全防护开关面板：</p>
+<ul>
+<li><strong>slew rate 限制</strong>：扭矩变化率限制（防止突变）</li>
+<li><strong>仿生方向盘</strong>：模拟人手扭矩曲线</li>
+<li><strong>bit-19 baseline</strong>：方向盘检测屏蔽的安全路径</li>
+</ul>
+<div class="callout callout-danger"><div class="callout-title">⛔ 危险</div><div class="callout-body">防护开关谨慎
+防护功能是安全设计，<strong>不建议随意关闭</strong>。关闭可能影响车辆安全系统行为，务必清楚每个开关的影响。</div></div>
+<h3>6.7 DNS / 过滤</h3>
+<p>上游 DNS 设置与黑/白名单域名过滤规则管理（DNS 过滤功能）。</p>
+<h3>6.8 手机端（现场遥控）</h3>
+<p>手机浏览器自动切换竖屏布局，提供现场遥控视图：FSD 注入状态、CAN 总线状态、硬件模式、实时帧率，便于车旁操作。</p>
+<hr>
+<h2>7 系统配置</h2>
+<h3>7.1 修改 WiFi / OTA 凭据</h3>
+<div class="callout callout-info"><div class="callout-title">ℹ️ 信息</div><div class="callout-body">需重新编译（凭据在编译期固化）
+编辑 <code>platformio_profile.h</code>：</p>
+<pre><code class="language-cpp">#define DASH_SSID      &quot;你的热点名&quot;
+#define DASH_PASS      &quot;你的密码&quot;
+#define DASH_OTA_USER  &quot;admin&quot;
+#define DASH_OTA_PASS  &quot;你的OTA密码&quot;
+</code></pre>
+<p>重新编译烧录（见 §4.4）。<code>platformio_profile.h</code> 已加入 <code>.gitignore</code>，不会提交，请妥善保管。</div></div>
+<h3>7.2 FSD 运行时配置</h3>
+<p>通过 Dashboard 设置页或 HTTP API 配置（无需重新编译）：</p>
+<ul>
+<li>Legacy 速度偏移</li>
+<li>重写限速（Legacy / HW4）</li>
+<li>视觉限速识别开关</li>
+</ul>
+<div class="callout callout-tip"><div class="callout-title">💡 提示</div><div class="callout-body">配置持久化
+运行时配置持久化到 NVS，重启保留。Dashboard 通过 <code>GET /config</code> 回填显示，<code>POST /config</code> 保存。</div></div>
+<h3>7.3 OTA 更新仓库</h3>
+<p>固件 OTA 检查更新地址：<code>JordanzhaoD/waveshare-single-can-firmware</code>（GitHub Release）。如需指向自己的 fork，修改源码 <code>DASH_GITHUB_REPO</code> 后重新编译。</p>
+<hr>
+<h2>8 OTA 固件升级</h2>
+<div class="callout callout-tip"><div class="callout-title">💡 提示</div><div class="callout-body">OTA 一键升级
+Dashboard → 系统设置 → <strong>检查更新</strong> → 下载安装 → 自动重启</div></div>
+<p>OTA 流程：</p>
+<ol>
+<li>设备请求 <code>api.github.com/repos/JordanzhaoD/waveshare-single-can-firmware/releases/latest</code></li>
+<li>在资产列表查找 <code>firmware-waveshare-single-can.bin</code></li>
+<li>下载 → 校验 → 写入备用 OTA 分区</li>
+<li>切换启动分区 → 重启到新固件</li>
+</ol>
+<div class="callout callout-warning"><div class="callout-title">⚠️ 注意</div><div class="callout-body">OTA 前置条件</p>
+<ul>
+<li>设备所在网络能访问 <code>github.com</code></li>
+<li>OTA 凭据正确（默认 <code>admin</code> / <code>12345678</code>）</li>
+<li>双 OTA 分区正常（<code>ota_data_initial</code> 已初始化）</li>
+<li>电量/供电稳定（升级中断需重新烧录）</li>
+</ul>
+</blockquote>
+<hr>
+<h2>9 插件管理</h2>
+<p>JSON 插件引擎支持三种安装方式：</p>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>URL 安装</strong></td>
+<td>输入插件 JSON 的 URL</td>
+</tr>
+<tr>
+<td><strong>文件上传</strong></td>
+<td>上传 <code>.json</code> 插件文件</td>
+</tr>
+<tr>
+<td><strong>离线粘贴</strong></td>
+<td>直接粘贴 JSON 文本</td>
+</tr>
+</tbody></table>
+<p>插件特性：</p>
+<ul>
+<li>🔒 <strong>默认关闭</strong>：新插件需手动启用</li>
+<li>🎚 <strong>优先级管理</strong>：多插件按优先级执行</li>
+<li>💾 <strong>持久化</strong>：状态存 SPIFFS <code>/plugins_state.json</code>，重启恢复</li>
+<li>🔧 <strong>管理 API</strong>：启用/禁用/删除/详情</li>
+</ul>
+<blockquote>
+<p>[!info] 插件 API
+通过 Dashboard 插件页或 <code>/plugins_*</code> 系列端点管理。</div></div>
+<hr>
+<h2>10 CAN 诊断</h2>
+<p>Dashboard 的 CAN 诊断页用于总线健康监测与调试：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>含义</th>
+<th>健康判断</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>RX 计数</td>
+<td>接收帧数</td>
+<td>持续增长 = 接线正常</td>
+</tr>
+<tr>
+<td>TX 计数</td>
+<td>发送帧数</td>
+<td>反映注入活动</td>
+</tr>
+<tr>
+<td>EFLG</td>
+<td>错误标志</td>
+<td>应为 0，非 0 表示总线错误</td>
+</tr>
+<tr>
+<td>错误帧</td>
+<td>异常帧</td>
+<td>应为空，有则排查接线/波特率</td>
+</tr>
+<tr>
+<td>LIVE TIMELINE</td>
+<td>事件时间线</td>
+<td>直观查看总线活动</td>
+</tr>
+</tbody></table>
+<div class="callout callout-tip"><div class="callout-title">💡 提示</div><div class="callout-body">诊断排查
+若 RX 长时间为 0：① 检查 CAN H/L 接线与极性；② 确认共地；③ 确认接入的是 party CAN（非其他总线）；④ 检查开发板 CAN 收发器。</div></div>
+<hr>
+<h2>11 故障排查</h2>
+<div class="callout callout-bug"><div class="callout-title">🐛 排错</div><div class="callout-body">常见问题速查</p>
+<table>
+<thead>
+<tr>
+<th>症状</th>
+<th>可能原因</th>
+<th>解决方案</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>烧录失败 / 找不到串口</td>
+<td>USB 驱动 / 纯充电线</td>
+<td>装 CP210x/CH340 驱动；换数据线；按住 BOOT 进下载模式</td>
+</tr>
+<tr>
+<td>启动 bootloop</td>
+<td>firmware 地址错</td>
+<td>烧 <code>0x20000</code> + <code>ota_data</code> <code>0x19000</code></td>
+</tr>
+<tr>
+<td>看不到 Atlas-FSD 热点</td>
+<td>凭据未生效 / 启动失败</td>
+<td>重新编译 profile.h；查串口启动日志</td>
+</tr>
+<tr>
+<td>打不开 100.100.1.1</td>
+<td>未连热点 / 浏览器拦截</td>
+<td>确认连了 Atlas-FSD 热点；关闭浏览器 HTTPS 强制</td>
+</tr>
+<tr>
+<td>CAN 无数据（RX=0）</td>
+<td>接线 / 极性 / 共地</td>
+<td>见 §10 诊断排查</td>
+</tr>
+<tr>
+<td>OTA 失败</td>
+<td>网络 / 凭据 / 仓库</td>
+<td>确认能访问 github.com；核对 OTA 密码</td>
+</tr>
+<tr>
+<td>版本号显示旧</td>
+<td>构建缓存</td>
+<td>清 <code>.pio/build</code> 重新编译</td>
+</tr>
+</tbody></table>
+</blockquote>
+<blockquote>
+<p>[!info] 串口日志</p>
+<pre><code class="language-bash">pio device monitor              # PlatformIO
+# 或
+esptool.py --port /dev/cu.usbserial-XXXX run   # 复位 + 看
+</code></pre>
+<p>启动日志含 <code>build_id</code>（版本）、<code>canActive</code>、<code>epas_nag</code> 等关键状态。</div></div>
+<hr>
+<h2>12 安全与合规</h2>
+<div class="callout callout-danger"><div class="callout-title">⛔ 危险</div><div class="callout-body">必读——法律与安全</p>
+<ul>
+<li><strong>仅供研究 / 教育 / 工程学习</strong>：不得在公共道路使用</li>
+<li><strong>法律风险</strong>：可能违反当地交通法规、车辆保修条款、制造商服务条款</li>
+<li><strong>安全风险</strong>：不当配置可能影响车辆安全系统（转向、制动、辅助驾驶）</li>
+<li><strong>责任归属</strong>：使用者自行承担一切法律与安全后果，作者不承担任何责任</li>
+</ul>
+</blockquote>
+<blockquote>
+<p>[!tip] 安全实践建议</p>
+<ul>
+<li>✅ 台架 / 静态测试优先，确认无误再考虑实车</li>
+<li>✅ 修改配置前备份原值</li>
+<li>✅ 不绕过车辆原生安全机制</li>
+<li>✅ 遵守当地法律法规</li>
+<li>✅ 保持固件与上游同步（安全更新）</li>
+</ul>
+</blockquote>
+<hr>
+<h2>13 FAQ</h2>
+<blockquote>
+<p>[!question] 支持哪些车型？
+Tesla 配 party CAN 总线的车型（Legacy / HW3 / HW4）。通过 Dashboard 硬件模式切换匹配。</div></div>
+<div class="callout callout-question"><div class="callout-title">❓ FAQ</div><div class="callout-body">需要联网吗？
+基本功能离线可用。仅 OTA 检查更新需访问 <code>github.com</code>。</div></div>
+<div class="callout callout-question"><div class="callout-title">❓ FAQ</div><div class="callout-body">会不会和原车功能冲突？
+本工具是 CAN 总线研究工具。不当配置可能影响车辆功能，务必谨慎，建议台架验证。</div></div>
+<div class="callout callout-question"><div class="callout-title">❓ FAQ</div><div class="callout-body">如何修改默认热点名和密码？
+编辑 <code>platformio_profile.h</code> 的 <code>DASH_SSID</code> / <code>DASH_PASS</code> / <code>DASH_OTA_PASS</code>，重新编译烧录（见 §7.1）。</div></div>
+<div class="callout callout-question"><div class="callout-title">❓ FAQ</div><div class="callout-body">OTA 更新到哪里找固件？
+GitHub Release 的 <code>firmware-waveshare-single-can.bin</code> 资产（见 §8）。</div></div>
+<div class="callout callout-question"><div class="callout-title">❓ FAQ</div><div class="callout-body">如何贡献代码 / 反馈问题？
+GitHub 提 issue 或 PR，项目 GPL-3.0 开源，欢迎社区贡献。</div></div>
+<hr>
+<h2>📚 附录</h2>
+<table>
+<thead>
+<tr>
+<th>资源</th>
+<th>链接</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>仓库主页</td>
+<td><a href="https://github.com/JordanzhaoD/waveshare-single-can-firmware">https://github.com/JordanzhaoD/waveshare-single-can-firmware</a></td>
+</tr>
+<tr>
+<td>Release 下载</td>
+<td><a href="https://github.com/JordanzhaoD/waveshare-single-can-firmware/releases">https://github.com/JordanzhaoD/waveshare-single-can-firmware/releases</a></td>
+</tr>
+<tr>
+<td>免责声明</td>
+<td><a href="https://github.com/JordanzhaoD/waveshare-single-can-firmware/blob/main/DISCLAIMER.md">DISCLAIMER.md</a></td>
+</tr>
+<tr>
+<td>变更日志</td>
+<td><a href="https://github.com/JordanzhaoD/waveshare-single-can-firmware/blob/main/CHANGELOG.md">CHANGELOG.md</a></td>
+</tr>
+<tr>
+<td>推广文案</td>
+<td><a href="https://github.com/JordanzhaoD/waveshare-single-can-firmware/blob/main/docs/PROMOTION.md">PROMOTION.md</a></td>
+</tr>
+</tbody></table>
+<hr>
+<div class="callout callout-info"><div class="callout-title">ℹ️ 信息</div><div class="callout-body">文档版本
+本手册对应固件 <strong>v1.0.1-atlas-single-can</strong>。最新版本与电子档（PDF）见仓库 <code>docs/</code>。</div></div>
+
+</body>
+</html>

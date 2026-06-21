@@ -256,3 +256,6 @@ ev-open-can-tools-repo/
 # Release assets (firmware binaries distributed via GitHub Releases, not committed)
 release/
 
+node_modules/
+package-lock.json
+package.json
