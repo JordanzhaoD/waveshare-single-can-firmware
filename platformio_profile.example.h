@@ -24,8 +24,8 @@
 // #define INJECTION_AFTER_AP
 
 // ─── Dashboard credentials ─────────────────────────────────
-// PLACEHOLDERS — replace with your own values before building for real use.
-#define DASH_SSID      "CHANGE_ME_SSID"
-#define DASH_PASS      "CHANGE_ME_PASS"
+// Factory defaults — change to your own values before real deployment.
+#define DASH_SSID      "Atlas-FSD"
+#define DASH_PASS      "12345678"
 #define DASH_OTA_USER  "admin"
-#define DASH_OTA_PASS  "CHANGE_ME_OTA_PASS"
+#define DASH_OTA_PASS  "12345678"

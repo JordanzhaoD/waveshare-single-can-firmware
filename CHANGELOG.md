@@ -17,6 +17,7 @@ First open-source release of the Waveshare single-CAN standalone firmware.
 - Official JSON plugin manager for Waveshare Single CAN standalone: URL install, `.json` upload, paste JSON, disabled-by-default installs, per-plugin enable/priority/remove/detail, GTW2047 replay count, and SPIFFS persistence (`/plugins_state.json`) restored on boot.
 - AP Gate delayed-injection controls and AP injection state to the standalone driving status UI (desktop + mobile).
 - `GET /config` route so the UI reloads persisted FSD runtime state (legacy offset / override speed limit) on reconnect.
+- Factory-default WiFi credentials (`Atlas-FSD` / `12345678`) and OTA password baked into the open-source build; README and `flash.sh` prompt users to change them before real deployment.
 
 ### Changed
 - Cleaned standalone desktop and mobile UI to remove CAN2/T-2CAN/Auto Shift product surfaces while preserving dual-CAN builds.

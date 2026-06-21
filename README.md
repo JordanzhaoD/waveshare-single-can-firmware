@@ -75,13 +75,13 @@
 cp platformio_profile.example.h platformio_profile.h
 ```
 
-编辑 `platformio_profile.h`，填入你自己的 WiFi 热点与 OTA 凭证：
+编辑 `platformio_profile.h`，把出厂默认值改成你自己的 WiFi 热点与 OTA 凭证（默认 `Atlas-FSD` / `12345678`，强烈建议修改）：
 
 ```cpp
-#define DASH_SSID      "CHANGE_ME_SSID"   // WiFi 热点名称
-#define DASH_PASS      "CHANGE_ME_PASS"    // WiFi 密码
+#define DASH_SSID      "Atlas-FSD"        // WiFi 热点名称（出厂默认，建议修改）
+#define DASH_PASS      "12345678"          // WiFi 密码（出厂默认，建议修改）
 #define DASH_OTA_USER  "admin"             // OTA 用户名
-#define DASH_OTA_PASS  "CHANGE_ME_OTA"     // OTA 密码
+#define DASH_OTA_PASS  "12345678"          // OTA 密码（出厂默认，建议修改）
 ```
 
 > ⚠️ `platformio_profile.h` 已加入 `.gitignore`，**不会提交到 Git**，请妥善保管。
@@ -209,13 +209,13 @@ Connect the board's TWAI to the Tesla vehicle's party CAN bus (typically via the
 cp platformio_profile.example.h platformio_profile.h
 ```
 
-Edit `platformio_profile.h` with your own WiFi hotspot and OTA credentials:
+Edit `platformio_profile.h` to replace the factory defaults with your own WiFi hotspot and OTA credentials (defaults: `Atlas-FSD` / `12345678` — strongly recommended to change):
 
 ```cpp
-#define DASH_SSID      "CHANGE_ME_SSID"   // WiFi hotspot SSID
-#define DASH_PASS      "CHANGE_ME_PASS"    // WiFi password
+#define DASH_SSID      "Atlas-FSD"        // WiFi hotspot SSID (factory default, change recommended)
+#define DASH_PASS      "12345678"          // WiFi password (factory default, change recommended)
 #define DASH_OTA_USER  "admin"             // OTA username
-#define DASH_OTA_PASS  "CHANGE_ME_OTA"     // OTA password
+#define DASH_OTA_PASS  "12345678"          // OTA password (factory default, change recommended)
 ```
 
 > ⚠️ `platformio_profile.h` is listed in `.gitignore` and will **never be committed**. Keep it safe.
