@@ -1,5 +1,9 @@
 # Waveshare 单 CAN 版 — Tesla FSD CAN Dashboard
 
+[![Telegram](https://img.shields.io/badge/Telegram-交流频道-2AABEE?logo=telegram&logoColor=white)](https://t.me/+PKsCVABYQTdkZGQ1)
+[![X](https://img.shields.io/badge/X-@Jordanjordan88-000000?logo=x&logoColor=white)](https://x.com/Jordanjordan88)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue)](LICENSE)
+
 > ⚠️ **免责声明**：本项目仅供研究、教育与工程学习目的，**严禁在公共道路使用**，可能违反当地交通法规与车辆制造商服务条款。使用者自担一切法律与安全风险，作者不承担任何责任。详见 [DISCLAIMER.md](DISCLAIMER.md)。
 
 **中文** | [English](#english)
@@ -162,6 +166,14 @@ pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbse
 
 ---
 
+### 💬 交流社区
+
+- **Telegram 频道**（讨论 / 问答 / 更新通知）：https://t.me/+PKsCVABYQTdkZGQ1
+- **作者 X**（@Jordanjordan88）：https://x.com/Jordanjordan88
+- **问题反馈**：[GitHub Issues](https://github.com/JordanzhaoD/waveshare-single-can-firmware/issues)
+
+---
+
 ### 贡献
 
 欢迎提交 Issue 与 Pull Request。提交即表示你同意以 GPL-3.0 许可贡献内容。
@@ -184,6 +196,10 @@ pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbse
 <a name="english"></a>
 
 ## English
+
+[![Telegram](https://img.shields.io/badge/Telegram-Channel-2AABEE?logo=telegram&logoColor=white)](https://t.me/+PKsCVABYQTdkZGQ1)
+[![X](https://img.shields.io/badge/X-@Jordanjordan88-000000?logo=x&logoColor=white)](https://x.com/Jordanjordan88)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue)](LICENSE)
 
 > ⚠️ **Disclaimer**: This project is for research, educational, and engineering study purposes only. **Do NOT use on public roads.** Use may violate local laws and the vehicle manufacturer's Terms of Service. You assume all risks. See [DISCLAIMER.md](DISCLAIMER.md).
 
@@ -293,6 +309,14 @@ Switch the vehicle protocol mode (**Legacy / HW3 / HW4**) in the web dashboard. 
 ### Safety
 
 > ⚠️ **Important**: Modifying CAN bus traffic carries real risk. The CAN bus touches safety-critical systems including steering, braking, and airbags. Only use this firmware if you fully understand the frames involved, and only in compliant, controlled environments (e.g., a bench or closed course). This project is for research and study only. You are solely responsible for any consequences. See [DISCLAIMER.md](DISCLAIMER.md).
+
+---
+
+### 💬 Community
+
+- **Telegram channel** (discussion / Q&A / update notices): https://t.me/+PKsCVABYQTdkZGQ1
+- **Author on X** (@Jordanjordan88): https://x.com/Jordanjordan88
+- **Bug reports**: [GitHub Issues](https://github.com/JordanzhaoD/waveshare-single-can-firmware/issues)
 
 ---
 

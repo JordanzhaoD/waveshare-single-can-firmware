@@ -15,6 +15,8 @@
 | 界面预览（截图墙） | <https://github.com/JordanzhaoD/waveshare-single-can-firmware#-界面预览> |
 | 最新固件下载 | <https://github.com/JordanzhaoD/waveshare-single-can-firmware/releases/latest> |
 | v1.0.1 Release | <https://github.com/JordanzhaoD/waveshare-single-can-firmware/releases/tag/v1.0.1-atlas-single-can> |
+| **Telegram 频道** | <https://t.me/+PKsCVABYQTdkZGQ1> |
+| **作者 X** | <https://x.com/Jordanjordan88> |
 
 > 发社交平台建议用**仓库首页链接**或 **Release 链接**（转化最高）。
 
