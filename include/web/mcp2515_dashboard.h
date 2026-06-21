@@ -6153,6 +6153,8 @@ static const char *getFirmwareArtifact()
     return "firmware-lilygo-t2can-dual.bin";
 #elif defined(DRIVER_ESP32_EXT_MCP2515)
     return "firmware-esp32-ext-mcp2515.bin";
+#elif defined(DASH_SINGLE_CAN_STANDALONE)
+    return "firmware-waveshare-single-can.bin";
 #else
     return "firmware-esp32.bin";
 #endif
