@@ -62,16 +62,10 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
         with:
+          name: firmware-waveshare-single-can
           path: release-assets
-      - name: Rename firmware files to unique names
-        run: |
-          for dir in release-assets/firmware-*/; do
-            name=$(basename "$dir")
-            for f in "$dir"*; do
-              ext="${f##*.}"
-              mv "$f" "release-assets/${name}.${ext}"
-            done
-          done
+      - name: Rename firmware file to release asset name
+        run: mv release-assets/firmware.bin release-assets/firmware-waveshare-single-can.bin
       - name: Extract changelog section for this tag
         run: |
           TAG="${GITHUB_REF_NAME}"
