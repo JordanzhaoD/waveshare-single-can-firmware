@@ -283,7 +283,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .mobile-card button { border: 0; border-radius: 10px; padding: 10px 14px; background: var(--accent); color: #fff; font-weight: 800; }
 
 /* === Mobile Responsive === */
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   body { font-size: 14px; }
   .sidebar { display: none !important; }
   .overlay { display: none !important; }
@@ -817,7 +817,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">要求 Parked / AP / Summon 后才注入</div></div>
             <label class="tgl"><input id="ap-core-gate-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
           <div class="ctl-row"><div><div class="cn">延迟注入</div><div class="cd">AP 激活后等待再注入（推荐 2000ms）</div></div>
-            <label class="field"><select id="ap-delay-select" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label></div>
+            <label class="field"><select id="ap-delay-select" class="ap-delay-select" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label></div>
           <div class="ctl-row"><div><div class="cn">AP 自动恢复</div><div class="cd">重启后恢复上次 AP 配置</div></div>
             <label class="tgl"><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
           <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
@@ -1279,6 +1279,18 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-defense-ui">待同步</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-defense-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-defense-run">待检测</div></div>
+</div>
+<!-- AP injection delay (mobile-accessible, fixes missing delay option on phone UI) -->
+<div class="card cockpit-card">
+  <div class="card-title">AP 注入门控</div>
+  <div class="card-subtitle">AP 激活后延迟注入，服务端 fail-closed 强制</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">延迟注入时间</div>
+      <div class="setting-desc">AP 激活后等待再注入（推荐 2000ms，0=立即）</div>
+    </div>
+    <label class="field"><select class="ap-delay-select" onchange="saveApDelay(this)"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label>
+  </div>
 </div>
 <!-- Master switch + 5 defense toggles -->
 <div class="card cockpit-card">
@@ -2600,6 +2612,13 @@ async function saveApGateControls(){
     showToast(T('已保存'));
   }catch(e){}
 }
+async function saveApDelay(src){
+  try{
+    await postForm('/config',{ap_delay_ms:src?src.value:'2000'});
+    document.querySelectorAll('.ap-delay-select').forEach(function(s){if(s!==src)s.value=src.value;});
+    showToast(T('已保存'));
+  }catch(e){}
+}
 function renderApInjectionState(d){
   if(!d)return;
   var gate=(d.fsdDiag&&d.fsdDiag.gate)?d.fsdDiag.gate:{};
@@ -2619,7 +2638,8 @@ function renderApInjectionState(d){
   setText('ap-core-state-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));
   setText('injection-source',d.injectionSource||'Disabled');
   var apg=document.getElementById('ap-core-gate-tgl'); if(apg)apg.checked=!!d.apGateEnabled;
-  var dly=document.getElementById('ap-delay-select'); if(dly)dly.value=String(d.apDelayMs||req||2000);
+  var delayVal=(d.apDelayMs!=null&&d.apDelayMs!==undefined)?d.apDelayMs:(req||2000);
+  document.querySelectorAll('.ap-delay-select').forEach(function(s){if(document.activeElement!==s)s.value=String(delayVal);});
   var rst=document.getElementById('ap-auto-restore-tgl'); if(rst)rst.checked=!!d.apAutoRestore;
 }
 // ── 插件管理（JSON 插件） ──────────────────────────────────────

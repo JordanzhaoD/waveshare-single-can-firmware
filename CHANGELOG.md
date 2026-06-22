@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-06-23
+
+### Fixed
+- **车机（桌面）AP 延迟注入时间无法选择**：`renderApInjectionState` 用 `||` 回填导致选 0ms 被覆盖回 2000，且定时 poll 回填与用户选择 race。改为 `!=null` 判断 + select 聚焦时不自动回填，用户选择不再被覆盖。
+- **手机 UI 新增 AP 延迟注入设置**：原先仅在桌面「AP 注入安全」卡片，手机版遗漏。在「FSD 防护」页（手机"更多"可达）新增 AP 延迟注入卡片，桌面/手机用 `.ap-delay-select` class 统一回填与保存。
+- **手机横屏底部菜单按钮消失**：媒体查询断点 `max-width: 768px` 导致手机横屏（宽度 > 768）`.mob-tabs` 被隐藏。断点提高到 `1024px`，覆盖手机横屏与平板。
+
 ## [1.0.1] - 2026-06-21
 
 First open-source release of the Waveshare single-CAN standalone firmware.
