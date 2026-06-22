@@ -1049,9 +1049,12 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('bool legacyHw3CustomSpeed = hw3CustomSpeed;', body)
         self.assertIn('bool legacyHw3HighSpeedEnable = hw3HighSpeedEnable;', body)
         self.assertIn('bool legacyHw3AutoSpeed = hw3AutoSpeed;', body)
-        self.assertIn('if (server.hasArg("hw3CustomSpeed")) legacyHw3CustomSpeed = server.arg("hw3CustomSpeed") == "1";', body)
-        self.assertIn('if (server.hasArg("hw3HighSpeedEnable")) legacyHw3HighSpeedEnable = server.arg("hw3HighSpeedEnable") == "1";', body)
-        self.assertIn('if (server.hasArg("hw3AutoSpeed")) legacyHw3AutoSpeed = server.arg("hw3AutoSpeed") == "1";', body)
+        self.assertIn('if (server.hasArg("hw3CustomSpeed"))', body)
+        self.assertIn('legacyHw3CustomSpeed = server.arg("hw3CustomSpeed") == "1";', body)
+        self.assertIn('if (server.hasArg("hw3HighSpeedEnable"))', body)
+        self.assertIn('legacyHw3HighSpeedEnable = server.arg("hw3HighSpeedEnable") == "1";', body)
+        self.assertIn('if (server.hasArg("hw3AutoSpeed"))', body)
+        self.assertIn('legacyHw3AutoSpeed = server.arg("hw3AutoSpeed") == "1";', body)
         self.assertNotIn('bool legacyHw3CustomSpeed = server.hasArg("hw3CustomSpeed") && server.arg("hw3CustomSpeed") == "1";', body)
         self.assertNotIn('bool legacyHw3HighSpeedEnable = server.hasArg("hw3HighSpeedEnable") && server.arg("hw3HighSpeedEnable") == "1";', body)
         self.assertNotIn('bool legacyHw3AutoSpeed = server.hasArg("hw3AutoSpeed") && server.arg("hw3AutoSpeed") == "1";', body)
@@ -1494,7 +1497,8 @@ class DashboardApiContractTests(unittest.TestCase):
         """Fog light must auto-stop when gearRaw != 4 (Drive)."""
         fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
         self.assertIn("gearRaw != 4", fog)
-        self.assertIn("if (isActive()) stop()", fog)
+        self.assertIn("if (isActive())", fog)
+        self.assertIn("stop();", fog)
 
     def test_phase4_fog_light_uses_can273_constants(self) -> None:
         """Fog light must use the 0x273 CAN frame constants from can_frame_types.h."""

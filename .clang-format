@@ -6,6 +6,7 @@ UseTab: Never
 ColumnLimit: 0
 BreakBeforeBraces: Allman
 AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
 SortIncludes: false
 Standard: Latest
 AccessModifierOffset: -4
