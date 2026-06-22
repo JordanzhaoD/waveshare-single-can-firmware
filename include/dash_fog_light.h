@@ -36,15 +36,15 @@ struct DashFogLight
 
     // ── runtime state ───────────────────────────────────────
     int mode{kModeOff};
-    int strobeCount{0};        // total flashes requested (0 = infinite)
-    int strobeTogglesDone{0};  // completed ON+OFF toggle pairs
-    int frequency{1};          // 0=slow(100ms), 1=medium(50ms), 2=fast(30ms)
+    int strobeCount{0};       // total flashes requested (0 = infinite)
+    int strobeTogglesDone{0}; // completed ON+OFF toggle pairs
+    int frequency{1};         // 0=slow(100ms), 1=medium(50ms), 2=fast(30ms)
     bool strobeOn{false};
     int tickAccumMs{0};
 
     // F1 state machine
-    int f1FlashIndex{0};       // current flash in burst (0..kF1FlashCount-1)
-    int f1PhaseMs{0};          // ms elapsed in current flash phase
+    int f1FlashIndex{0}; // current flash in burst (0..kF1FlashCount-1)
+    int f1PhaseMs{0};    // ms elapsed in current flash phase
     bool f1InPause{false};
 
     // ── public API ──────────────────────────────────────────
@@ -53,9 +53,12 @@ struct DashFogLight
     {
         switch (frequency)
         {
-        case 0:  return 100;
-        case 2:  return 30;
-        default: return 50;
+        case 0:
+            return 100;
+        case 2:
+            return 30;
+        default:
+            return 50;
         }
     }
 
@@ -100,19 +103,25 @@ struct DashFogLight
     {
         if (gearRaw != 4)
         {
-            if (isActive()) stop();
+            if (isActive())
+                stop();
             return false;
         }
-        if (mode == kModeOff) return false;
+        if (mode == kModeOff)
+            return false;
 
         tickAccumMs += elapsedMs;
 
         switch (mode)
         {
-        case kModeStrobe:    return tickStrobe(outData);
-        case kModeF1Pilot:   return tickF1(outData);
-        case kModeContinuous: return tickContinuous(outData);
-        default: return false;
+        case kModeStrobe:
+            return tickStrobe(outData);
+        case kModeF1Pilot:
+            return tickF1(outData);
+        case kModeContinuous:
+            return tickContinuous(outData);
+        default:
+            return false;
         }
     }
 
@@ -127,7 +136,7 @@ struct DashFogLight
         data[5] = FOG_BASE_5;
         data[6] = FOG_BASE_6;
         // Checksum: sum(CAN ID bytes) + sum(data[0..6])
-        uint16_t sum = 0x73u + 0x02u;   // 0x273: low=0x73, high=0x02
+        uint16_t sum = 0x73u + 0x02u; // 0x273: low=0x73, high=0x02
         for (int i = 0; i < 7; ++i)
             sum += data[i];
         data[7] = static_cast<uint8_t>(sum & 0xFF);
@@ -136,11 +145,13 @@ struct DashFogLight
 private:
     bool tickStrobe(uint8_t outData[8])
     {
-        if (tickAccumMs < toggleIntervalMs()) return false;
+        if (tickAccumMs < toggleIntervalMs())
+            return false;
         tickAccumMs -= toggleIntervalMs();
 
         strobeOn = !strobeOn;
-        if (!strobeOn) strobeTogglesDone++;
+        if (!strobeOn)
+            strobeTogglesDone++;
 
         // Count limit (0 = infinite)
         if (strobeCount > 0 && strobeTogglesDone >= strobeCount)
@@ -158,7 +169,8 @@ private:
     {
         if (f1InPause)
         {
-            if (tickAccumMs < kF1PauseMs) return false;
+            if (tickAccumMs < kF1PauseMs)
+                return false;
             tickAccumMs -= kF1PauseMs;
             f1InPause = false;
             f1FlashIndex = 0;
@@ -166,7 +178,8 @@ private:
             return false;
         }
 
-        if (tickAccumMs < kF1FlashDurationMs / 2) return false;
+        if (tickAccumMs < kF1FlashDurationMs / 2)
+            return false;
 
         // Each flash: ON for half duration, OFF for half duration
         int halfMs = kF1FlashDurationMs / 2;
@@ -191,7 +204,8 @@ private:
 
     bool tickContinuous(uint8_t outData[8])
     {
-        if (tickAccumMs < kKeepAliveMs) return false;
+        if (tickAccumMs < kKeepAliveMs)
+            return false;
         tickAccumMs -= kKeepAliveMs;
         buildFrame(outData, true);
         return true;

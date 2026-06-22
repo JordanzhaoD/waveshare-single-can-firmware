@@ -25,7 +25,7 @@
 
 // ─── Dashboard credentials ─────────────────────────────────
 // Factory defaults — change to your own values before real deployment.
-#define DASH_SSID      "Atlas-FSD"
-#define DASH_PASS      "12345678"
-#define DASH_OTA_USER  "admin"
-#define DASH_OTA_PASS  "12345678"
+#define DASH_SSID "Atlas-FSD"
+#define DASH_PASS "12345678"
+#define DASH_OTA_USER "admin"
+#define DASH_OTA_PASS "12345678"

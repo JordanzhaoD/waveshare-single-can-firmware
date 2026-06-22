@@ -450,10 +450,10 @@ void test_hw4_filter_ids_values()
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT32(280, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(390, ids[1]);
-    TEST_ASSERT_EQUAL_UINT32(880, ids[2]);   // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
+    TEST_ASSERT_EQUAL_UINT32(880, ids[2]); // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
     TEST_ASSERT_EQUAL_UINT32(920, ids[3]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[4]);
-    TEST_ASSERT_EQUAL_UINT32(923, ids[5]);   // 0x39B DAS_status Highland/HW4
+    TEST_ASSERT_EQUAL_UINT32(923, ids[5]); // 0x39B DAS_status Highland/HW4
     TEST_ASSERT_EQUAL_UINT32(1016, ids[6]);
     TEST_ASSERT_EQUAL_UINT32(1021, ids[7]);
     TEST_ASSERT_EQUAL_UINT32(2047, ids[8]);
@@ -478,7 +478,8 @@ void test_hw4_isa_override_preserves_high_bits()
 {
     handler.isaOverride = true;
     CanFrame f = {.id = 923};
-    f.data[1] = 0xE0; f.data[2] = 0xE0;
+    f.data[1] = 0xE0;
+    f.data[2] = 0xE0;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_HEX8(0xFF, mock.sent[0].data[1]);
     TEST_ASSERT_EQUAL_HEX8(0xFF, mock.sent[0].data[2]);
@@ -488,8 +489,13 @@ void test_hw4_isa_override_checksum_correct()
 {
     handler.isaOverride = true;
     CanFrame f = {.id = 923};
-    f.data[0] = 0x10; f.data[1] = 0x00; f.data[2] = 0x00;
-    f.data[3] = 0; f.data[4] = 0; f.data[5] = 0; f.data[6] = 0;
+    f.data[0] = 0x10;
+    f.data[1] = 0x00;
+    f.data[2] = 0x00;
+    f.data[3] = 0;
+    f.data[4] = 0;
+    f.data[5] = 0;
+    f.data[6] = 0;
     handler.handleMessage(f, mock);
     // OR 后 data[1]=0x1F, data[2]=0x1F; checksum = 0x9B+0x03+0x10+0x1F+0x1F = 0xEC
     TEST_ASSERT_EQUAL_HEX8(0xEC, mock.sent[0].data[7]);

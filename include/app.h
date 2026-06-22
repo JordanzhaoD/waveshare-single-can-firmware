@@ -113,19 +113,14 @@ static void appRefreshStatusLed(bool force)
     bool blinkOn = (millis() % 1000UL) < 500UL;
     bool emittedOn = (connected || ota) ? true : blinkOn;
 
-    if (!force && known
-        && lastInjecting == injecting
-        && lastConnected == connected
-        && lastOta == ota
-        && lastLevel == level
-        && lastEmittedOn == emittedOn)
+    if (!force && known && lastInjecting == injecting && lastConnected == connected && lastOta == ota && lastLevel == level && lastEmittedOn == emittedOn)
         return;
 
     uint8_t r = 0, g = 0, b = 0;
     if (emittedOn)
     {
         if (ota)
-            b = level;          // OTA: solid blue
+            b = level; // OTA: solid blue
         else if (injecting)
             g = level;
         else

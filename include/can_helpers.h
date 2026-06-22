@@ -120,7 +120,8 @@ inline const char *describeGTWAutopilot(uint8_t value)
 
 inline void setSpeedProfileV12V13(CanFrame &frame, int profile)
 {
-    if (profile > 2) profile = 2;  // Clamp: profiles 3/4 are HW4-only
+    if (profile > 2)
+        profile = 2; // Clamp: profiles 3/4 are HW4-only
     frame.data[6] &= ~0x06;
     frame.data[6] |= (profile << 1);
 }

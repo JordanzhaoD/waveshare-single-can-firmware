@@ -167,7 +167,7 @@ void test_apply_to_frame_roundtrip_zero_perturbation()
 {
     // With zero perturbation, torque should be unchanged
     uint8_t data2Lo = (DashBionicSteer::kBaseTorqueRaw >> 8) & 0x0F; // 0x08
-    uint8_t data3   = DashBionicSteer::kBaseTorqueRaw & 0xFF;       // 0xB6
+    uint8_t data3 = DashBionicSteer::kBaseTorqueRaw & 0xFF;          // 0xB6
 
     DashBionicSteer bs;
     bs.applyToFrame(data2Lo, data3, 0);
@@ -179,7 +179,7 @@ void test_apply_to_frame_roundtrip_zero_perturbation()
 void test_apply_to_frame_positive_perturbation()
 {
     uint8_t data2Lo = (DashBionicSteer::kBaseTorqueRaw >> 8) & 0x0F;
-    uint8_t data3   = DashBionicSteer::kBaseTorqueRaw & 0xFF;
+    uint8_t data3 = DashBionicSteer::kBaseTorqueRaw & 0xFF;
 
     DashBionicSteer bs;
     bs.applyToFrame(data2Lo, data3, 50);
@@ -192,7 +192,7 @@ void test_apply_to_frame_positive_perturbation()
 void test_apply_to_frame_negative_perturbation()
 {
     uint8_t data2Lo = (DashBionicSteer::kBaseTorqueRaw >> 8) & 0x0F;
-    uint8_t data3   = DashBionicSteer::kBaseTorqueRaw & 0xFF;
+    uint8_t data3 = DashBionicSteer::kBaseTorqueRaw & 0xFF;
 
     DashBionicSteer bs;
     bs.applyToFrame(data2Lo, data3, -30);
@@ -207,7 +207,7 @@ void test_apply_to_frame_large_positive_clamped_by_caller()
     // If perturbation exceeds 12-bit range, verify it wraps (signed arithmetic)
     // In practice, perturbation is capped at 60 by computePerturbation
     uint8_t data2Lo = (DashBionicSteer::kBaseTorqueRaw >> 8) & 0x0F;
-    uint8_t data3   = DashBionicSteer::kBaseTorqueRaw & 0xFF;
+    uint8_t data3 = DashBionicSteer::kBaseTorqueRaw & 0xFF;
 
     DashBionicSteer bs;
     // Apply kPerturbCap — should work fine since base + 60 stays in 12-bit range
@@ -250,7 +250,8 @@ void test_report_success_resets_fail_counter()
 void test_reset_clears_disabled_state()
 {
     DashBionicSteer bs;
-    for (int i = 0; i < 3; i++) bs.reportFailure();
+    for (int i = 0; i < 3; i++)
+        bs.reportFailure();
     TEST_ASSERT_TRUE(bs.isDisabled());
 
     bs.reset();

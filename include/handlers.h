@@ -67,8 +67,8 @@ struct CarManagerBase
     Shared<bool> tlsscBypass{false};
     Shared<bool> emergencyVehicleDetection{true};
     Shared<bool> isaChimeSuppress{false};
-    Shared<bool> isaOverride{false};      // spec Task 3: HW4 重写限速 5b (0x39B raw=31 NONE)
-    Shared<bool> bionicSteering{false};   // Phase 3: bionic steering mode
+    Shared<bool> isaOverride{false};    // spec Task 3: HW4 重写限速 5b (0x39B raw=31 NONE)
+    Shared<bool> bionicSteering{false}; // Phase 3: bionic steering mode
     Shared<uint8_t> hw4OffsetRaw{0};
     Shared<bool> banShieldEnable{false};
     Shared<uint32_t> banShieldBlocks{0};
@@ -80,30 +80,40 @@ struct CarManagerBase
 
     bool handleBanShield(CanFrame &frame, CanDriver &driver)
     {
-        if (!(bool)banShieldEnable) return false;
-        if (frame.id != 2047 || frame.dlc < 8) return false;
+        if (!(bool)banShieldEnable)
+            return false;
+        if (frame.id != 2047 || frame.dlc < 8)
+            return false;
 
         uint8_t mux = readMuxID(frame);
-        if (mux >= 8) return false;
+        if (mux >= 8)
+            return false;
 
-        if (!banShieldValid[mux]) {
-            for (int i = 0; i < 8; i++) banShieldSnapshot[mux][i] = frame.data[i];
+        if (!banShieldValid[mux])
+        {
+            for (int i = 0; i < 8; i++)
+                banShieldSnapshot[mux][i] = frame.data[i];
             banShieldValid[mux] = true;
             return false;
         }
 
         bool changed = false;
-        for (int i = 0; i < 8; i++) {
-            if (frame.data[i] != banShieldSnapshot[mux][i]) {
+        for (int i = 0; i < 8; i++)
+        {
+            if (frame.data[i] != banShieldSnapshot[mux][i])
+            {
                 changed = true;
                 break;
             }
         }
-        if (!changed) return false;
+        if (!changed)
+            return false;
 
-        if (checkAD && !checkAD()) return true;
+        if (checkAD && !checkAD())
+            return true;
         CanFrame out = frame;
-        for (int i = 0; i < 8; i++) out.data[i] = banShieldSnapshot[mux][i];
+        for (int i = 0; i < 8; i++)
+            out.data[i] = banShieldSnapshot[mux][i];
         banShieldBlocks++;
         driver.send(out);
         return true;
@@ -112,10 +122,13 @@ struct CarManagerBase
     // Auto hardware detection from GTW_carConfig (CAN 920)
     void updateHwDetectedFrom920(const CanFrame &frame)
     {
-        if (frame.id != 920 || frame.dlc < 1) return;
+        if (frame.id != 920 || frame.dlc < 1)
+            return;
         uint8_t das_hw = (frame.data[0] >> 6) & 0x03;
-        if (das_hw == 2) hwDetected = 1;   // HW3
-        else if (das_hw == 3) hwDetected = 2; // HW4
+        if (das_hw == 2)
+            hwDetected = 1; // HW3
+        else if (das_hw == 3)
+            hwDetected = 2; // HW4
     }
 
     unsigned long lastSummonActivityMs = 0;
@@ -319,10 +332,13 @@ struct LegacyHandler : public CarManagerBase
         // so the offset unit follows the car's setting.
         if (frame.id == 760)
         {
-            if (checkAD && !checkAD()) return;
-            if (frame.dlc < 6) return;
+            if (checkAD && !checkAD())
+                return;
+            if (frame.dlc < 6)
+                return;
             uint8_t effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
-            if (effectiveOffset == 0) return;
+            if (effectiveOffset == 0)
+                return;
             uint8_t raw = (uint8_t)(effectiveOffset + 30);
             legacyFsdDiag.aux760.recordBefore(frame.data);
             frame.data[5] = (frame.data[5] & 0xC0) | (raw & 0x3F);
@@ -331,15 +347,19 @@ struct LegacyHandler : public CarManagerBase
             framesSent++;
             bool ok = driver.send(frame);
             legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux760, ok, dashDiagNowMs());
-            if (onSend) onSend(0, ok);
+            if (onSend)
+                onSend(0, ok);
             return;
         }
         // 0x438 (1080) — UI_driverAssistAnonDebugParams: visionSpeedSlider = 100
         if (frame.id == 1080)
         {
-            if (frame.dlc < 8) return;
-            if (!overrideSpeedLimit) return;
-            if (checkAD && !checkAD()) return;
+            if (frame.dlc < 8)
+                return;
+            if (!overrideSpeedLimit)
+                return;
+            if (checkAD && !checkAD())
+                return;
             legacyFsdDiag.aux1080.recordBefore(frame.data);
             frame.data[7] = (frame.data[7] & 0x80) | 100;
             legacyFsdDiag.aux1080.recordAfter(frame.data);
@@ -347,11 +367,14 @@ struct LegacyHandler : public CarManagerBase
             framesSent++;
             bool ok = driver.send(frame);
             legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux1080, ok, dashDiagNowMs());
-            if (onSend) onSend(0, ok);
+            if (onSend)
+                onSend(0, ok);
             return;
         }
-        if (handleDISystemStatus(frame)) return;
-        if (handleDIVehicleStatus(frame)) return;
+        if (handleDISystemStatus(frame))
+            return;
+        if (handleDIVehicleStatus(frame))
+            return;
         if (frame.id == 921)
         {
             if (frame.dlc < 1)
@@ -392,15 +415,15 @@ struct LegacyHandler : public CarManagerBase
                     return;
                 }
                 bool legacyActivationAllowed = legacyFsdActivationAllowed
-                    ? legacyFsdActivationAllowed(nowMs)
-                    : injectionAllowed();
+                                                   ? legacyFsdActivationAllowed(nowMs)
+                                                   : injectionAllowed();
                 if (!legacyActivationAllowed)
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
                     legacyFsdDiag.lastBlockedBy = legacyFsdActivationAllowed
-                        ? FsdGateBlockReason::LegacyFsdSettle
-                        : currentGateBlockReason();
+                                                      ? FsdGateBlockReason::LegacyFsdSettle
+                                                      : currentGateBlockReason();
                     return;
                 }
 
@@ -422,7 +445,8 @@ struct LegacyHandler : public CarManagerBase
                 bool ok = driver.send(frame);
                 legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux0, ok, nowMs);
                 legacyFsdDiag.markTxResult(ok, nowMs);
-                if (onSend) onSend(0, ok);
+                if (onSend)
+                    onSend(0, ok);
             }
             else if (index == 1)
             {
@@ -470,7 +494,8 @@ struct LegacyHandler : public CarManagerBase
                 bool ok = driver.send(frame);
                 legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux1, ok, nowMs);
                 legacyFsdDiag.markTxResult(ok, nowMs);
-                if (onSend) onSend(1, ok);
+                if (onSend)
+                    onSend(1, ok);
             }
 
             if (index == 0 && enablePrint)
@@ -508,8 +533,10 @@ struct HW3Handler : public CarManagerBase
         if (onFrame)
             onFrame(frame);
         updateHwDetectedFrom920(frame);
-        if (handleDISystemStatus(frame)) return;
-        if (handleDIVehicleStatus(frame)) return;
+        if (handleDISystemStatus(frame))
+            return;
+        if (handleDIVehicleStatus(frame))
+            return;
         if (frame.id == 1016)
         {
             if (frame.dlc < 6)
@@ -551,7 +578,8 @@ struct HW3Handler : public CarManagerBase
                 frame.data[7] = computeVehicleChecksum(frame);
                 framesSent++;
                 driver.send(frame);
-                if (onSend) onSend(0, true);
+                if (onSend)
+                    onSend(0, true);
                 return;
             }
             return;
@@ -604,11 +632,13 @@ struct HW3Handler : public CarManagerBase
                 speedOffset = std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
                 hw3StockOffsetKph = (int)speedOffset;
                 setBit(frame, 46, true);
-                if ((bool)tlsscBypass) setBit(frame, 38, true);
+                if ((bool)tlsscBypass)
+                    setBit(frame, 38, true);
                 setSpeedProfileV12V13(frame, speedProfile);
                 framesSent++;
                 driver.send(frame);
-                if (onSend) onSend(0, true);
+                if (onSend)
+                    onSend(0, true);
             }
 
             // ── Mux 1: Nag suppression (bit-19 clear, legacy baseline) ──
@@ -617,7 +647,8 @@ struct HW3Handler : public CarManagerBase
                 setBit(frame, 19, false);
                 framesSent++;
                 driver.send(frame);
-                if (onSend) onSend(1, true);
+                if (onSend)
+                    onSend(1, true);
             }
 
             // ── Mux 2: Speed offset (three-layer + slew limiter) ──────────
@@ -637,7 +668,8 @@ struct HW3Handler : public CarManagerBase
                 hw3OffsetTargetRaw = activeRaw;
 
                 // Slew limiter: damps downward drops only
-                if (hw3OffsetSlew && fl > 0 && (int)fl * 5 < kHw3StockOffsetCutoverKph) {
+                if (hw3OffsetSlew && fl > 0 && (int)fl * 5 < kHw3StockOffsetCutoverKph)
+                {
                     uint32_t now =
 #ifndef NATIVE_BUILD
                         millis();
@@ -647,18 +679,22 @@ struct HW3Handler : public CarManagerBase
                     uint8_t last = hw3OffsetLastRaw;
                     uint8_t ratePctPerSec = dashLoadHw3SlewRate(hw3SlewRate);
                     uint32_t rateRawPerSec = (uint32_t)ratePctPerSec * 4;
-                    if (activeRaw < last && hw3OffsetLastSentMs != 0) {
+                    if (activeRaw < last && hw3OffsetLastSentMs != 0)
+                    {
                         uint32_t dt = now - hw3OffsetLastSentMs;
                         uint32_t maxDrop = (rateRawPerSec * dt + 500) / 1000;
                         uint8_t floorRaw = last > maxDrop ? (uint8_t)(last - maxDrop) : 0;
-                        if (activeRaw < floorRaw) {
+                        if (activeRaw < floorRaw)
+                        {
                             activeRaw = floorRaw;
                             hw3OffsetSlewCount = hw3OffsetSlewCount + 1;
                         }
                     }
                     hw3OffsetLastRaw = activeRaw;
                     hw3OffsetLastSentMs = now;
-                } else {
+                }
+                else
+                {
                     hw3OffsetLastRaw = activeRaw;
 #ifndef NATIVE_BUILD
                     hw3OffsetLastSentMs = millis();
@@ -672,7 +708,8 @@ struct HW3Handler : public CarManagerBase
                 frame.data[1] |= (activeRaw >> 2);
                 framesSent++;
                 driver.send(frame);
-                if (onSend) onSend(2, true);
+                if (onSend)
+                    onSend(2, true);
             }
 
             if (index == 0 && enablePrint)
@@ -717,7 +754,7 @@ struct NagHandler : public CarManagerBase
 {
     Shared<bool> nagKillerActive{true};
     Shared<uint32_t> nagEchoCount{0};
-    DashBionicSteer bionic;  // bionic steering state
+    DashBionicSteer bionic; // bionic steering state
 
     bool bionicDisabled() const override { return bionic.isDisabled(); }
     void resetBionic(uint32_t seed) override
@@ -768,7 +805,7 @@ struct NagHandler : public CarManagerBase
 
             int pert = bionic.computePerturbation();
             uint8_t d2lo = 0x08;
-            uint8_t d3   = 0xB6;
+            uint8_t d3 = 0xB6;
             bionic.applyToFrame(d2lo, d3, pert);
             echo.data[2] = (frame.data[2] & 0xF0) | d2lo;
             echo.data[3] = d3;
@@ -854,8 +891,10 @@ struct HW4Handler : public CarManagerBase
         if (onFrame)
             onFrame(frame);
         updateHwDetectedFrom920(frame);
-        if (handleDISystemStatus(frame)) return;
-        if (handleDIVehicleStatus(frame)) return;
+        if (handleDISystemStatus(frame))
+            return;
+        if (handleDIVehicleStatus(frame))
+            return;
         if (frame.id == 921)
         {
             if (frame.dlc < 1)
@@ -870,7 +909,8 @@ struct HW4Handler : public CarManagerBase
                 frame.data[7] = computeVehicleChecksum(frame);
                 framesSent++;
                 driver.send(frame);
-                if (onSend) onSend(0, true);
+                if (onSend)
+                    onSend(0, true);
                 return;
             }
             return;
@@ -879,12 +919,13 @@ struct HW4Handler : public CarManagerBase
         if (frame.id == 923 && frame.dlc >= 8 &&
             (bool)isaOverride && injectionAllowed())
         {
-            frame.data[1] |= 0x1F;   // DAS_fusedSpeedLimit = 31 (NONE)
-            frame.data[2] |= 0x1F;   // DAS_visionOnlySpeedLimit = 31 (NONE)
+            frame.data[1] |= 0x1F; // DAS_fusedSpeedLimit = 31 (NONE)
+            frame.data[2] |= 0x1F; // DAS_visionOnlySpeedLimit = 31 (NONE)
             frame.data[7] = computeVehicleChecksum(frame);
             framesSent++;
             driver.send(frame);
-            if (onSend) onSend(0, true);
+            if (onSend)
+                onSend(0, true);
             return;
         }
         if (frame.id == 1016)
@@ -962,11 +1003,14 @@ struct HW4Handler : public CarManagerBase
             {
                 setBit(frame, 46, true);
                 setBit(frame, 60, true);
-                if ((bool)emergencyVehicleDetection) setBit(frame, 59, true);
-                if ((bool)tlsscBypass) setBit(frame, 38, true);
+                if ((bool)emergencyVehicleDetection)
+                    setBit(frame, 59, true);
+                if ((bool)tlsscBypass)
+                    setBit(frame, 38, true);
                 framesSent++;
                 driver.send(frame);
-                if (onSend) onSend(0, true);
+                if (onSend)
+                    onSend(0, true);
             }
 
             // Mux 1: FSD-ready signal (bit 47) + nag suppression (bit 19).
@@ -976,7 +1020,8 @@ struct HW4Handler : public CarManagerBase
                 setBit(frame, 19, false);
                 framesSent++;
                 driver.send(frame);
-                if (onSend) onSend(1, true);
+                if (onSend)
+                    onSend(1, true);
             }
 
             // Mux 2: Speed profile + offset
@@ -990,7 +1035,8 @@ struct HW4Handler : public CarManagerBase
                     frame.data[1] = (frame.data[1] & 0xC0) | ((int)hw4OffsetRaw & 0x3F);
                 framesSent++;
                 driver.send(frame);
-                if (onSend) onSend(2, true);
+                if (onSend)
+                    onSend(2, true);
             }
 
             if (index == 0 && enablePrint)

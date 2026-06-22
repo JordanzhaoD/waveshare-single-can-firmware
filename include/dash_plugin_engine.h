@@ -139,7 +139,8 @@ static inline std::string dashPluginLowerTrim(const std::string &input)
         --end;
 
     std::string out = input.substr(start, end - start);
-    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c)
+                   { return static_cast<char>(std::toupper(c)); });
     return out;
 }
 
@@ -278,9 +279,8 @@ public:
         // Capture the verbatim install source so export/import can re-install it.
         plugin.sourceJson = json;
 
-        const auto existing = std::find_if(plugins_.begin(), plugins_.end(), [&](const DashPlugin &p) {
-            return p.name == plugin.name;
-        });
+        const auto existing = std::find_if(plugins_.begin(), plugins_.end(), [&](const DashPlugin &p)
+                                           { return p.name == plugin.name; });
         if (existing != plugins_.end())
         {
             clearPeriodicCache();
@@ -407,7 +407,8 @@ public:
             return DashPluginResult::fail("plugin not found");
         const size_t before = plugins_.size();
         plugins_.erase(std::remove_if(plugins_.begin(), plugins_.end(),
-                                      [&](const DashPlugin &p) { return p.name == name; }),
+                                      [&](const DashPlugin &p)
+                                      { return p.name == name; }),
                        plugins_.end());
         if (plugins_.size() == before)
             return DashPluginResult::fail("plugin not found");
@@ -503,9 +504,8 @@ public:
             if (plugin.enabled && plugin.compatible)
                 ordered.push_back(&plugin);
         }
-        std::sort(ordered.begin(), ordered.end(), [](const DashPlugin *a, const DashPlugin *b) {
-            return a->priority < b->priority;
-        });
+        std::sort(ordered.begin(), ordered.end(), [](const DashPlugin *a, const DashPlugin *b)
+                  { return a->priority < b->priority; });
 
         CanFrame out = frame;
         if (out.bus == CAN_BUS_ANY)
@@ -1042,7 +1042,8 @@ private:
     {
         if (name == nullptr)
             return nullptr;
-        auto it = std::find_if(plugins_.begin(), plugins_.end(), [&](const DashPlugin &plugin) { return plugin.name == name; });
+        auto it = std::find_if(plugins_.begin(), plugins_.end(), [&](const DashPlugin &plugin)
+                               { return plugin.name == name; });
         return it == plugins_.end() ? nullptr : &(*it);
     }
 
@@ -1050,7 +1051,8 @@ private:
     {
         if (name == nullptr)
             return nullptr;
-        auto it = std::find_if(plugins_.begin(), plugins_.end(), [&](const DashPlugin &plugin) { return plugin.name == name; });
+        auto it = std::find_if(plugins_.begin(), plugins_.end(), [&](const DashPlugin &plugin)
+                               { return plugin.name == name; });
         return it == plugins_.end() ? nullptr : &(*it);
     }
 
@@ -1112,11 +1114,11 @@ private:
         ordered.reserve(count);
         for (size_t i = 0; i < count; ++i)
             ordered.push_back({plugins_[i].priority, i});
-        std::stable_sort(ordered.begin(), ordered.end(), [](const auto &a, const auto &b) {
+        std::stable_sort(ordered.begin(), ordered.end(), [](const auto &a, const auto &b)
+                         {
             if (a.first != b.first)
                 return a.first < b.first;
-            return a.second < b.second;
-        });
+            return a.second < b.second; });
 
         uint8_t next = 1;
         for (const auto &entry : ordered)

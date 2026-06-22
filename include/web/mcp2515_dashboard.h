@@ -178,14 +178,14 @@ static uint32_t legacyFsdLastBlockedMs = 0;
 static bool legacyFsdLastAllowed = false;
 static bool dashSpeedProfileAuto = true;
 static uint8_t dashManualSpeedProfile = 1;
-static uint8_t dashDriveProfile = 0;      // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
-static uint8_t dashSpeedStrategy = 1;     // 0=fixed, 1=auto, 2=custom
+static uint8_t dashDriveProfile = 0;  // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
+static uint8_t dashSpeedStrategy = 1; // 0=fixed, 1=auto, 2=custom
 static bool dashLightingEnabled = false;
 static uint8_t dashLightingCount = 3;
 static uint8_t dashLightingFrequency = 1; // 0=slow, 1=medium, 2=fast
 static uint8_t dashRearFogStrategy = 0;   // 0=off, 1=strobe, 2=continuous
-static DashFogLight dashFogCtrl;           // Phase 4 fog light controller instance
-static bool dashFogOffRequested = false;   // one-shot fail-off/stop command owned by CAN task
+static DashFogLight dashFogCtrl;          // Phase 4 fog light controller instance
+static bool dashFogOffRequested = false;  // one-shot fail-off/stop command owned by CAN task
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
@@ -245,31 +245,57 @@ static constexpr bool kDashBus2SnifferSupported = kDashCan2Available;
 static String dashCapabilitiesJson()
 {
     String j = "{";
-    j += "\""; j += "singleCan"; j += "\":";           // "singleCan":
+    j += "\"";
+    j += "singleCan";
+    j += "\":"; // "singleCan":
     j += kDashSingleCanStandalone ? "true" : "false";
-    j += ",\""; j += "can2Available"; j += "\":";   // "can2Available":
+    j += ",\"";
+    j += "can2Available";
+    j += "\":"; // "can2Available":
     j += kDashCan2Available ? "true" : "false";
-    j += ",\""; j += "lightingBusSupported"; j += "\":"; // "lightingBusSupported":
+    j += ",\"";
+    j += "lightingBusSupported";
+    j += "\":"; // "lightingBusSupported":
     j += kDashLightingBusSupported ? "true" : "false";
-    j += ",\""; j += "serviceModeSupported"; j += "\":"; // "serviceModeSupported":
+    j += ",\"";
+    j += "serviceModeSupported";
+    j += "\":"; // "serviceModeSupported":
     j += kDashServiceModeSupported ? "true" : "false";
-    j += ",\""; j += "stalkTestSupported"; j += "\":";   // "stalkTestSupported":
+    j += ",\"";
+    j += "stalkTestSupported";
+    j += "\":"; // "stalkTestSupported":
     j += kDashStalkTestSupported ? "true" : "false";
-    j += ",\""; j += "bus2SnifferSupported"; j += "\":"; // "bus2SnifferSupported":
+    j += ",\"";
+    j += "bus2SnifferSupported";
+    j += "\":"; // "bus2SnifferSupported":
     j += kDashBus2SnifferSupported ? "true" : "false";
-    j += ",\""; j += "fsdActivation"; j += "\":true";    // "fsdActivation":true
-    j += ",\""; j += "speedStrategy"; j += "\":true";    // "speedStrategy":true
-    j += ",\""; j += "driveProfile"; j += "\":true";     // "driveProfile":true
-    j += ",\""; j += "networkSettings"; j += "\":true";  // "networkSettings":true
-    j += ",\""; j += "otaUpdate"; j += "\":true";        // "otaUpdate":true
-    j += ",\""; j += "canDiagnostics"; j += "\":true";   // "canDiagnostics":true
-    j += ",\""; j += "pluginEngine"; j += "\":";
+    j += ",\"";
+    j += "fsdActivation";
+    j += "\":true"; // "fsdActivation":true
+    j += ",\"";
+    j += "speedStrategy";
+    j += "\":true"; // "speedStrategy":true
+    j += ",\"";
+    j += "driveProfile";
+    j += "\":true"; // "driveProfile":true
+    j += ",\"";
+    j += "networkSettings";
+    j += "\":true"; // "networkSettings":true
+    j += ",\"";
+    j += "otaUpdate";
+    j += "\":true"; // "otaUpdate":true
+    j += ",\"";
+    j += "canDiagnostics";
+    j += "\":true"; // "canDiagnostics":true
+    j += ",\"";
+    j += "pluginEngine";
+    j += "\":";
 #if defined(DASH_PLUGIN_ENGINE)
     j += "true";
 #else
     j += "false";
 #endif
-    j += "}";                                              // close capabilities object
+    j += "}"; // close capabilities object
     return j;
 }
 
@@ -958,7 +984,8 @@ static FsdGateBlockReason dashCurrentGateBlockReason()
 static bool dashInjectionActive()
 {
     // Phase 1: OTA保护 — 车辆OTA进行中时暂停注入
-    if (!dashOtaGuardAllowInjection()) return false;
+    if (!dashOtaGuardAllowInjection())
+        return false;
     return canActive && dashApInjectionAllowed();
 }
 
@@ -1338,12 +1365,12 @@ static void dashSavePrefs()
     prefs.putUChar("sp_sel", dashManualSpeedProfile);
     prefs.putUChar("drv_prof", dashDriveProfile);
     prefs.putUChar("spd_str", dashSpeedStrategy);
-    prefs.putUChar("offsetMode", offsetMode);       // 0=fixed, 1=auto, 2=custom
-    prefs.putUChar("manualPct", manualOffsetPct);   // 0-50% for fixed mode
-    prefs.putUChar("cp0", customPct[0]);             // Zone ≤50 km/h  (HTTP: cp1)
-    prefs.putUChar("cp1", customPct[1]);             // Zone ≤70 km/h  (HTTP: cp2)
-    prefs.putUChar("cp2", customPct[2]);             // Zone ≤100 km/h (HTTP: cp3)
-    prefs.putUChar("cp3", customPct[3]);             // Zone >100 km/h (HTTP: cp4)
+    prefs.putUChar("offsetMode", offsetMode);     // 0=fixed, 1=auto, 2=custom
+    prefs.putUChar("manualPct", manualOffsetPct); // 0-50% for fixed mode
+    prefs.putUChar("cp0", customPct[0]);          // Zone ≤50 km/h  (HTTP: cp1)
+    prefs.putUChar("cp1", customPct[1]);          // Zone ≤70 km/h  (HTTP: cp2)
+    prefs.putUChar("cp2", customPct[2]);          // Zone ≤100 km/h (HTTP: cp3)
+    prefs.putUChar("cp3", customPct[3]);          // Zone >100 km/h (HTTP: cp4)
     prefs.putBool("lt_en", dashLightingEnabled);
     prefs.putUChar("lt_cnt", dashLightingCount);
     prefs.putUChar("lt_freq", dashLightingFrequency);
@@ -1531,7 +1558,7 @@ static void dashLoadPrefs()
     dashSpeedStrategy = prefs.getUChar("spd_str", dashSpeedProfileAuto ? 1 : 0);
     if (dashSpeedStrategy > 2)
         dashSpeedStrategy = 1;
-    offsetMode = prefs.getUChar("offsetMode", dashSpeedStrategy);  // see dash_hw3_speed.h mapping
+    offsetMode = prefs.getUChar("offsetMode", dashSpeedStrategy); // see dash_hw3_speed.h mapping
     if (offsetMode > 2)
         offsetMode = 1;
     dashSpeedStrategy = offsetMode;
@@ -1586,7 +1613,7 @@ static void dashLoadPrefs()
         {
             snprintf(k, sizeof(k), "h3_ht%u", (unsigned)i);
             hw3HighSpeedTarget[i] = dashClampHw3HighSpeedTargetForBucket(i,
-                prefs.getUChar(k, defHs[i]));
+                                                                         prefs.getUChar(k, defHs[i]));
         }
     }
     dashSyncLegacyShims();
@@ -1766,7 +1793,7 @@ static void dashLoadPrefs()
     autoUpdateEnabled = prefs.getBool("auto_upd", false);
     // Phase 1: 功耗管理 NVS 加载
     autoShutdownEnabled = prefs.getBool(NVS_KEY_AUTO_SHUTDOWN, false);
-    wifiAutoOffEnabled  = prefs.getBool(NVS_KEY_WIFI_AUTO_OFF, false);
+    wifiAutoOffEnabled = prefs.getBool(NVS_KEY_WIFI_AUTO_OFF, false);
     prefs.end();
 
     if (migratedHw)
@@ -1911,7 +1938,8 @@ static void appendHexBytesJson(String &j, const uint8_t data[8])
     j += "\"";
     for (uint8_t i = 0; i < 8; ++i)
     {
-        if (i) j += " ";
+        if (i)
+            j += " ";
         uint8_t b = data[i];
         j += hex[(b >> 4) & 0x0F];
         j += hex[b & 0x0F];
@@ -2213,7 +2241,8 @@ static void handleStatus()
     j += ",\"uiBuildId\":\"" DASH_UI_BUILD_ID "\"";
     j += ",\"uiBuildUtc\":\"" DASH_UI_BUILD_UTC "\"";
     j += ",\"";
-    j += "capabilities"; j += "\":";        // "capabilities":
+    j += "capabilities";
+    j += "\":"; // "capabilities":
     j += dashCapabilitiesJson();
     j += ",\"sp\":";
     j += sp;
@@ -2278,7 +2307,8 @@ static void handleStatus()
     j += ",\"hw3CustomTarget\":[";
     for (uint8_t i = 0; i < kHw3CustomTargetCount; i++)
     {
-        if (i) j += ",";
+        if (i)
+            j += ",";
         j += hw3CustomTarget[i];
     }
     j += "],\"hw3HighSpeedEnable\":";
@@ -2286,7 +2316,8 @@ static void handleStatus()
     j += ",\"hw3HighSpeedTarget\":[";
     for (uint8_t i = 0; i < kHw3HighSpeedBucketCount; i++)
     {
-        if (i) j += ",";
+        if (i)
+            j += ",";
         j += hw3HighSpeedTarget[i];
     }
     j += "],\"hw3WireEncoding\":";
@@ -2313,7 +2344,8 @@ static void handleStatus()
     j += ",\"legacyMppCustomTarget\":[";
     for (uint8_t i = 0; i < kLegacyMppCustomTargetCount; i++)
     {
-        if (i) j += ",";
+        if (i)
+            j += ",";
         j += legacyMppCustomTarget[i];
     }
     j += "],\"legacyMppHighSpeedEnable\":";
@@ -2321,7 +2353,8 @@ static void handleStatus()
     j += ",\"legacyMppHighSpeedTarget\":[";
     for (uint8_t i = 0; i < kLegacyMppHighSpeedBucketCount; i++)
     {
-        if (i) j += ",";
+        if (i)
+            j += ",";
         j += legacyMppHighSpeedTarget[i];
     }
     j += "],\"legacyMppLastRaw\":";
@@ -2510,8 +2543,10 @@ static void handleConfig()
             if (fsd["legacyOffset"].is<int>())
             {
                 int offset = fsd["legacyOffset"].as<int>();
-                if (offset < -30) offset = -30;
-                if (offset > 225) offset = 225;
+                if (offset < -30)
+                    offset = -30;
+                if (offset > 225)
+                    offset = 225;
                 nvsLegacyOffset = offset;
                 changed = true;
             }
@@ -2522,8 +2557,8 @@ static void handleConfig()
             }
             if (changed)
             {
-                dashApplyRuntimeState();  // nvs mirror -> dashHandler fields
-                dashSavePrefs();          // dashHandler fields -> NVS commit
+                dashApplyRuntimeState(); // nvs mirror -> dashHandler fields
+                dashSavePrefs();         // dashHandler fields -> NVS commit
                 dashLog("[CFG] fsdRuntime JSON: legacyOffset/overrideSpeedLimit applied");
             }
         }
@@ -2537,8 +2572,8 @@ static void handleConfig()
             hwMode = v;
             hwChanged = true;
             const char *hwName = v == 0 ? "LEGACY" : v == 1 ? "HW3"
-                                       : v == 2   ? "HW4"
-                                                   : "AUTO";
+                                                 : v == 2   ? "HW4"
+                                                            : "AUTO";
             dashLog(String("[CFG] HW=") + hwName);
             // For hwMode=3 (auto), set autoModeEnabled on active handler;
             // the actual handler swap happens when CAN 920 detects HW version.
@@ -2647,9 +2682,12 @@ static void handleConfig()
         bool legacyHw3CustomSpeed = hw3CustomSpeed;
         bool legacyHw3HighSpeedEnable = hw3HighSpeedEnable;
         bool legacyHw3AutoSpeed = hw3AutoSpeed;
-        if (server.hasArg("hw3CustomSpeed")) legacyHw3CustomSpeed = server.arg("hw3CustomSpeed") == "1";
-        if (server.hasArg("hw3HighSpeedEnable")) legacyHw3HighSpeedEnable = server.arg("hw3HighSpeedEnable") == "1";
-        if (server.hasArg("hw3AutoSpeed")) legacyHw3AutoSpeed = server.arg("hw3AutoSpeed") == "1";
+        if (server.hasArg("hw3CustomSpeed"))
+            legacyHw3CustomSpeed = server.arg("hw3CustomSpeed") == "1";
+        if (server.hasArg("hw3HighSpeedEnable"))
+            legacyHw3HighSpeedEnable = server.arg("hw3HighSpeedEnable") == "1";
+        if (server.hasArg("hw3AutoSpeed"))
+            legacyHw3AutoSpeed = server.arg("hw3AutoSpeed") == "1";
         dashSpeedStrategy = legacyHw3CustomSpeed ? 2 : ((legacyHw3HighSpeedEnable || legacyHw3AutoSpeed) ? 1 : 0);
         offsetMode = dashSpeedStrategy;
         dashSyncLegacyShims();
@@ -2673,14 +2711,14 @@ static void handleConfig()
             snprintf(arg, sizeof(arg), "hw3CustomT%u", (unsigned)i);
             if (server.hasArg(arg))
                 hw3CustomTarget[i] = dashClampHw3CustomTargetForBucket(i,
-                    server.arg(arg).toInt());
+                                                                       server.arg(arg).toInt());
         }
         for (uint8_t i = 0; i < kHw3HighSpeedBucketCount; i++)
         {
             snprintf(arg, sizeof(arg), "hw3HighTarget%u", (unsigned)i);
             if (server.hasArg(arg))
                 hw3HighSpeedTarget[i] = dashClampHw3HighSpeedTargetForBucket(i,
-                    server.arg(arg).toInt());
+                                                                             server.arg(arg).toInt());
         }
     }
     // ─── Legacy MPP custom speed-limit override ──────────────────────────────
@@ -2718,14 +2756,14 @@ static void handleConfig()
             snprintf(arg, sizeof(arg), "legacyMppCustomT%u", (unsigned)i);
             if (server.hasArg(arg))
                 legacyMppCustomTarget[i] = dashClampLegacyMppCustomTargetForBucket(i,
-                    server.arg(arg).toInt());
+                                                                                   server.arg(arg).toInt());
         }
         for (uint8_t i = 0; i < kLegacyMppHighSpeedBucketCount; i++)
         {
             snprintf(arg, sizeof(arg), "legacyMppHighTarget%u", (unsigned)i);
             if (server.hasArg(arg))
                 legacyMppHighSpeedTarget[i] = dashClampLegacyMppHighSpeedTargetForBucket(i,
-                    server.arg(arg).toInt());
+                                                                                         server.arg(arg).toInt());
         }
     }
     if (hwChanged)
@@ -3089,7 +3127,8 @@ static void handleDefenseConfig()
             bool v = dashArgTruthy(server.arg("bionic_steering"));
             dashBionicSteering = v;
             // Reset bionic disabled state when user re-enables
-            if (v) dashBionicDisabled = false;
+            if (v)
+                dashBionicDisabled = false;
             // Sync to NagHandler if available
             if (dashHandler)
             {
@@ -3153,9 +3192,12 @@ static void handleLegacyFsdConfig()
             else
                 dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
         }
-        if (server.hasArg("mux1")) dashLegacyFsdMux1Enable = server.arg("mux1") == "1";
-        if (server.hasArg("profile")) dashLegacyFsdProfileWriteEnable = server.arg("profile") == "1";
-        if (server.hasArg("vision")) dashLegacyFsdVisionLimitClearEnable = server.arg("vision") == "1";
+        if (server.hasArg("mux1"))
+            dashLegacyFsdMux1Enable = server.arg("mux1") == "1";
+        if (server.hasArg("profile"))
+            dashLegacyFsdProfileWriteEnable = server.arg("profile") == "1";
+        if (server.hasArg("vision"))
+            dashLegacyFsdVisionLimitClearEnable = server.arg("vision") == "1";
         dashApplyRuntimeState();
         dashSavePrefs();
     }
@@ -3175,10 +3217,13 @@ static void handleLegacyFsdConfig()
 // ── Phase 1 新增端点 ──────────────────────────────────────────────
 
 // POST/GET /power_mgmt — 功耗管理配置
-static void handlePowerMgmt() {
+static void handlePowerMgmt()
+{
     dashPowerMgmtTouchWeb();
-    if (server.hasArg("autoShutdown") || server.hasArg("wifiAutoOff")) {
-        if (server.hasArg("autoShutdown")) {
+    if (server.hasArg("autoShutdown") || server.hasArg("wifiAutoOff"))
+    {
+        if (server.hasArg("autoShutdown"))
+        {
             autoShutdownEnabled = dashArgTruthy(server.arg("autoShutdown"));
             if (autoShutdownEnabled)
                 dashPowerMgmtConfigureWake();
@@ -3201,7 +3246,8 @@ static void handlePowerMgmt() {
 }
 
 // GET /vehicle_ota_status — 车辆OTA状态
-static void handleVehicleOtaStatus() {
+static void handleVehicleOtaStatus()
+{
     dashPowerMgmtTouchWeb();
     String json = "{\"vehicleOta\":";
     json += vehicleOtaActive ? "true" : "false";
@@ -3214,7 +3260,8 @@ static void handleVehicleOtaStatus() {
 }
 
 // POST/GET /fog_light — 后雾灯策略 + 执行控制
-static void handleFogLight() {
+static void handleFogLight()
+{
     dashPowerMgmtTouchWeb();
     const char *reason = "idle";
 #if defined(DRIVER_T2CAN_DUAL)
@@ -3222,41 +3269,56 @@ static void handleFogLight() {
 #else
     bool driverSupported = false;
 #endif
-    if (server.hasArg("fogStrategy")) {
+    if (server.hasArg("fogStrategy"))
+    {
         int strategy = server.arg("fogStrategy").toInt();
-        if (strategy < 0 || strategy > 2) strategy = 0;
+        if (strategy < 0 || strategy > 2)
+            strategy = 0;
         dashRearFogStrategy = strategy;
         prefs.begin(PREFS_NS, false);
         prefs.putUChar("lt_fog", strategy);
         prefs.end();
         // Stop active fog when strategy changes to off; CAN task sends final OFF frame.
-        if (strategy == 0) dashFogOffRequested = true;
+        if (strategy == 0)
+            dashFogOffRequested = true;
         reason = "strategy_saved";
         dashLog(String("[CFG] Fog strategy: ") + dashRearFogStrategyName(strategy));
     }
     // Phase 4: trigger fog light execution. /lighting_config only saves the
     // preferred strategy; actual CAN-B execution must enter here.
-    if (server.hasArg("trigger")) {
+    if (server.hasArg("trigger"))
+    {
         String t = server.arg("trigger");
-        if (!driverSupported) {
+        if (!driverSupported)
+        {
             reason = "driver_not_supported";
-        } else if (t == "strobe") {
+        }
+        else if (t == "strobe")
+        {
             dashFogCtrl.startStrobe(dashLightingCount, dashLightingFrequency);
             reason = "strobe_started";
             dashLog("[FOG] Strobe started");
-        } else if (t == "f1") {
+        }
+        else if (t == "f1")
+        {
             dashFogCtrl.startF1Pilot();
             reason = "f1_started";
             dashLog("[FOG] F1 pilot started");
-        } else if (t == "continuous") {
+        }
+        else if (t == "continuous")
+        {
             dashFogCtrl.startContinuous();
             reason = "continuous_started";
             dashLog("[FOG] Continuous ON");
-        } else if (t == "stop") {
+        }
+        else if (t == "stop")
+        {
             dashFogOffRequested = true;
             reason = "stop_requested";
             dashLog("[FOG] Stopped");
-        } else {
+        }
+        else
+        {
             reason = "unknown_trigger";
         }
     }
@@ -3275,7 +3337,8 @@ static void handleFogLight() {
 }
 
 // POST /strobe_cont — 连续闪烁（Phase 4: now functional）
-static void handleStrobeCont() {
+static void handleStrobeCont()
+{
     dashPowerMgmtTouchWeb();
 #if defined(DRIVER_T2CAN_DUAL)
     bool driverSupported = true;
@@ -3284,13 +3347,18 @@ static void handleStrobeCont() {
 #endif
     bool enable = server.hasArg("enable") && server.arg("enable") == "1";
     const char *reason = "stop_requested";
-    if (enable && driverSupported) {
-        dashFogCtrl.startStrobe(0, dashLightingFrequency);  // 0 = infinite
+    if (enable && driverSupported)
+    {
+        dashFogCtrl.startStrobe(0, dashLightingFrequency); // 0 = infinite
         reason = "continuous_started";
         dashLog("[STROBE] Continuous strobe started");
-    } else if (enable) {
+    }
+    else if (enable)
+    {
         reason = "driver_not_supported";
-    } else {
+    }
+    else
+    {
         dashFogOffRequested = true;
         dashLog("[STROBE] Stopped");
     }
@@ -3878,7 +3946,7 @@ static void handlePluginsInstallJson()
     DashPluginResult r = dashPluginEngine.installJson(body.c_str(), false);
     dashSavePluginState();
     server.send(r.ok ? 200 : 400, "application/json",
-               String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
+                String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
 }
 
 static void handlePluginsInstallUrl()
@@ -3910,7 +3978,7 @@ static void handlePluginsInstallUrl()
     DashPluginResult r = dashPluginEngine.installJson(body.c_str(), false);
     dashSavePluginState();
     server.send(r.ok ? 200 : 400, "application/json",
-               String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
+                String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
 }
 
 // Upload chunk callback: only buffers the incoming bytes; the final response
@@ -3936,7 +4004,7 @@ static void handlePluginsUpload()
     dashSavePluginState();
     dashPluginUploadBuffer = "";
     server.send(r.ok ? 200 : 400, "application/json",
-               String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
+                String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
 }
 
 static void handlePluginsToggle()
@@ -4306,7 +4374,6 @@ static void dashCheckWifi()
         autoUpdateDone = true;
         performAutoUpdate();
     }
-
 }
 
 // Cached scan results — a full-channel scan in APSTA mode briefly drops the
@@ -4763,7 +4830,8 @@ static void dashReadCpuLoad(uint8_t &core0Load, uint8_t &core1Load, bool &valid)
 
     uint32_t idleDelta0 = idle[0] - prevIdle[0];
     uint32_t idleDelta1 = idle[1] - prevIdle[1];
-    auto loadFromIdle = [](uint32_t idleDelta, uint32_t elapsedUs) -> uint8_t {
+    auto loadFromIdle = [](uint32_t idleDelta, uint32_t elapsedUs) -> uint8_t
+    {
         uint32_t idlePct = elapsedUs ? (idleDelta * 100UL + elapsedUs / 2) / elapsedUs : 0;
         if (idlePct > 100)
             idlePct = 100;
@@ -5043,13 +5111,15 @@ static String dashBuildTaskStatsText(const TaskStatus_t *before,
         }
     }
 
-    auto pct = [totalDelta](uint32_t delta) -> String {
+    auto pct = [totalDelta](uint32_t delta) -> String
+    {
         if (totalDelta == 0)
             return "0.0";
         uint32_t tenths = static_cast<uint32_t>((static_cast<uint64_t>(delta) * 1000ULL + totalDelta / 2) / totalDelta);
         return String(tenths / 10) + "." + String(tenths % 10);
     };
-    auto loadFromIdle = [totalDelta](uint32_t idle) -> String {
+    auto loadFromIdle = [totalDelta](uint32_t idle) -> String
+    {
         if (totalDelta == 0)
             return "n/a";
         uint32_t perCoreTotal = static_cast<uint32_t>(totalDelta / 2);
@@ -5222,7 +5292,8 @@ static void dashSerialPrintCanStatus()
     Serial.printf("APActive=%s ADEnabled=%s GTW_autopilot=%d\n",
                   apActive ? "yes" : "no",
                   adEnabled ? "yes" : "no",
-                  gtwAp);    Serial.println();
+                  gtwAp);
+    Serial.println();
 }
 
 #if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
@@ -5330,7 +5401,9 @@ static void dashSerialDiagnosticsPoll()
     }
 }
 #else
-static void dashSerialDiagnosticsPoll() {}
+static void dashSerialDiagnosticsPoll()
+{
+}
 #endif
 
 static bool dashCanGpioReserved(int pin)
@@ -5849,7 +5922,8 @@ static void handleSettingsImport()
     {
         p.putBool("update_beta", doc["beta"].as<bool>());
         p.putBool("upd_beta", doc["beta"].as<bool>());
-    }    if (doc["hw3"].is<JsonObject>())
+    }
+    if (doc["hw3"].is<JsonObject>())
     {
         if (doc["hw3"]["offsetSlew"].is<bool>())
             p.putBool("h3_slw", doc["hw3"]["offsetSlew"].as<bool>());
@@ -6645,7 +6719,8 @@ static void dashApplyNvsRuntimeSwitches()
 {
     for (int i = 0; i < 3; i++)
     {
-        if (!handlerPool[i]) continue;
+        if (!handlerPool[i])
+            continue;
         handlerPool[i]->autoModeEnabled = nvsAutoModeEnabled;
         handlerPool[i]->tlsscBypass = nvsTlsscBypass;
         handlerPool[i]->emergencyVehicleDetection = nvsEmergencyVehicleDetection;
@@ -6744,13 +6819,13 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/legacy_fsd_config", HTTP_POST, handleLegacyFsdConfig);
     server.on("/gear_assist_status", HTTP_GET, handleGearAssistStatus);
     // Phase 1 新增端点
-    server.on("/power_mgmt",       HTTP_GET,  handlePowerMgmt);
-    server.on("/power_mgmt",       HTTP_POST, handlePowerMgmt);
+    server.on("/power_mgmt", HTTP_GET, handlePowerMgmt);
+    server.on("/power_mgmt", HTTP_POST, handlePowerMgmt);
     server.on("/vehicle_ota_status", HTTP_GET, handleVehicleOtaStatus);
 #if !defined(DASH_SINGLE_CAN_STANDALONE)
-    server.on("/fog_light",        HTTP_GET,  handleFogLight);
-    server.on("/fog_light",        HTTP_POST, handleFogLight);
-    server.on("/strobe_cont",      HTTP_POST, handleStrobeCont);
+    server.on("/fog_light", HTTP_GET, handleFogLight);
+    server.on("/fog_light", HTTP_POST, handleFogLight);
+    server.on("/strobe_cont", HTTP_POST, handleStrobeCont);
 #endif
     server.on("/hotspot_config", HTTP_GET, handleHotspotConfig);
     server.on("/hotspot_config", HTTP_POST, handleHotspotConfig);
@@ -6850,7 +6925,8 @@ static void mcpDashboardLoop()
     appRefreshStatusLed(false);
 #endif
     // Phase 1: WiFi自动关闭检查（flag-based，不直接调WiFi.mode）
-    if (dashPowerMgmtShouldDisableWifi()) {
+    if (dashPowerMgmtShouldDisableWifi())
+    {
         WiFi.mode(WIFI_AP);
         dashPowerMgmtMarkWifiDisabled();
         dashLog("[PWR] WiFi STA auto-off (idle timeout)");

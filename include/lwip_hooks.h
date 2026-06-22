@@ -13,13 +13,14 @@
 #ifdef DASH_STA_AP_GATEWAY
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-// Returns nonzero (allow forwarding).
-// destAddrNbo is the destination IPv4 address in NETWORK byte order, taken
-// straight from ip4_addr_t::addr (which lwIP stores in NBO on ESP32).
-int dashGatewayHookIp4CanForward(unsigned int destAddrNbo);
+    // Returns nonzero (allow forwarding).
+    // destAddrNbo is the destination IPv4 address in NETWORK byte order, taken
+    // straight from ip4_addr_t::addr (which lwIP stores in NBO on ESP32).
+    int dashGatewayHookIp4CanForward(unsigned int destAddrNbo);
 
 #ifdef __cplusplus
 }

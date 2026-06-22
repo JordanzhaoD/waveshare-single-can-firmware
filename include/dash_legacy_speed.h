@@ -27,8 +27,10 @@ inline constexpr uint8_t kLegacySimpleOffsetMaxKph = 33;
 
 inline uint8_t dashClampLegacySimpleOffsetKph(int v)
 {
-    if (v < 0) v = 0;
-    if (v > kLegacySimpleOffsetMaxKph) v = kLegacySimpleOffsetMaxKph;
+    if (v < 0)
+        v = 0;
+    if (v > kLegacySimpleOffsetMaxKph)
+        v = kLegacySimpleOffsetMaxKph;
     return static_cast<uint8_t>(v);
 }
 
@@ -50,8 +52,8 @@ inline constexpr uint8_t kLegacyMppHighSpeedBucketBaseKph = 80;
 inline constexpr uint8_t kLegacyMppHighSpeedBucketStepKph = 20;
 inline constexpr uint8_t kLegacyMppHighSpeedBucketCount = 3; // 80/100/120
 inline constexpr uint8_t kLegacyMppCutoverKph = 80;
-inline constexpr uint8_t kLegacyMppMaxRaw = 31;          // 5-bit field
-inline constexpr uint8_t kLegacyMppMaxKph = 155;         // 31 × 5
+inline constexpr uint8_t kLegacyMppMaxRaw = 31;  // 5-bit field
+inline constexpr uint8_t kLegacyMppMaxKph = 155; // 31 × 5
 inline constexpr uint8_t kLegacyMppCustomTargetMaxByBucket[kLegacyMppCustomTargetCount] = {45, 60, 75, 90, 105};
 // Legacy UI_mppSpeedLimit is 5-bit, so the 120 km/h bucket cannot reach the
 // HW3 UI cap of 180 km/h. Clamp that bucket to the wire maximum, 155 km/h.
@@ -65,13 +67,15 @@ inline bool legacyMppHighSpeedEnable = false;
 inline uint8_t legacyMppHighSpeedTarget[kLegacyMppHighSpeedBucketCount] = {90, 110, 130};
 
 // Diagnostic mirrors (read by /status JSON for UI display).
-inline uint8_t legacyMppLastRaw = 0;       // last seen raw_mpp from bus
-inline uint8_t legacyMppLastSentRaw = 0;   // last raw value we wrote (0 = nothing written)
+inline uint8_t legacyMppLastRaw = 0;     // last seen raw_mpp from bus
+inline uint8_t legacyMppLastSentRaw = 0; // last raw value we wrote (0 = nothing written)
 
 inline uint8_t dashClampLegacyMppKph(int v)
 {
-    if (v < 0) v = 0;
-    if (v > kLegacyMppMaxKph) v = kLegacyMppMaxKph;
+    if (v < 0)
+        v = 0;
+    if (v > kLegacyMppMaxKph)
+        v = kLegacyMppMaxKph;
     return static_cast<uint8_t>(v);
 }
 
@@ -79,7 +83,8 @@ inline uint8_t dashClampLegacyMppCustomTargetForBucket(uint8_t idx, int v)
 {
     if (idx >= kLegacyMppCustomTargetCount)
         return dashClampLegacyMppKph(v);
-    if (v < 0) v = 0;
+    if (v < 0)
+        v = 0;
     if (v > kLegacyMppCustomTargetMaxByBucket[idx])
         v = kLegacyMppCustomTargetMaxByBucket[idx];
     return static_cast<uint8_t>(v);
@@ -89,7 +94,8 @@ inline uint8_t dashClampLegacyMppHighSpeedTargetForBucket(uint8_t idx, int v)
 {
     if (idx >= kLegacyMppHighSpeedBucketCount)
         return dashClampLegacyMppKph(v);
-    if (v < 0) v = 0;
+    if (v < 0)
+        v = 0;
     if (v > kLegacyMppHighSpeedTargetMaxByBucket[idx])
         v = kLegacyMppHighSpeedTargetMaxByBucket[idx];
     return static_cast<uint8_t>(v);
@@ -108,16 +114,20 @@ inline uint16_t dashComputeLegacyMppTargetKph(int currentKph)
         return 0;
     if (currentKph < kLegacyMppCutoverKph)
     {
-        if (!legacyMppCustomEnable) return 0;
+        if (!legacyMppCustomEnable)
+            return 0;
         uint8_t idx = static_cast<uint8_t>((currentKph - kLegacyMppCustomBucketBaseKph) /
-                                            kLegacyMppCustomBucketStepKph);
-        if (idx >= kLegacyMppCustomTargetCount) idx = kLegacyMppCustomTargetCount - 1;
+                                           kLegacyMppCustomBucketStepKph);
+        if (idx >= kLegacyMppCustomTargetCount)
+            idx = kLegacyMppCustomTargetCount - 1;
         return legacyMppCustomTarget[idx];
     }
     // currentKph >= 80
-    if (!legacyMppHighSpeedEnable) return 0;
+    if (!legacyMppHighSpeedEnable)
+        return 0;
     uint8_t idx = static_cast<uint8_t>((currentKph - kLegacyMppHighSpeedBucketBaseKph) /
-                                        kLegacyMppHighSpeedBucketStepKph);
-    if (idx >= kLegacyMppHighSpeedBucketCount) idx = kLegacyMppHighSpeedBucketCount - 1;
+                                       kLegacyMppHighSpeedBucketStepKph);
+    if (idx >= kLegacyMppHighSpeedBucketCount)
+        idx = kLegacyMppHighSpeedBucketCount - 1;
     return legacyMppHighSpeedTarget[idx];
 }

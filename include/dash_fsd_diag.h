@@ -132,13 +132,20 @@ static inline const char *fsdGateBlockReasonName(FsdGateBlockReason reason)
 {
     switch (reason)
     {
-    case FsdGateBlockReason::None: return "none";
-    case FsdGateBlockReason::CheckAd: return "check_ad";
-    case FsdGateBlockReason::CanActive: return "can_active";
-    case FsdGateBlockReason::Ota: return "ota";
-    case FsdGateBlockReason::ApGate: return "ap_gate";
-    case FsdGateBlockReason::CompileGate: return "compile_gate";
-    case FsdGateBlockReason::LegacyFsdSettle: return "legacy_fsd_settle";
+    case FsdGateBlockReason::None:
+        return "none";
+    case FsdGateBlockReason::CheckAd:
+        return "check_ad";
+    case FsdGateBlockReason::CanActive:
+        return "can_active";
+    case FsdGateBlockReason::Ota:
+        return "ota";
+    case FsdGateBlockReason::ApGate:
+        return "ap_gate";
+    case FsdGateBlockReason::CompileGate:
+        return "compile_gate";
+    case FsdGateBlockReason::LegacyFsdSettle:
+        return "legacy_fsd_settle";
     }
     return "none";
 }
@@ -147,13 +154,20 @@ static inline const char *fsdHealthStateName(FsdHealthState state)
 {
     switch (state)
     {
-    case FsdHealthState::Healthy: return "healthy";
-    case FsdHealthState::NoSourceFrame: return "no_source_frame";
-    case FsdHealthState::NotTriggered: return "not_triggered";
-    case FsdHealthState::GateBlocked: return "gate_blocked";
-    case FsdHealthState::TxDegraded: return "tx_degraded";
-    case FsdHealthState::TxOkVehicleUnconfirmed: return "tx_ok_vehicle_unconfirmed";
-    case FsdHealthState::Unknown: return "unknown";
+    case FsdHealthState::Healthy:
+        return "healthy";
+    case FsdHealthState::NoSourceFrame:
+        return "no_source_frame";
+    case FsdHealthState::NotTriggered:
+        return "not_triggered";
+    case FsdHealthState::GateBlocked:
+        return "gate_blocked";
+    case FsdHealthState::TxDegraded:
+        return "tx_degraded";
+    case FsdHealthState::TxOkVehicleUnconfirmed:
+        return "tx_ok_vehicle_unconfirmed";
+    case FsdHealthState::Unknown:
+        return "unknown";
     }
     return "unknown";
 }
@@ -162,9 +176,12 @@ static inline const char *fsdDiagBusName(FsdDiagBus bus)
 {
     switch (bus)
     {
-    case FsdDiagBus::CanA: return "can_a";
-    case FsdDiagBus::CanB: return "can_b";
-    case FsdDiagBus::Unknown: return "unknown";
+    case FsdDiagBus::CanA:
+        return "can_a";
+    case FsdDiagBus::CanB:
+        return "can_b";
+    case FsdDiagBus::Unknown:
+        return "unknown";
     }
     return "unknown";
 }
@@ -173,9 +190,12 @@ static inline const char *fsdDiagDriverName(FsdDiagDriver driver)
 {
     switch (driver)
     {
-    case FsdDiagDriver::Twai: return "twai";
-    case FsdDiagDriver::Mcp2515: return "mcp2515";
-    case FsdDiagDriver::Unknown: return "unknown";
+    case FsdDiagDriver::Twai:
+        return "twai";
+    case FsdDiagDriver::Mcp2515:
+        return "mcp2515";
+    case FsdDiagDriver::Unknown:
+        return "unknown";
     }
     return "unknown";
 }
@@ -255,12 +275,14 @@ struct LegacyFsdDiag
 
     void markMux0Rx(uint32_t nowMs)
     {
-        if (firstMux0RxMs == 0) firstMux0RxMs = nowMs;
+        if (firstMux0RxMs == 0)
+            firstMux0RxMs = nowMs;
     }
 
     void markMux1Rx(uint32_t nowMs)
     {
-        if (firstMux1RxMs == 0) firstMux1RxMs = nowMs;
+        if (firstMux1RxMs == 0)
+            firstMux1RxMs = nowMs;
     }
 
     void recordMuxTx(FsdMuxDiag &mux, bool ok, uint32_t nowMs)
@@ -274,13 +296,15 @@ struct LegacyFsdDiag
     {
         if (ok)
         {
-            if (firstTxOkMs == 0) firstTxOkMs = nowMs;
+            if (firstTxOkMs == 0)
+                firstTxOkMs = nowMs;
             health = FsdHealthState::Healthy;
             lastBlockedBy = FsdGateBlockReason::None;
         }
         else
         {
-            if (firstTxFailMs == 0) firstTxFailMs = nowMs;
+            if (firstTxFailMs == 0)
+                firstTxFailMs = nowMs;
             health = FsdHealthState::TxDegraded;
         }
     }
@@ -309,7 +333,8 @@ static inline FsdHealthState classifyLegacyFsdHealth(const LegacyFsdDiag &diag, 
     uint32_t latestFailTxSeq = 0;
     uint32_t latestSentTxSeq = 0;
 
-    auto considerTx = [&](const FsdMuxDiag &mux) {
+    auto considerTx = [&](const FsdMuxDiag &mux)
+    {
         if (mux.lastSkip == FsdSkipReason::TxFail)
         {
             if (mux.lastTxSeq > latestFailTxSeq)

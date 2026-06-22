@@ -184,7 +184,7 @@ static bool dashGatewayAllocateState()
     return ok;
 }
 
-#define DASH_GATEWAY_FOR_PENDING(q) \
+#define DASH_GATEWAY_FOR_PENDING(q)                                     \
     for (uint8_t q##Idx = 0; q##Idx < kDashGatewayMaxPending; q##Idx++) \
         if (auto &q = gatewayPendingQueries[q##Idx]; true)
 
@@ -752,8 +752,8 @@ static uint16_t dashGatewayPendingCount()
 {
     uint16_t count = 0;
     DASH_GATEWAY_FOR_PENDING(q)
-        if (q.inUse)
-            count++;
+    if (q.inUse)
+        count++;
     return count;
 }
 
@@ -783,7 +783,7 @@ static bool dashGatewayStorePending(uint16_t origId, uint16_t proxyId, uint16_t 
 static void dashGatewayClearPending()
 {
     DASH_GATEWAY_FOR_PENDING(q)
-        q.inUse = false;
+    q.inUse = false;
 }
 
 static void dashGatewayTrackLatency(const DashGatewayPendingQuery &q, TickType_t nowTick)
@@ -791,8 +791,8 @@ static void dashGatewayTrackLatency(const DashGatewayPendingQuery &q, TickType_t
     uint32_t elapsedMs = static_cast<uint32_t>((nowTick - q.startTime) * portTICK_PERIOD_MS);
     gatewayDnsLatencyLastMs = elapsedMs;
     gatewayDnsLatencyAvgMs = gatewayDnsLatencyAvgMs == 0
-                                  ? elapsedMs
-                                  : static_cast<uint32_t>((gatewayDnsLatencyAvgMs * 7UL + elapsedMs) / 8UL);
+                                 ? elapsedMs
+                                 : static_cast<uint32_t>((gatewayDnsLatencyAvgMs * 7UL + elapsedMs) / 8UL);
     if (elapsedMs > gatewayDnsLatencyMaxMs)
         gatewayDnsLatencyMaxMs = elapsedMs;
     if (elapsedMs > 500)
@@ -864,17 +864,25 @@ static size_t dashGatewayMakeDnsFakeReply(const uint8_t *query, size_t qlen, uin
     if (qlen < 12 || qlen + 16 > cap)
         return 0;
     std::memcpy(reply, query, qlen);
-    reply[2] = 0x81; reply[3] = 0x80;
-    reply[6] = 0x00; reply[7] = 0x01;
+    reply[2] = 0x81;
+    reply[3] = 0x80;
+    reply[6] = 0x00;
+    reply[7] = 0x01;
     reply[8] = reply[9] = reply[10] = reply[11] = 0;
-    reply[qlen]   = 0xC0; reply[qlen+1] = 0x0C;
-    reply[qlen+2] = 0x00; reply[qlen+3] = 0x01;
-    reply[qlen+4] = 0x00; reply[qlen+5] = 0x01;
-    reply[qlen+6] = reply[qlen+7] = reply[qlen+8] = reply[qlen+9] = 0;
-    reply[qlen+10] = 0x00; reply[qlen+11] = 0x04;
+    reply[qlen] = 0xC0;
+    reply[qlen + 1] = 0x0C;
+    reply[qlen + 2] = 0x00;
+    reply[qlen + 3] = 0x01;
+    reply[qlen + 4] = 0x00;
+    reply[qlen + 5] = 0x01;
+    reply[qlen + 6] = reply[qlen + 7] = reply[qlen + 8] = reply[qlen + 9] = 0;
+    reply[qlen + 10] = 0x00;
+    reply[qlen + 11] = 0x04;
     const auto *ip = reinterpret_cast<const uint8_t *>(&fakeIp);
-    reply[qlen+12] = ip[0]; reply[qlen+13] = ip[1];
-    reply[qlen+14] = ip[2]; reply[qlen+15] = ip[3];
+    reply[qlen + 12] = ip[0];
+    reply[qlen + 13] = ip[1];
+    reply[qlen + 14] = ip[2];
+    reply[qlen + 15] = ip[3];
     return qlen + 16;
 }
 
@@ -903,7 +911,7 @@ static void dashGatewayDnsTask(void *)
     fcntl(gatewayUpstreamSock, F_SETFL, flags | O_NONBLOCK);
 
     DASH_GATEWAY_FOR_PENDING(q)
-        q.inUse = false;
+    q.inUse = false;
 
     TickType_t lastCleanup = xTaskGetTickCount();
 
@@ -914,7 +922,8 @@ static void dashGatewayDnsTask(void *)
         FD_SET(gatewayDnsSock, &rfds);
         FD_SET(gatewayUpstreamSock, &rfds);
         int maxFd = gatewayDnsSock > gatewayUpstreamSock ? gatewayDnsSock : gatewayUpstreamSock;
-        timeval tv = {}; tv.tv_sec = 1;
+        timeval tv = {};
+        tv.tv_sec = 1;
         int ret = select(maxFd + 1, &rfds, nullptr, nullptr, &tv);
         if (ret < 0)
             continue;
@@ -924,13 +933,12 @@ static void dashGatewayDnsTask(void *)
         {
             TickType_t now = xTaskGetTickCount();
             DASH_GATEWAY_FOR_PENDING(q)
-                if (q.inUse && (int32_t)(now - q.startTime) > (int32_t)pdMS_TO_TICKS(5000))
-                {
-                    gatewayDnsTimeouts++;
-                    q.inUse = false;
-                }
+            if (q.inUse && (int32_t)(now - q.startTime) > (int32_t)pdMS_TO_TICKS(5000))
+            {
+                gatewayDnsTimeouts++;
+                q.inUse = false;
+            }
             lastCleanup = xTaskGetTickCount();
-
         }
 
         if (FD_ISSET(gatewayDnsSock, &rfds))
@@ -975,7 +983,6 @@ static void dashGatewayDnsTask(void *)
                     size_t len = dashGatewayMakeDnsBlockedReply(rx, n, tx, sizeof(tx));
                     if (len > 0)
                         sendto(gatewayDnsSock, tx, len, 0, reinterpret_cast<sockaddr *>(&client), clientLen);
-
                 }
                 else
                 {
@@ -986,7 +993,8 @@ static void dashGatewayDnsTask(void *)
                         size_t cachedLen = dashGatewayDnsCacheLookup(qname, qtype, nowSec, tx, sizeof(tx));
                         if (cachedLen > 0)
                         {
-                            tx[0] = origId >> 8; tx[1] = origId & 0xFF;
+                            tx[0] = origId >> 8;
+                            tx[1] = origId & 0xFF;
                             sendto(gatewayDnsSock, tx, cachedLen, 0, reinterpret_cast<sockaddr *>(&client), clientLen);
                             continue;
                         }
@@ -994,7 +1002,8 @@ static void dashGatewayDnsTask(void *)
                     if (parsed && dashGatewayAttachDuplicatePending(qname, qtype, origId, client))
                         continue;
                     uint16_t proxyId = gatewayNextProxyId++;
-                    rx[0] = proxyId >> 8; rx[1] = proxyId & 0xFF;
+                    rx[0] = proxyId >> 8;
+                    rx[1] = proxyId & 0xFF;
                     uint32_t upstream = gatewayUpstreamDns != IPADDR_NONE ? gatewayUpstreamDns : dashGatewaySelectedUpstreamDns();
                     sockaddr_in dst = {};
                     dst.sin_family = AF_INET;
@@ -1030,7 +1039,8 @@ static void dashGatewayDnsTask(void *)
                         dashGatewayDnsCachePut(q.domain, q.qtype, static_cast<uint32_t>(esp_timer_get_time() / 1000000ULL), rx, rn);
                         for (uint8_t ci = 0; ci < q.clientCount; ci++)
                         {
-                            rx[0] = q.clientIds[ci] >> 8; rx[1] = q.clientIds[ci] & 0xFF;
+                            rx[0] = q.clientIds[ci] >> 8;
+                            rx[1] = q.clientIds[ci] & 0xFF;
                             sendto(gatewayDnsSock, rx, rn, 0, reinterpret_cast<sockaddr *>(&q.clients[ci]), sizeof(q.clients[ci]));
                         }
                         q.inUse = false;
@@ -1161,8 +1171,10 @@ static bool dashGatewaySaveMeta()
 
     err = nvs_set_u8(h, "en", gatewayEnabled ? 1 : 0);
     // Daily DNS mode is fixed: blacklist roots, whitelist subdomains override.
-    if (err == ESP_OK) err = nvs_set_u8(h, "profile", kDashGatewayTeslaProfileVersion);
-    if (err == ESP_OK) err = nvs_set_u8(h, "upmode", gatewayUpstreamDnsMode);
+    if (err == ESP_OK)
+        err = nvs_set_u8(h, "profile", kDashGatewayTeslaProfileVersion);
+    if (err == ESP_OK)
+        err = nvs_set_u8(h, "upmode", gatewayUpstreamDnsMode);
     if (err == ESP_OK)
         err = nvs_set_str(h, "upcustom", dashGatewayIpToString(gatewayCustomUpstreamDns, "").c_str());
     // Lists now live in SPIFFS so large edits no longer consume scarce NVS pages.
@@ -1190,7 +1202,8 @@ static bool dashGatewaySaveMeta()
         if (eraseStrict != ESP_OK && eraseStrict != ESP_ERR_NVS_NOT_FOUND)
             err = eraseStrict;
     }
-    if (err == ESP_OK) err = nvs_commit(h);
+    if (err == ESP_OK)
+        err = nvs_commit(h);
     nvs_close(h);
 
     if (err != ESP_OK)
@@ -1594,12 +1607,20 @@ static void handleGatewayDnsPost()
     if (server.hasArg("blacklist"))
     {
         String next = dashGatewaySanitizeBlacklist(server.arg("blacklist"));
-        if (next != gatewayDnsBlacklist) { gatewayDnsBlacklist = next; rulesChanged = true; }
+        if (next != gatewayDnsBlacklist)
+        {
+            gatewayDnsBlacklist = next;
+            rulesChanged = true;
+        }
     }
     if (server.hasArg("whitelist"))
     {
         String next = dashGatewaySanitizeWhitelist(server.arg("whitelist"));
-        if (next != gatewayDnsWhitelist) { gatewayDnsWhitelist = next; rulesChanged = true; }
+        if (next != gatewayDnsWhitelist)
+        {
+            gatewayDnsWhitelist = next;
+            rulesChanged = true;
+        }
     }
     if (!dashGatewaySave())
     {
@@ -1690,7 +1711,8 @@ static void handleGatewayBlocked()
     uint8_t count;
     portENTER_CRITICAL(&gatewayBlockedMux);
     count = gatewayBlockedDomainCount;
-    if (count > 32) count = 32;
+    if (count > 32)
+        count = 32;
     for (uint8_t i = 0; i < count; i++)
         snapshot[i] = gatewayBlockedDomains[i];
     portEXIT_CRITICAL(&gatewayBlockedMux);
@@ -1698,7 +1720,8 @@ static void handleGatewayBlocked()
     String j = "[";
     for (uint8_t i = 0; i < count; i++)
     {
-        if (i) j += ",";
+        if (i)
+            j += ",";
         j += "{\"domain\":\"";
         j += jsonEscape(snapshot[i].domain);
         j += "\",\"count\":";
@@ -1732,4 +1755,3 @@ static void dashGatewayOnStaConnected(esp_netif_t *, esp_netif_t *) {}
 static void dashGatewayOnStaDisconnected(esp_netif_t *) {}
 
 #endif
-

@@ -315,10 +315,10 @@ void test_hw3_filter_ids_values()
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT32(280, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(390, ids[1]);
-    TEST_ASSERT_EQUAL_UINT32(880, ids[2]);   // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
+    TEST_ASSERT_EQUAL_UINT32(880, ids[2]); // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
     TEST_ASSERT_EQUAL_UINT32(920, ids[3]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[4]);
-    TEST_ASSERT_EQUAL_UINT32(923, ids[5]);   // 0x39B DAS_status Highland/HW4
+    TEST_ASSERT_EQUAL_UINT32(923, ids[5]); // 0x39B DAS_status Highland/HW4
     TEST_ASSERT_EQUAL_UINT32(1016, ids[6]);
     TEST_ASSERT_EQUAL_UINT32(1021, ids[7]);
     TEST_ASSERT_EQUAL_UINT32(2047, ids[8]);
@@ -379,13 +379,17 @@ static void resetSpeedGlobals()
 {
     fusedSpeedLimitRaw = 0;
     hw3CustomSpeed = false;
-    hw3CustomTarget[0] = 45; hw3CustomTarget[1] = 60;
-    hw3CustomTarget[2] = 75; hw3CustomTarget[3] = 90;
+    hw3CustomTarget[0] = 45;
+    hw3CustomTarget[1] = 60;
+    hw3CustomTarget[2] = 75;
+    hw3CustomTarget[3] = 90;
     hw3CustomTarget[4] = 105;
     hw3AutoSpeed = true;
     hw3HighSpeedEnable = false;
-    hw3HighSpeedTargetPct[0] = 25; hw3HighSpeedTargetPct[1] = 25;
-    hw3HighSpeedTargetPct[2] = 25; hw3HighSpeedTargetPct[3] = 25;
+    hw3HighSpeedTargetPct[0] = 25;
+    hw3HighSpeedTargetPct[1] = 25;
+    hw3HighSpeedTargetPct[2] = 25;
+    hw3HighSpeedTargetPct[3] = 25;
     hw3HighSpeedTargetPct[4] = 25;
     hw3WireEncoding = kHw3WireEncDefault;
     hw3OffsetSlew = false;
@@ -395,8 +399,10 @@ static void resetSpeedGlobals()
     hw3OffsetSlewCount = 0;
     offsetMode = 1;
     manualOffsetPct = 0;
-    customPct[0] = 30; customPct[1] = 20;
-    customPct[2] = 10; customPct[3] = 10;
+    customPct[0] = 30;
+    customPct[1] = 20;
+    customPct[2] = 10;
+    customPct[3] = 10;
     smoothedOffset = 0.0f;
     actualOffset = 0.0f;
 }
@@ -553,10 +559,10 @@ void test_hw3_mux2_slew_limiter_clamps_drop()
     // Test dashLoadHw3SlewRate: returns default when out of range
     TEST_ASSERT_EQUAL_UINT8(kHw3SlewRateDefault, dashLoadHw3SlewRate(0));  // below min → default
     TEST_ASSERT_EQUAL_UINT8(kHw3SlewRateDefault, dashLoadHw3SlewRate(30)); // above max → default
-    TEST_ASSERT_EQUAL_UINT8(10, dashLoadHw3SlewRate(10)); // in range
+    TEST_ASSERT_EQUAL_UINT8(10, dashLoadHw3SlewRate(10));                  // in range
 
     // Test dashClampHw3SlewRate
-    TEST_ASSERT_EQUAL_UINT8(1, dashClampHw3SlewRate(0));  // clamp to min
+    TEST_ASSERT_EQUAL_UINT8(1, dashClampHw3SlewRate(0));   // clamp to min
     TEST_ASSERT_EQUAL_UINT8(25, dashClampHw3SlewRate(30)); // clamp to max
     TEST_ASSERT_EQUAL_UINT8(15, dashClampHw3SlewRate(15)); // pass through
 
@@ -579,8 +585,8 @@ void test_hw3_mux2_clamp_functions()
     TEST_ASSERT_EQUAL_UINT8(80, dashClampHw3CustomTargetKph(80));
 
     // Custom target clamp per bucket
-    TEST_ASSERT_EQUAL_UINT8(45, dashClampHw3CustomTargetForBucket(0, 50)); // bucket 0 max 45
-    TEST_ASSERT_EQUAL_UINT8(45, dashClampHw3CustomTargetForBucket(0, 200)); // clamped to 45
+    TEST_ASSERT_EQUAL_UINT8(45, dashClampHw3CustomTargetForBucket(0, 50));   // bucket 0 max 45
+    TEST_ASSERT_EQUAL_UINT8(45, dashClampHw3CustomTargetForBucket(0, 200));  // clamped to 45
     TEST_ASSERT_EQUAL_UINT8(105, dashClampHw3CustomTargetForBucket(4, 200)); // bucket 4 max 105
 
     // High-speed target clamp
@@ -703,7 +709,7 @@ void test_hw3_mux2_smooth_decel_falling_edge_gradual()
 {
     resetSpeedGlobals();
     offsetMode = 0;
-    manualOffsetPct = 0; // target offset = 0
+    manualOffsetPct = 0;    // target offset = 0
     smoothedOffset = 20.0f; // start high
 
     // Falling edge: should decay at 5 km/h/s * 0.05s = 0.25 km/h per tick
@@ -812,8 +818,13 @@ void test_hw3_isa_suppress_checksum_correct()
     handler.isaChimeSuppress = true;
     CanFrame f = {.id = 921};
     f.dlc = 8;
-    f.data[0] = 0x10; f.data[1] = 0x05;
-    f.data[2] = 0; f.data[3] = 0; f.data[4] = 0; f.data[5] = 0; f.data[6] = 0;
+    f.data[0] = 0x10;
+    f.data[1] = 0x05;
+    f.data[2] = 0;
+    f.data[3] = 0;
+    f.data[4] = 0;
+    f.data[5] = 0;
+    f.data[6] = 0;
     handler.handleMessage(f, mock);
     // OR 后 data[1]=0x25; checksum = id_lo+id_hi + data[0..6] = 0x99+0x03+0x10+0x25 = 0xD1
     TEST_ASSERT_EQUAL_HEX8(0xD1, mock.sent[0].data[7]);
@@ -835,7 +846,7 @@ void test_hw3_isa_suppress_still_captures_fused_limit()
     handler.isaChimeSuppress = true;
     CanFrame f = {.id = 921};
     f.dlc = 8;
-    f.data[1] = 0x15;             // fused limit raw = 0x15
+    f.data[1] = 0x15; // fused limit raw = 0x15
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_UINT8(0x15, fusedSpeedLimitRaw);
 }

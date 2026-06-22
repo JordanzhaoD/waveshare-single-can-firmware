@@ -589,7 +589,7 @@ void test_legacy_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(390, ids[2]);
     TEST_ASSERT_EQUAL_UINT32(760, ids[3]);
-    TEST_ASSERT_EQUAL_UINT32(880, ids[4]);   // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
+    TEST_ASSERT_EQUAL_UINT32(880, ids[4]); // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
     TEST_ASSERT_EQUAL_UINT32(920, ids[5]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[6]);
     TEST_ASSERT_EQUAL_UINT32(1006, ids[7]);

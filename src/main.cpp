@@ -316,8 +316,8 @@ static inline uint8_t t2canStalkCrc(uint8_t counter, uint8_t status)
     return kStalkBase[counter & 0x0F] ^ off[status & 0x07];
 }
 
-static volatile uint8_t g_stalkInjStatus = 0;  // 0=off, 1=PULL, 2=PUSH
-static volatile uint32_t g_stalkInjUntil = 0;  // millis() deadline
+static volatile uint8_t g_stalkInjStatus = 0; // 0=off, 1=PULL, 2=PUSH
+static volatile uint32_t g_stalkInjUntil = 0; // millis() deadline
 
 // ── Flash Burst (real double-PULL trigger) ───────────────────────
 // RAM-only and OFF on boot. When enabled, two real 0x249 PULL edges within

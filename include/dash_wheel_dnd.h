@@ -38,8 +38,8 @@ struct DashWheelDND
     // ── sequence constants ───────────────────────────────────
     static constexpr uint8_t kSteps[]{0x01, 0x00, 0x3F, 0x00};
     static constexpr int kStepCount{4};
-    static constexpr int kStepIntervalMs{50};    // delay between steps
-    static constexpr uint32_t kCanId{0x3C2};     // wheel controls
+    static constexpr int kStepIntervalMs{50}; // delay between steps
+    static constexpr uint32_t kCanId{0x3C2};  // wheel controls
 
     // ── runtime state ────────────────────────────────────────
     int volumeStep{0};

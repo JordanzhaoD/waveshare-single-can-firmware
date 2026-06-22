@@ -47,12 +47,12 @@ struct DashBionicPRNG
 struct DashBionicSteer
 {
     // ── tunables ────────────────────────────────────────────
-    static constexpr int kPerturbCap{60};        // max |perturbation| (raw)
-    static constexpr int kAmplitudeLo{30};       // min random amplitude
-    static constexpr int kAmplitudeHi{55};       // max random amplitude
-    static constexpr int kDurationLo{350};       // min phase duration (ms)
-    static constexpr int kDurationHi{500};       // max phase duration (ms)
-    static constexpr int kFramePeriodMs{20};     // ~50 Hz EPAS frame rate
+    static constexpr int kPerturbCap{60};    // max |perturbation| (raw)
+    static constexpr int kAmplitudeLo{30};   // min random amplitude
+    static constexpr int kAmplitudeHi{55};   // max random amplitude
+    static constexpr int kDurationLo{350};   // min phase duration (ms)
+    static constexpr int kDurationHi{500};   // max phase duration (ms)
+    static constexpr int kFramePeriodMs{20}; // ~50 Hz EPAS frame rate
     static constexpr int kMaxConsecutiveFails{3};
 
     // Standard echo base torque: lower nibble of data[2] | data[3]
@@ -97,7 +97,8 @@ struct DashBionicSteer
         phase = 0.0f;
         // ~2 full sine cycles over the phase duration
         int totalFrames = phaseDurationMs / kFramePeriodMs;
-        if (totalFrames < 1) totalFrames = 1;
+        if (totalFrames < 1)
+            totalFrames = 1;
         phaseStep = (2.0f * static_cast<float>(M_PI) * 2.0f) /
                     static_cast<float>(totalFrames);
     }
@@ -115,8 +116,10 @@ struct DashBionicSteer
         int pert = static_cast<int>(amplitude * sinVal) * direction;
 
         // safety cap
-        if (pert > kPerturbCap)  pert = kPerturbCap;
-        if (pert < -kPerturbCap) pert = -kPerturbCap;
+        if (pert > kPerturbCap)
+            pert = kPerturbCap;
+        if (pert < -kPerturbCap)
+            pert = -kPerturbCap;
 
         phase += phaseStep;
         phaseElapsedMs += kFramePeriodMs;
@@ -135,7 +138,7 @@ struct DashBionicSteer
 
         // Encode back
         data2Lo = static_cast<uint8_t>((torque >> 8) & 0x0F);
-        data3   = static_cast<uint8_t>(torque & 0xFF);
+        data3 = static_cast<uint8_t>(torque & 0xFF);
     }
 
     /// Call when a frame checksum / format error is detected.

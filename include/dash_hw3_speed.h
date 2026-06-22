@@ -57,7 +57,7 @@ inline uint32_t millis() { return 0; }
 
 // ─── Algorithm version switch ────────────────────────────────────────────────
 #ifndef USE_NEW_SPEED_ALGO
-#define USE_NEW_SPEED_ALGO 1  // 1=DouyinFSD v3.68 3-mode algo, 0=old bucket
+#define USE_NEW_SPEED_ALGO 1 // 1=DouyinFSD v3.68 3-mode algo, 0=old bucket
 #endif
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -96,18 +96,18 @@ inline constexpr uint8_t kHw3StockOffsetCutoverKph = 80;
 
 // ─── New runtime state (settings) ────────────────────────────────────────────
 // Written from web server task, read from CAN task.
-inline volatile uint8_t offsetMode = 1;          // 0=fixed, 1=auto(default), 2=custom
-inline volatile uint8_t manualOffsetPct = 0;    // Fixed mode: 0/10/20/30/40/50%
-inline volatile uint8_t customPct[4] = {30,20,10,10}; // 4-zone custom percentages
-inline volatile float smoothedOffset = 0.0f;    // Smooth decel tracker (km/h)
-inline volatile float actualOffset = 0.0f;      // Current actual offset (km/h)
-static constexpr float SMOOTH_RATE = 5.0f;      // Decel smoothing rate km/h/s
+inline volatile uint8_t offsetMode = 1;                  // 0=fixed, 1=auto(default), 2=custom
+inline volatile uint8_t manualOffsetPct = 0;             // Fixed mode: 0/10/20/30/40/50%
+inline volatile uint8_t customPct[4] = {30, 20, 10, 10}; // 4-zone custom percentages
+inline volatile float smoothedOffset = 0.0f;             // Smooth decel tracker (km/h)
+inline volatile float actualOffset = 0.0f;               // Current actual offset (km/h)
+static constexpr float SMOOTH_RATE = 5.0f;               // Decel smoothing rate km/h/s
 
 // ─── Legacy compatibility shims ──────────────────────────────────────────────
 // The web UI and NVS still reference these names. Map them to the new system.
-inline volatile bool hw3CustomSpeed = false;   // true when offsetMode==2
+inline volatile bool hw3CustomSpeed = false;     // true when offsetMode==2
 inline volatile bool hw3HighSpeedEnable = false; // true when offsetMode!=0
-inline volatile bool hw3AutoSpeed = true;      // true when offsetMode==1
+inline volatile bool hw3AutoSpeed = true;        // true when offsetMode==1
 
 // ─── Auto offset: 5-segment lookup table ─────────────────────────────────────
 // Matches DouyinFSD v3.68 auto-mode logic exactly.
@@ -118,11 +118,16 @@ inline volatile bool hw3AutoSpeed = true;      // true when offsetMode==1
 // limit ≤110 → target = min(132, limit × 1.2)  (高速1)
 // limit >110 → target = min(132, limit × 1.1)  (高速2)
 
-inline float dashComputeAutoTarget(float limitKph) {
-    if (limitKph <= 40.0f) return std::min(60.0f, limitKph * 1.5f);
-    if (limitKph <= 60.0f) return std::min(90.0f, limitKph * 1.5f);
-    if (limitKph <= 90.0f) return std::min(117.0f, limitKph * 1.3f);
-    if (limitKph <= 110.0f) return std::min(132.0f, limitKph * 1.2f);
+inline float dashComputeAutoTarget(float limitKph)
+{
+    if (limitKph <= 40.0f)
+        return std::min(60.0f, limitKph * 1.5f);
+    if (limitKph <= 60.0f)
+        return std::min(90.0f, limitKph * 1.5f);
+    if (limitKph <= 90.0f)
+        return std::min(117.0f, limitKph * 1.3f);
+    if (limitKph <= 110.0f)
+        return std::min(132.0f, limitKph * 1.2f);
     return std::min(132.0f, limitKph * 1.1f);
 }
 
@@ -134,12 +139,17 @@ inline float dashComputeAutoTarget(float limitKph) {
 // limit ≤ 100 → zone 2 (customPct[2])
 // limit > 100 → zone 3 (customPct[3])
 
-inline float dashComputeCustomTarget(float limitKph) {
+inline float dashComputeCustomTarget(float limitKph)
+{
     uint8_t pct;
-    if (limitKph <= 50.0f) pct = customPct[0];
-    else if (limitKph <= 70.0f) pct = customPct[1];
-    else if (limitKph <= 100.0f) pct = customPct[2];
-    else pct = customPct[3];
+    if (limitKph <= 50.0f)
+        pct = customPct[0];
+    else if (limitKph <= 70.0f)
+        pct = customPct[1];
+    else if (limitKph <= 100.0f)
+        pct = customPct[2];
+    else
+        pct = customPct[3];
     return limitKph * (1.0f + static_cast<float>(pct) / 100.0f);
 }
 
@@ -148,29 +158,34 @@ inline float dashComputeCustomTarget(float limitKph) {
 // sudden speed drops: rising edge passes through instantly, falling edge
 // decays at SMOOTH_RATE (5 km/h/s).
 
-inline float dashComputeOffset(float limitKph, float dt) {
+inline float dashComputeOffset(float limitKph, float dt)
+{
     float target;
-    switch (offsetMode) {
-        case 0:  // Fixed percentage
-            target = limitKph * (1.0f + static_cast<float>(manualOffsetPct) / 100.0f);
-            break;
-        case 1:  // Auto segmented lookup
-            target = dashComputeAutoTarget(limitKph);
-            break;
-        case 2:  // Custom 4-zone
-            target = dashComputeCustomTarget(limitKph);
-            break;
-        default:
-            target = limitKph;
-            break;
+    switch (offsetMode)
+    {
+    case 0: // Fixed percentage
+        target = limitKph * (1.0f + static_cast<float>(manualOffsetPct) / 100.0f);
+        break;
+    case 1: // Auto segmented lookup
+        target = dashComputeAutoTarget(limitKph);
+        break;
+    case 2: // Custom 4-zone
+        target = dashComputeCustomTarget(limitKph);
+        break;
+    default:
+        target = limitKph;
+        break;
     }
     float rawOffset = target - limitKph;
 
     // Smooth deceleration engine
-    if (rawOffset < smoothedOffset) {
+    if (rawOffset < smoothedOffset)
+    {
         // Falling edge: gradual decay
         smoothedOffset = std::max(rawOffset, smoothedOffset - SMOOTH_RATE * dt);
-    } else {
+    }
+    else
+    {
         // Rising edge: instant follow
         smoothedOffset = rawOffset;
     }
@@ -180,7 +195,8 @@ inline float dashComputeOffset(float limitKph, float dt) {
 
 // ─── Sync legacy shims when mode changes ─────────────────────────────────────
 
-inline void dashSyncLegacyShims() {
+inline void dashSyncLegacyShims()
+{
     hw3AutoSpeed = (offsetMode == 1);
     hw3CustomSpeed = (offsetMode == 2);
     hw3HighSpeedEnable = (offsetMode != 0);
@@ -188,9 +204,12 @@ inline void dashSyncLegacyShims() {
 
 // ─── Wire encoding helpers (new path) ────────────────────────────────────────
 
-inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
-    if (pct <= 0 || flKph == 0) return 0;
-    if (hw3WireEncoding == kHw3WireEncPct4) {
+inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph)
+{
+    if (pct <= 0 || flKph == 0)
+        return 0;
+    if (hw3WireEncoding == kHw3WireEncPct4)
+    {
         return dashEncodeHw3OffsetPct4(pct);
     }
     int offsetKph = (static_cast<int>(flKph) * pct + 50) / 100;
@@ -204,7 +223,8 @@ inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
 inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
 {
     uint8_t fl = fusedSpeedLimitRaw;
-    if (fl == 0 || fl == 31) { // SNA / NONE: pass through current mux-2 raw and clear telemetry.
+    if (fl == 0 || fl == 31)
+    { // SNA / NONE: pass through current mux-2 raw and clear telemetry.
         actualOffset = 0.0f;
         smoothedOffset = 0.0f;
         return static_cast<uint8_t>(std::max(std::min(stockOffsetRaw, 255), 0));
@@ -214,10 +234,12 @@ inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
     // Compute offset with 50ms timestep (main loop ~20Hz)
     float offsetKph = dashComputeOffset(flKph, 0.05f);
 
-    if (offsetKph <= 0.0f) return 0;
+    if (offsetKph <= 0.0f)
+        return 0;
 
     int pct = static_cast<int>((offsetKph / flKph) * 100.0f + 0.5f);
-    if (pct > kHw3SpeedOffsetMaxPct) pct = kHw3SpeedOffsetMaxPct;
+    if (pct > kHw3SpeedOffsetMaxPct)
+        pct = kHw3SpeedOffsetMaxPct;
     return dashEncodeHw3OffsetFromPct(pct, static_cast<uint8_t>(flKph));
 }
 
@@ -225,7 +247,7 @@ inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
 
 inline bool dashHw3CustomSpeedActive()
 {
-    return offsetMode != 0;  // Any non-fixed mode is "active"
+    return offsetMode != 0; // Any non-fixed mode is "active"
 }
 
 // ─── Legacy API compatibility shims ──────────────────────────────────────────
@@ -261,43 +283,62 @@ inline constexpr uint8_t kHw3HighSpeedBucketCount_verified = 5;
 inline volatile uint8_t hw3HighSpeedTargetPct[kHw3HighSpeedBucketCount_verified] = {25, 25, 25, 25, 25};
 
 // Old clamp helpers (dashboard.h uses these for NVS and POST validation)
-inline uint8_t dashClampHw3CustomTargetKph(int v) {
-    if (v < 0) v = 0;
-    if (v > (int)kHw3CustomTargetMaxKph) v = (int)kHw3CustomTargetMaxKph;
+inline uint8_t dashClampHw3CustomTargetKph(int v)
+{
+    if (v < 0)
+        v = 0;
+    if (v > (int)kHw3CustomTargetMaxKph)
+        v = (int)kHw3CustomTargetMaxKph;
     return static_cast<uint8_t>(v);
 }
-inline uint8_t dashClampHw3HighSpeedTargetKph(int v) {
-    if (v < 0) v = 0;
-    if (v > (int)kHw3HighSpeedTargetMaxKph) v = (int)kHw3HighSpeedTargetMaxKph;
+inline uint8_t dashClampHw3HighSpeedTargetKph(int v)
+{
+    if (v < 0)
+        v = 0;
+    if (v > (int)kHw3HighSpeedTargetMaxKph)
+        v = (int)kHw3HighSpeedTargetMaxKph;
     return static_cast<uint8_t>(v);
 }
-inline uint8_t dashClampHw3CustomTargetForBucket(uint8_t idx, int v) {
+inline uint8_t dashClampHw3CustomTargetForBucket(uint8_t idx, int v)
+{
     uint8_t maxKph = idx < kHw3CustomTargetCount ? kHw3CustomTargetMaxByBucket[idx] : kHw3CustomTargetMaxKph;
-    if (v < 0) v = 0;
-    if (v > maxKph) v = maxKph;
+    if (v < 0)
+        v = 0;
+    if (v > maxKph)
+        v = maxKph;
     return static_cast<uint8_t>(v);
 }
-inline uint8_t dashClampHw3HighSpeedTargetForBucket(uint8_t idx, int v) {
+inline uint8_t dashClampHw3HighSpeedTargetForBucket(uint8_t idx, int v)
+{
     uint8_t maxKph = idx < kHw3HighSpeedBucketCount ? kHw3HighSpeedTargetMaxByBucket[idx] : kHw3HighSpeedTargetMaxKph;
-    if (v < 0) v = 0;
-    if (v > maxKph) v = maxKph;
+    if (v < 0)
+        v = 0;
+    if (v > maxKph)
+        v = maxKph;
     return static_cast<uint8_t>(v);
 }
 
 // Old auto/compute helpers (dashboard.h calls these for status JSON)
-inline uint8_t dashComputeHw3AutoTargetKph(uint8_t fusedLimitKph) {
+inline uint8_t dashComputeHw3AutoTargetKph(uint8_t fusedLimitKph)
+{
     return static_cast<uint8_t>(dashComputeAutoTarget(static_cast<float>(fusedLimitKph)));
 }
-inline uint16_t dashComputeHw3CustomTargetKph(uint8_t flKph) {
-    if (flKph < kHw3CustomBucketBaseKph) return 0;
-    if (flKph >= kHw3StockOffsetCutoverKph) return 0;
+inline uint16_t dashComputeHw3CustomTargetKph(uint8_t flKph)
+{
+    if (flKph < kHw3CustomBucketBaseKph)
+        return 0;
+    if (flKph >= kHw3StockOffsetCutoverKph)
+        return 0;
     return static_cast<uint16_t>(dashComputeCustomTarget(static_cast<float>(flKph)));
 }
 
 // Old encode helper (used by some legacy code paths)
-inline uint8_t dashEncodeHw3Offset(int offsetKph, uint8_t flKph) {
-    if (hw3WireEncoding == kHw3WireEncPct4) {
-        if (flKph == 0) return 0;
+inline uint8_t dashEncodeHw3Offset(int offsetKph, uint8_t flKph)
+{
+    if (hw3WireEncoding == kHw3WireEncPct4)
+    {
+        if (flKph == 0)
+            return 0;
         int pct = (offsetKph * 100 + flKph / 2) / flKph;
         return dashEncodeHw3OffsetPct4(pct);
     }
@@ -337,15 +378,19 @@ inline volatile bool hw3AutoSpeed = true;
 // Dashboard API compatibility state for USE_NEW_SPEED_ALGO=0 rollback builds.
 // These names are read/written by mcp2515_dashboard.h even when the old bucket
 // algorithm is selected. The old compute path below remains bucket-based.
-inline volatile uint8_t offsetMode = 1;         // 0=fixed, 1=auto(default), 2=custom
-inline volatile uint8_t manualOffsetPct = 0;    // accepted for API/NVS compatibility
-inline volatile uint8_t customPct[4] = {30,20,10,10}; // accepted for API/NVS compatibility
-inline volatile float actualOffset = 0.0f;      // old path does not compute this metric
+inline volatile uint8_t offsetMode = 1;                  // 0=fixed, 1=auto(default), 2=custom
+inline volatile uint8_t manualOffsetPct = 0;             // accepted for API/NVS compatibility
+inline volatile uint8_t customPct[4] = {30, 20, 10, 10}; // accepted for API/NVS compatibility
+inline volatile float actualOffset = 0.0f;               // old path does not compute this metric
 
-inline uint8_t dashComputeHw3AutoTargetKph(uint8_t fusedLimitKph) {
-    if (fusedLimitKph == 60) return kHw3AutoTargetAt60Kph;
-    if (fusedLimitKph < kHw3AutoTargetBelow60Kph) return kHw3AutoTargetBelow60Kph;
-    if (fusedLimitKph < kHw3StockOffsetCutoverKph) return kHw3AutoTargetForVisible80Kph;
+inline uint8_t dashComputeHw3AutoTargetKph(uint8_t fusedLimitKph)
+{
+    if (fusedLimitKph == 60)
+        return kHw3AutoTargetAt60Kph;
+    if (fusedLimitKph < kHw3AutoTargetBelow60Kph)
+        return kHw3AutoTargetBelow60Kph;
+    if (fusedLimitKph < kHw3StockOffsetCutoverKph)
+        return kHw3AutoTargetForVisible80Kph;
     return fusedLimitKph;
 }
 
@@ -357,9 +402,12 @@ inline constexpr uint8_t kHw3HighSpeedBucketCount_verified = 5;
 inline volatile uint8_t hw3HighSpeedTargetPct[kHw3HighSpeedBucketCount_verified] = {25, 25, 25, 25, 25};
 
 // Offset from pct for high-speed mode
-inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
-    if (pct <= 0 || flKph == 0) return 0;
-    if (hw3WireEncoding == kHw3WireEncPct4) {
+inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph)
+{
+    if (pct <= 0 || flKph == 0)
+        return 0;
+    if (hw3WireEncoding == kHw3WireEncPct4)
+    {
         return dashEncodeHw3OffsetPct4(pct);
     }
     int offsetKph = (static_cast<int>(flKph) * pct + 50) / 100;
@@ -370,31 +418,39 @@ inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
 
 inline uint8_t dashClampHw3HighSpeedTargetKph(int v)
 {
-    if (v < 0) v = 0;
-    if (v > kHw3HighSpeedTargetMaxKph) v = kHw3HighSpeedTargetMaxKph;
+    if (v < 0)
+        v = 0;
+    if (v > kHw3HighSpeedTargetMaxKph)
+        v = kHw3HighSpeedTargetMaxKph;
     return static_cast<uint8_t>(v);
 }
 
 inline uint8_t dashClampHw3CustomTargetKph(int v)
 {
-    if (v < 0) v = 0;
-    if (v > kHw3CustomTargetMaxKph) v = kHw3CustomTargetMaxKph;
+    if (v < 0)
+        v = 0;
+    if (v > kHw3CustomTargetMaxKph)
+        v = kHw3CustomTargetMaxKph;
     return static_cast<uint8_t>(v);
 }
 
 inline uint8_t dashClampHw3CustomTargetForBucket(uint8_t idx, int v)
 {
     uint8_t maxKph = idx < kHw3CustomTargetCount ? kHw3CustomTargetMaxByBucket[idx] : kHw3CustomTargetMaxKph;
-    if (v < 0) v = 0;
-    if (v > maxKph) v = maxKph;
+    if (v < 0)
+        v = 0;
+    if (v > maxKph)
+        v = maxKph;
     return static_cast<uint8_t>(v);
 }
 
 inline uint8_t dashClampHw3HighSpeedTargetForBucket(uint8_t idx, int v)
 {
     uint8_t maxKph = idx < kHw3HighSpeedBucketCount ? kHw3HighSpeedTargetMaxByBucket[idx] : kHw3HighSpeedTargetMaxKph;
-    if (v < 0) v = 0;
-    if (v > maxKph) v = maxKph;
+    if (v < 0)
+        v = 0;
+    if (v > maxKph)
+        v = maxKph;
     return static_cast<uint8_t>(v);
 }
 
@@ -402,11 +458,14 @@ inline uint8_t dashClampHw3HighSpeedTargetForBucket(uint8_t idx, int v)
 // bucket containing flKph. Returns 0 outside the supported range.
 inline uint16_t dashComputeHw3CustomTargetKph(uint8_t flKph)
 {
-    if (flKph < kHw3CustomBucketBaseKph) return 0;
-    if (flKph >= kHw3StockOffsetCutoverKph) return 0;
+    if (flKph < kHw3CustomBucketBaseKph)
+        return 0;
+    if (flKph >= kHw3StockOffsetCutoverKph)
+        return 0;
     uint8_t idx = static_cast<uint8_t>((flKph - kHw3CustomBucketBaseKph) /
                                        kHw3CustomBucketStepKph);
-    if (idx >= kHw3CustomTargetCount) idx = kHw3CustomTargetCount - 1;
+    if (idx >= kHw3CustomTargetCount)
+        idx = kHw3CustomTargetCount - 1;
     return hw3CustomTarget[idx];
 }
 
@@ -415,7 +474,8 @@ inline uint16_t dashComputeHw3CustomTargetKph(uint8_t flKph)
 inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
 {
     uint8_t fl = fusedSpeedLimitRaw;
-    if (fl == 0 || fl == 31) { // SNA / NONE: pass through current mux-2 raw and clear telemetry.
+    if (fl == 0 || fl == 31)
+    { // SNA / NONE: pass through current mux-2 raw and clear telemetry.
         actualOffset = 0.0f;
         return static_cast<uint8_t>(std::max(std::min(stockOffsetRaw, 255), 0));
     }
@@ -433,7 +493,8 @@ inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
     {
         uint8_t idx = static_cast<uint8_t>((flKph - kHw3HighSpeedBucketBaseKph) /
                                            kHw3HighSpeedBucketStepKph);
-        if (idx >= kHw3HighSpeedBucketCount) idx = kHw3HighSpeedBucketCount - 1;
+        if (idx >= kHw3HighSpeedBucketCount)
+            idx = kHw3HighSpeedBucketCount - 1;
         uint8_t targetKph = hw3HighSpeedTarget[idx];
         desiredOffsetKph = targetKph > flKph ? static_cast<int>(targetKph - flKph) : 0;
     }
@@ -449,7 +510,8 @@ inline uint8_t dashEncodeHw3Offset(int offsetKph, uint8_t flKph)
 {
     if (hw3WireEncoding == kHw3WireEncPct4)
     {
-        if (flKph == 0) return 0;
+        if (flKph == 0)
+            return 0;
         int pct = (offsetKph * 100 + flKph / 2) / flKph;
         return dashEncodeHw3OffsetPct4(pct);
     }
@@ -458,8 +520,10 @@ inline uint8_t dashEncodeHw3Offset(int offsetKph, uint8_t flKph)
 
 // ─── Compatibility helpers for new dashboard API used by dashboard.h ─────────
 inline float dashComputeOffset(float, float) { return 0.0f; }
-inline void dashSyncLegacyShims() {
-    if (offsetMode > 2) offsetMode = 1;
+inline void dashSyncLegacyShims()
+{
+    if (offsetMode > 2)
+        offsetMode = 1;
     hw3AutoSpeed = (offsetMode == 1);
     hw3CustomSpeed = (offsetMode == 2);
     hw3HighSpeedEnable = (offsetMode != 0);
@@ -473,15 +537,19 @@ inline void dashSyncLegacyShims() {
 
 inline uint8_t dashEncodeHw3OffsetPct4(int pct)
 {
-    if (pct < 0) pct = 0;
-    if (pct > kHw3SpeedOffsetMaxPct) pct = kHw3SpeedOffsetMaxPct;
+    if (pct < 0)
+        pct = 0;
+    if (pct > kHw3SpeedOffsetMaxPct)
+        pct = kHw3SpeedOffsetMaxPct;
     return static_cast<uint8_t>(pct * 4);
 }
 
 inline uint8_t dashEncodeHw3OffsetKph5(int kph)
 {
-    if (kph < 0) kph = 0;
-    if (kph > 40) kph = 40;
+    if (kph < 0)
+        kph = 0;
+    if (kph > 40)
+        kph = 40;
     return static_cast<uint8_t>(kph * 5);
 }
 
@@ -527,8 +595,10 @@ inline volatile uint32_t hw3OffsetSlewCount = 0;
 
 inline uint8_t dashClampHw3SlewRate(int rate)
 {
-    if (rate < kHw3SlewRateMin) return kHw3SlewRateMin;
-    if (rate > kHw3SlewRateMax) return kHw3SlewRateMax;
+    if (rate < kHw3SlewRateMin)
+        return kHw3SlewRateMin;
+    if (rate > kHw3SlewRateMax)
+        return kHw3SlewRateMax;
     return static_cast<uint8_t>(rate);
 }
 
