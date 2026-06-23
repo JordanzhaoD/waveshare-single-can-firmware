@@ -3,7 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - "v*.*.*"
+      # Only suffixed tags create releases (convention: v<X.Y.Z>-atlas-single-can).
+      # Stripped tags (v<X.Y.Z>, created by auto-tag-release.yml as a stable pointer)
+      # must NOT trigger a release — otherwise we get duplicate stripped+suffixed
+      # releases for the same version.
+      - "v*-atlas-single-can"
   workflow_dispatch:
 
 permissions:

@@ -34,7 +34,10 @@ jobs:
             exit 0
           fi
 
-          TAG="v${VERSION}"
+          # Suffixed tag to match the release convention (v<X.Y.Z>-atlas-single-can),
+          # so the auto-created tag triggers release.yml and produces a suffixed release
+          # consistent with prior versions (v1.0.1/v1.0.2-atlas-single-can).
+          TAG="v${VERSION}-atlas-single-can"
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "Tag ${TAG} already exists; skipping release dispatch."
             echo "created=false" >> "${GITHUB_OUTPUT}"
