@@ -1,6 +1,19 @@
 #include <unity.h>
 #include "dash_wheel_dnd.h"
 
+// tick() only produces a frame when a native 0x3C2 frame is fresh OR syntheticFallback
+// is enabled (see dash_wheel_dnd.h: the !useNative && !syntheticFallback gate returns
+// "waiting_native" without advancing the step). Unit tests exercise the sequence logic
+// via the synthetic path, so they construct the DND with the fallback enabled. Without
+// this, tick() never advances — the non-looping sequence tests fail their data assertions
+// and the while(isRunning()) loop tests hang indefinitely (the CI 6h timeout root cause).
+// Inactive-tick tests still pass with this helper: tick() short-circuits on
+// !volumeActive && !speedActive before reaching the synthetic/native gate.
+static void enableSyntheticFallback(DashWheelDND &dnd)
+{
+    dnd.syntheticFallback = true;
+}
+
 // ─── Constants ────────────────────────────────────────────────────────
 
 void test_dnd_constants()
@@ -19,6 +32,7 @@ void test_dnd_constants()
 void test_volume_sequence_writes_correct_steps_to_data2()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     dnd.startVolume();
@@ -48,6 +62,7 @@ void test_volume_sequence_writes_correct_steps_to_data2()
 void test_volume_sequence_four_steps_then_done()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     dnd.startVolume();
@@ -70,6 +85,7 @@ void test_volume_sequence_four_steps_then_done()
 void test_speed_sequence_writes_correct_steps_to_data3()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     dnd.startSpeed();
@@ -93,6 +109,7 @@ void test_speed_sequence_writes_correct_steps_to_data3()
 void test_speed_sequence_four_steps_then_done()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     dnd.startSpeed();
@@ -114,6 +131,7 @@ void test_speed_sequence_four_steps_then_done()
 void test_combined_volume_and_speed_both_active()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     dnd.startVolume();
@@ -145,6 +163,7 @@ void test_combined_volume_and_speed_both_active()
 void test_combined_eight_frames_total()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     // Start volume first, then speed 2 steps later
@@ -165,6 +184,7 @@ void test_combined_eight_frames_total()
 void test_tick_returns_false_within_50ms()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     dnd.startVolume();
@@ -183,6 +203,7 @@ void test_tick_returns_false_within_50ms()
 void test_tick_no_frame_when_inactive()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     TEST_ASSERT_FALSE(dnd.tick(50, data));
@@ -194,6 +215,7 @@ void test_tick_no_frame_when_inactive()
 void test_counter_increments_each_frame()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     dnd.startVolume();
@@ -210,6 +232,7 @@ void test_counter_increments_each_frame()
 void test_counter_wraps_at_16()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     dnd.counter = 14;
     uint8_t data[8] = {};
 
@@ -230,6 +253,7 @@ void test_counter_wraps_at_16()
 void test_checksum_is_correct()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     dnd.startVolume();
@@ -246,6 +270,7 @@ void test_checksum_is_correct()
 void test_checksum_changes_with_counter()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data1[8] = {};
     uint8_t data2[8] = {};
 
@@ -265,6 +290,7 @@ void test_checksum_changes_with_counter()
 void test_is_running_while_active()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     TEST_ASSERT_FALSE(dnd.isRunning());
@@ -287,6 +313,7 @@ void test_is_running_while_active()
 void test_reset_clears_all_state()
 {
     DashWheelDND dnd;
+    enableSyntheticFallback(dnd);
     uint8_t data[8] = {};
 
     dnd.startVolume();

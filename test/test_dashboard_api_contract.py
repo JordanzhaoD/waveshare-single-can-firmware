@@ -1983,8 +1983,13 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_release_metadata_and_waveshare_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the waveshare single CAN standalone artifact."""
-        self.assertEqual("1.0.2", self.version.strip())
-        self.assertIn("## [1.0.2] - 2026-06-23", self.changelog)
+        version = self.version.strip()
+        # VERSION file must hold a stable semver (the format auto-tag-release.yml gates on).
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$", f"VERSION file malformed: {version!r}")
+        # CHANGELOG must have a section for the current VERSION (VERSION ↔ CHANGELOG consistency,
+        # so bumping VERSION without a CHANGELOG entry is caught). Version-agnostic by design:
+        # this must not break on every release bump.
+        self.assertIn(f"## [{version}]", self.changelog)
         self.assertIn("waveshare_single_can_standalone", self.tests_workflow)
         self.assertIn("waveshare_single_can_standalone", self.release_workflow)
         self.assertIn("firmware-waveshare-single-can", self.release_workflow)

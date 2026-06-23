@@ -150,15 +150,17 @@ void test_hw4_checkAD_blocks_mux0_and_mux2_send()
     f0.data[0] = 0x00;
     f0.data[4] = 0x40;
     handler.handleMessage(f0, mock);
-    TEST_ASSERT_FALSE(handler.ADEnabled);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    // ADEnabled tracks the FSD UI trigger (data[4] bit6) and is independent of the
+    // injection gate — checkAD gates the actual SEND, not the trigger flag.
+    TEST_ASSERT_TRUE(handler.ADEnabled);
+    TEST_ASSERT_EQUAL(0, mock.sent.size()); // mux0 send blocked by checkAD
 
     mock.reset();
     handler.ADEnabled = true;
     CanFrame f2 = {.id = 1021};
     f2.data[0] = 0x02;
     handler.handleMessage(f2, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(0, mock.sent.size()); // mux2 send blocked by checkAD
 }
 
 // --- TLSSC bypass (bit 38 on mux 0) ---
