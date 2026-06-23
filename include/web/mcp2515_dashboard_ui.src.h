@@ -821,6 +821,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <div class="ctl-row"><div><div class="cn">AP 自动恢复</div><div class="cd">重启后恢复上次 AP 配置</div></div>
             <label class="tgl"><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
           <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
+          <div class="safety-strip"><b>⚠️ China 2026.8.3.6 风险：</b>该固件收紧预检，AP 激活边沿注入仍可能触发方向盘猛甩（即使开启 AP-First 仍有 &lt;5% 残留）。研究/教学用途，风险自担；强烈建议先 Listen-Only 验证。</div>
         </div>
           </div>
         </div>
