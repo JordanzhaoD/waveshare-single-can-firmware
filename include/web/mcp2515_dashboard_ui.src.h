@@ -747,7 +747,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
         <div class="card">
           <div class="card-title">FSD 注入策略</div>
-          <div class="setting-desc" style="margin-bottom:10px">稳定模式仅注入 mux0 bit46，禁用 mux1；Tesla Controller 对齐模式用于受控 A/B 测试。</div>
+          <div class="setting-desc" style="margin-bottom:10px">稳定模式仅注入 mux0 bit46，禁用 mux1；对齐模式用于受控 A/B 测试。非 8.3.6 车型可关闭下方「AP 门控」开关以直接注入（跳过 AP-First 等待）。</div>
           <div class="sel-cards c3" id="legacy-fsd-policy-cards" style="margin-bottom:12px">
             <div class="sel-card active" data-policy="stable" onclick="setLegacyFsdPolicy('stable')">
               <div class="sel-lbl">推荐</div>
@@ -814,7 +814,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           </div>
           <div class="src-row"><span>注入来源</span><b id="injection-source">Disabled</b></div>
           <div class="ctl-section">注入门控（服务端强制）</div>
-          <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">要求 Parked / AP / Summon 后才注入</div></div>
+          <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">默认开：等 AP 稳定再注入（防 8.3.6 猛甩）。非 8.3.6 车型可关闭以直接注入</div></div>
             <label class="tgl"><input id="ap-core-gate-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
           <div class="ctl-row"><div><div class="cn">延迟注入</div><div class="cd">AP 激活后等待再注入（推荐 2000ms）</div></div>
             <label class="field"><select id="ap-delay-select" class="ap-delay-select" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label></div>

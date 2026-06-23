@@ -103,7 +103,11 @@ has its own native test env (`native_injection_after_ap`).
 Effect: Legacy `0x3EE` injection is held by the existing gate until AP is stably engaged
 for `ap_delay_ms` (default 2000 ms, user-adjustable via the UI `ap-delay-select`), moving
 injection from the +0.2 s edge to +2 s stable — away from the `0x488` spike window. Users
-may still disable the gate via the UI `ap-core-gate-tgl` to recover the old behavior.
+may still disable the gate via the UI `ap-core-gate-tgl` to recover the old behavior — this
+is the supported path for **non-8.3.6 cars** where direct Legacy `0x3EE` injection (on the
+activation edge) is safe and the 2 s settle is unnecessary. The toggle is NVS-persisted
+(`ap_gate`) and exposed in `/status` as `apGateEnabled`; the UI card labels it
+"默认开：等 AP 稳定再注入（防 8.3.6 猛甩）。非 8.3.6 车型可关闭以直接注入".
 
 ### Safety (mandatory)
 

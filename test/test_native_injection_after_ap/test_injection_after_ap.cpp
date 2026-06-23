@@ -89,6 +89,15 @@ static bool legacyGateAlwaysBlocks(uint32_t)
     return false;
 }
 
+// Represents the dashboard state with the AP-First gate DISABLED by the user
+// (apInjectionGate=false → dashLegacyFsdActivationAllowed() short-circuits at
+// mcp2515_dashboard.h:949, returning true before the AP-active / 2s-settle checks).
+// Use case: non-8.3.6 cars where direct Legacy 0x3EE injection is safe.
+static bool legacyGateAlwaysAllow(uint32_t)
+{
+    return true;
+}
+
 void test_hw3_enhanced_autopilot_waits_for_ap_before_mux1_injection()
 {
     HW3Handler handler;
@@ -365,6 +374,30 @@ void test_legacy_mux0_sends_after_explicit_activation_gate_allows()
     TEST_ASSERT_TRUE((mock.sent[0].data[5] >> 6) & 0x01);
 }
 
+// Jordan requirement (2026-06-23): a user on a non-8.3.6 car must be able to
+// DISABLE the AP-First gate so Legacy 0x3EE injects directly. With the gate
+// disabled (legacyGateAlwaysAllow stub = apInjectionGate=false short-circuit at
+// mcp2515_dashboard.h:949), Legacy mux0 must send on the FIRST frame — no
+// AP-active, no 2s settle wait. Contrasts the test above (gate ON, waits ~2s).
+// See docs/superpowers/specs/2026-06-23-steer-jerk-ap-injection-fix-design.md.
+void test_legacy_mux0_sends_immediately_when_ap_gate_disabled()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    handler.legacyFsdActivationAllowed = legacyGateAlwaysAllow;
+
+    CanFrame drive = gearFrame(4);
+    handler.handleMessage(drive, mock);
+    TEST_ASSERT_FALSE(handler.Parked);
+    TEST_ASSERT_FALSE(handler.APActive); // AP never engaged — gate disabled permits this
+
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock); // first frame: no time advance, no 2s wait
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_TRUE((mock.sent[0].data[5] >> 6) & 0x01); // bit46 (FSD-enable) set
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -379,6 +412,7 @@ int main()
     RUN_TEST(test_hw4_summon_request_survives_aca_while_still_in_park);
     RUN_TEST(test_legacy_mux0_waits_for_explicit_activation_gate_even_when_parked);
     RUN_TEST(test_legacy_mux0_sends_after_explicit_activation_gate_allows);
+    RUN_TEST(test_legacy_mux0_sends_immediately_when_ap_gate_disabled);
 
     return UNITY_END();
 }
