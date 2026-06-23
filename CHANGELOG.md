@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-06-23
+
+### Fixed
+- **CN 2026.8.3.6 方向盘猛甩（AP 注入激活边沿）**：`isDASAutopilotActive` 此前不认 DAS state 6（该固件的 AP 接入状态），导致 `APActive` 恒 false、AP-First 门控无法 arm。现认 state 6（3–6 视为 active，8 handover / 9 fault 仍 inactive）。
+- **AP-First 门控默认开启**：waveshare 构建现启用 `INJECTION_AFTER_AP`，Legacy `0x3EE` 注入延迟到 AP 稳定 ~2s 后，避开激活边沿的 `0x488` 转向指令暴跳（数据： jerk 日志在 AP 接入后 +0.2s 出现 Δ179–248°）。**降低但无法消除**该风险（上游残留 <5%）。
+
+### Changed
+- **AP 门控用户可关闭**：非 8.3.6 车型可在仪表盘「AP 门控」开关关闭以直接注入（跳过 AP-First 等待）。开关 NVS 持久化（`ap_gate`），UI 写清「ON=防 8.3.6 猛甩（默认）/ OFF=直接注入（非 8.3.6）」。
+
+### Added
+- native 回归测试：门控关闭时 Legacy `0x3EE` 无需 AP 直接注入；`isDASAutopilotActive(6)==true`。
+- 上游诊断文档 `docs/steer-jerk-diagnosis-20260623.md`（含数据表 + 因果链，致 `flipper-tesla-fsd#108` / `ev-open-can-tools#66`）。
+- README 与仪表盘 UI 警示：CN 2026.8.3.6 高风险 + Listen-Only 建议。
+
 ## [1.0.2] - 2026-06-23
 
 ### Fixed
