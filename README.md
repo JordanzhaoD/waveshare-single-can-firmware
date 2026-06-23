@@ -164,6 +164,8 @@ pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbse
 
 > ⚠️ **重要**：对车辆 CAN 总线进行任何修改都存在风险。CAN 总线涉及转向、制动、安全气囊等安全关键系统。请仅在充分了解相关报文含义、并在合规、可控（如台架或封闭场地）环境下使用。本项目仅供研究学习，使用者自行承担一切风险与法律责任。详见 [DISCLAIMER.md](DISCLAIMER.md)。
 
+> ⚠️ **China 2026.8.3.6 HW3 高风险**：该固件收紧了自动驾驶预检。AP 激活边沿注入 FSD-enable（`0x3EE`）可能触发**方向盘猛甩 + 故障退出**。本固件默认开启 AP-First 门控（注入延迟到 AP 稳定 ~2s 后），**降低但无法消除**该风险（残留 <5%）。建议先用 **Listen-Only 模式**验证。详见 `docs/steer-jerk-diagnosis-20260623.md`。
+
 ---
 
 ### 💬 交流社区
