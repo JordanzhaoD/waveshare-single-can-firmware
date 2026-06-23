@@ -87,7 +87,7 @@ jobs:
         include:
           - env: waveshare_single_can_standalone
             profile: --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
-              --enable ENHANCED_AUTOPILOT
+              --enable ENHANCED_AUTOPILOT --enable INJECTION_AFTER_AP
             project_dir: .
             extra_python_packages: littlefs-python fatfs-ng pyyaml intelhex csscompressor htmlmin rjsmin
     steps:

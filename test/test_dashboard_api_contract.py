@@ -195,6 +195,20 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("-DTWAI_RX_PIN=GPIO_NUM_16", standalone_env)
         self.assertIn("partitions_16mb_ota_4096k_nvs64.csv", standalone_env)
 
+    def test_waveshare_build_enables_injection_after_ap_gate(self) -> None:
+        """AP-First gate must default ON for the waveshare build so Legacy 0x3EE
+        injection is held off the AP activation edge (steer-jerk root cause).
+        See docs/superpowers/specs/2026-06-23-steer-jerk-ap-injection-fix-design.md."""
+        import re
+        profile = (ROOT / "platformio_profile.example.h").read_text(encoding="utf-8")
+        self.assertIsNotNone(
+            re.search(r"^#define INJECTION_AFTER_AP\s*$", profile, re.M),
+            "platformio_profile.example.h must '#define INJECTION_AFTER_AP' (uncommented)",
+        )
+        self.assertNotIn("// #define INJECTION_AFTER_AP", profile)
+        workflow = (ROOT / TESTS_WORKFLOW).read_text(encoding="utf-8")
+        self.assertIn("--enable INJECTION_AFTER_AP", workflow)
+
     def test_status_exposes_single_can_capabilities(self) -> None:
         for token in [
             "dashCapabilitiesJson",

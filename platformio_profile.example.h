@@ -21,7 +21,7 @@
 // #define BYPASS_TLSSC_REQUIREMENT
 // #define NAG_KILLER
 #define ENHANCED_AUTOPILOT
-// #define INJECTION_AFTER_AP
+#define INJECTION_AFTER_AP
 
 // ─── Dashboard credentials ─────────────────────────────────
 // Factory defaults — change to your own values before real deployment.
