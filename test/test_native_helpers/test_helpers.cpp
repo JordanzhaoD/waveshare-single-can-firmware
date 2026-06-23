@@ -162,6 +162,21 @@ void test_isDASAutopilotActive_false_for_available_state()
     TEST_ASSERT_FALSE(isDASAutopilotActive(2));
 }
 
+void test_isDASAutopilotActive_true_for_state_6()
+{
+    // CN 2026.8.3.6 engages AP to DAS state 6; it must count as active so the
+    // AP-First settle gate arms. Regression for the steer-jerk root cause
+    // (docs/superpowers/specs/2026-06-23-steer-jerk-ap-injection-fix-design.md).
+    TEST_ASSERT_TRUE(isDASAutopilotActive(6));
+}
+
+void test_isDASAutopilotActive_false_for_fault_and_handover_states()
+{
+    // State 8 (handover/warning) and 9 (fault) must NOT count as active.
+    TEST_ASSERT_FALSE(isDASAutopilotActive(8));
+    TEST_ASSERT_FALSE(isDASAutopilotActive(9));
+}
+
 // --- Gear state ---
 
 void test_readVehicleGear_extracts_dif_gear_bits()
@@ -303,6 +318,8 @@ int main()
     RUN_TEST(test_readDASAutopilotStatus_extracts_lower_nibble);
     RUN_TEST(test_isDASAutopilotActive_true_for_active_states);
     RUN_TEST(test_isDASAutopilotActive_false_for_available_state);
+    RUN_TEST(test_isDASAutopilotActive_true_for_state_6);
+    RUN_TEST(test_isDASAutopilotActive_false_for_fault_and_handover_states);
     RUN_TEST(test_readVehicleGear_extracts_dif_gear_bits);
     RUN_TEST(test_isVehicleParked_true_for_park);
     RUN_TEST(test_isVehicleParked_false_for_drive);

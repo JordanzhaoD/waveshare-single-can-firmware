@@ -74,7 +74,10 @@ inline uint8_t readDASAutopilotStatus(const CanFrame &frame)
 
 inline bool isDASAutopilotActive(uint8_t status)
 {
-    return status >= 3 && status <= 5;
+    // DAS_autopilotState (0x399 byte0 low nibble). AP is actively engaged on
+    // states 3-5 (older firmware) and 6 (newer firmware incl. CN 2026.8.3.6).
+    // State 8 (handover/warning) and 9 (fault) are NOT active.
+    return status >= 3 && status <= 6;
 }
 
 inline uint8_t readVehicleGear(const CanFrame &frame)
