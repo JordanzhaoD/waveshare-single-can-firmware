@@ -176,15 +176,15 @@ static constexpr uint32_t kLegacyFsdActivationSettleMaxMs = 3000;
 // has settled, additionally hold the Legacy 0x3EE bit46 activation-edge
 // injection until the steering wheel is near-centred (or the timeout fires),
 // then latch for the rest of the episode. Reduces curve-entry jerk.
-static constexpr bool kSoftEngageDefaultEnabled = true;     // ON: Jordan is the 8.3.6 jerk owner
-static constexpr int SOFT_ENGAGE_ANGLE_THRESH_X10 = 50;     // ±5.0° (conservative; on-car tune)
-static constexpr uint32_t SOFT_ENGAGE_TIMEOUT_MS = 5000;    // long-curve fallback (never strand driver)
+static constexpr bool kSoftEngageDefaultEnabled = true;  // ON: Jordan is the 8.3.6 jerk owner
+static constexpr int SOFT_ENGAGE_ANGLE_THRESH_X10 = 50;  // ±5.0° (conservative; on-car tune)
+static constexpr uint32_t SOFT_ENGAGE_TIMEOUT_MS = 5000; // long-curve fallback (never strand driver)
 static uint32_t legacyFsdApActiveSinceMs = 0;
 static uint32_t legacyFsdRequiredStableMs = kLegacyFsdActivationSettleDefaultMs;
 static uint32_t legacyFsdLastBlockedMs = 0;
 static bool legacyFsdLastAllowed = false;
-static bool dashSoftEngage = kSoftEngageDefaultEnabled;     // opt-in toggle (UI/NVS `def_se`)
-static bool legacySoftEngageSent = false;                   // per-episode latch: first bit46 release
+static bool dashSoftEngage = kSoftEngageDefaultEnabled; // opt-in toggle (UI/NVS `def_se`)
+static bool legacySoftEngageSent = false;               // per-episode latch: first bit46 release
 static bool dashSpeedProfileAuto = true;
 static uint8_t dashManualSpeedProfile = 1;
 static uint8_t dashDriveProfile = 0;  // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
@@ -199,9 +199,9 @@ static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instan
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
 static bool dashSpeedNoDisturb = false;
-static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行逻辑）
-static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
-static bool dashBionicDisabled = false; // bionic auto-disabled after 3 failures
+static bool dashDndVolume = false;       // 音量消除DND（Phase 3实现执行逻辑）
+static bool dashDndSpeed = false;        // 速度滚轮DND（Phase 3实现执行逻辑）
+static bool dashBionicDisabled = false;  // bionic auto-disabled after 3 failures
 static bool dashNagTorqueTamper = false; // OPT-IN 0x370 torque-tamper (1.80Nm). DEFAULT OFF.
 static bool dashApEapCompatible = true;
 static LegacyFsdPolicy dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
@@ -975,8 +975,7 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
         legacySoftEngageSent = false; // new AP episode → re-arm soft-engage latch
     }
     const bool stable = (nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs;
-    const bool timeout = (nowMs - legacyFsdApActiveSinceMs)
-                         >= (legacyFsdRequiredStableMs + SOFT_ENGAGE_TIMEOUT_MS);
+    const bool timeout = (nowMs - legacyFsdApActiveSinceMs) >= (legacyFsdRequiredStableMs + SOFT_ENGAGE_TIMEOUT_MS);
     const bool release = dashSoftEngageRelease(dashSoftEngage, legacySoftEngageSent,
                                                apRestoreState.steerSeen,
                                                apRestoreState.steerValidity,

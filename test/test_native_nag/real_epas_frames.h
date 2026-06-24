@@ -5,10 +5,11 @@
 //   python3 scripts/decode_epas_capture.py <capture.txt> -o test/test_native_nag/real_epas_frames.h
 #include <cstdint>
 
-struct RealEpasSample {
+struct RealEpasSample
+{
     uint8_t bytes[8];
     bool expectEcho;
-    const char* tag;
+    const char *tag;
 };
 
 static const RealEpasSample kRealEpasSamples[] = {

@@ -65,12 +65,10 @@ inline bool dashSoftEngageRelease(bool enabled, bool alreadySent,
                                   bool settled, bool timeout,
                                   int angleThreshX10)
 {
-    if (!enabled)    return true;   // toggle OFF → V1.0.3 behaviour
-    if (alreadySent) return true;   // latched this episode → ignore angle
-    if (!settled)    return true;   // settle gate hasn't passed (not our job)
-    const bool centred = steerSeen
-                         && steerValidity == 0
-                         && abs(static_cast<int>(steerAngleX10)) <= angleThreshX10;
+    if (!enabled) return true;    // toggle OFF → V1.0.3 behaviour
+    if (alreadySent) return true; // latched this episode → ignore angle
+    if (!settled) return true;    // settle gate hasn't passed (not our job)
+    const bool centred = steerSeen && steerValidity == 0 && abs(static_cast<int>(steerAngleX10)) <= angleThreshX10;
     return centred || timeout;
 }
 

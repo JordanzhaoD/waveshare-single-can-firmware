@@ -441,12 +441,12 @@ void test_nag_real_frames_echo_wellformed()
 
             if (modes[m])
             {
-                TEST_ASSERT_EQUAL_HEX8(0xB6, e.data[3]);        // tamper
+                TEST_ASSERT_EQUAL_HEX8(0xB6, e.data[3]); // tamper
                 TEST_ASSERT_EQUAL_HEX8(0x08, e.data[2] & 0x0F);
             }
             else
             {
-                TEST_ASSERT_EQUAL_HEX8(f.data[3], e.data[3]);   // passthrough
+                TEST_ASSERT_EQUAL_HEX8(f.data[3], e.data[3]); // passthrough
             }
         }
         printf("[REAL-DATA] T1 mode=%s echoed=%d\n", names[m], echoed);

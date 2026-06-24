@@ -797,12 +797,12 @@ struct NagHandler : public CarManagerBase
         if (nagTorqueTamperRuntime)
         {
             echo.data[2] = (frame.data[2] & 0xF0) | 0x08; // sign nibble positive
-            echo.data[3] = 0xB6;                           // 1.80 Nm fixed torque
+            echo.data[3] = 0xB6;                          // 1.80 Nm fixed torque
         }
         else
         {
-            echo.data[2] = frame.data[2];                  // PASSTHROUGH
-            echo.data[3] = frame.data[3];                  // PASSTHROUGH
+            echo.data[2] = frame.data[2]; // PASSTHROUGH
+            echo.data[3] = frame.data[3]; // PASSTHROUGH
         }
 
         // handsOnLevel = 1 (gate above guarantees bits 7:6 == 0)
