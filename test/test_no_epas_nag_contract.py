@@ -8,6 +8,7 @@ symbols are absent from compiled source.
 
 Run: python3 -m pytest test/test_no_epas_nag_contract.py -q
 """
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -56,3 +57,39 @@ def test_no_epas_nag_symbols_in_compiled_source():
 def test_no_native_epas_nag_env():
     ini = (ROOT / "platformio.ini").read_text()
     assert "[env:native_epas_nag]" not in ini, "native_epas_nag env must stay removed"
+
+
+def test_nag_torque_tamper_global_defaults_false():
+    """nagTorqueTamperRuntime must be declared with a false default (passthrough)."""
+    ch = (ROOT / "include" / "can_helpers.h").read_text()
+    assert "nagTorqueTamperRuntime" in ch, "nagTorqueTamperRuntime global must exist"
+    assert re.search(r"nagTorqueTamperRuntime\s*\{[^}]*\bfalse\b", ch), (
+        "nagTorqueTamperRuntime must be declared with a false default "
+        "(passthrough is the default mode)"
+    )
+
+
+def test_nag_torque_tamper_is_gated_behind_opt_in():
+    """The 0x370 torque-tamper (0xB6) must live inside the opt-in branch."""
+    h = (ROOT / "include" / "handlers.h").read_text()
+    assert "if (nagTorqueTamperRuntime)" in h, "tamper path must be gated on nagTorqueTamperRuntime"
+    assert "0xB6" in h, "torque-tamper constant 0xB6 must be present in the opt-in branch"
+    # The branch must carry the 2026-06-19 incident warning.
+    assert "2026-06-19" in h and "EPAS" in h, (
+        "torque-tamper branch must reference the 2026-06-19 EPAS incident warning"
+    )
+
+
+def test_nag_torque_tamper_constant_not_in_default_path():
+    """The default (else) path must NOT write 0xB6 — it passes torque through."""
+    h = (ROOT / "include" / "handlers.h").read_text()
+    idx_if = h.find("if (nagTorqueTamperRuntime)")
+    assert idx_if != -1, "opt-in branch missing"
+    idx_else = h.find("else", idx_if)
+    assert idx_else != -1, "else (passthrough) branch missing"
+    tamper_block = h[idx_if:idx_else]
+    passthrough_block = h[idx_else:idx_else + 400]
+    assert "0xB6" in tamper_block, "0xB6 must be inside the opt-in branch"
+    assert "0xB6" not in passthrough_block, (
+        "0xB6 torque-tamper must NOT appear in the default (passthrough) path"
+    )
