@@ -292,6 +292,69 @@ void test_runtime_defaults_start_disabled()
     TEST_ASSERT_EQUAL(kEnhancedAutopilotDefaultEnabled, enhancedAutopilotRuntime);
 }
 
+// --- dashSoftEngageRelease (Soft Engage angle gate) ---
+
+void test_softEngageRelease_disabled_bypasses()
+{
+    // toggle OFF → always release (V1.0.3 behaviour) regardless of angle
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(false, false, true, 0, 100,
+                                           true, false, 50));
+}
+
+void test_softEngageRelease_already_sent_latches()
+{
+    // already activated this episode → ignore angle (mid-corner safe)
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, true, true, 0, 300,
+                                           true, false, 50));
+}
+
+void test_softEngageRelease_not_settle_defers_to_settle_gate()
+{
+    // settle gate not yet passed → not soft-engage's job → release=true
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, false, true, 0, 300,
+                                           false, false, 50));
+}
+
+void test_softEngageRelease_centred_releases()
+{
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, false, true, 0, 0,
+                                           true, false, 50));
+}
+
+void test_softEngageRelease_off_centre_holds()
+{
+    // |angle|=100 > 50, no timeout → HOLD (the core behaviour)
+    TEST_ASSERT_FALSE(dashSoftEngageRelease(true, false, true, 0, 100,
+                                            true, false, 50));
+}
+
+void test_softEngageRelease_off_centre_timeout_releases()
+{
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, false, true, 0, 100,
+                                           true, true, 50));
+}
+
+void test_softEngageRelease_unseen_angle_holds()
+{
+    // steerSeen=false (no 0x129 yet) → hold until timeout
+    TEST_ASSERT_FALSE(dashSoftEngageRelease(true, false, false, 0, 0,
+                                            true, false, 50));
+}
+
+void test_softEngageRelease_invalid_validity_holds()
+{
+    // steerValidity != 0 → signal invalid → hold until timeout
+    TEST_ASSERT_FALSE(dashSoftEngageRelease(true, false, true, 1, 0,
+                                            true, false, 50));
+}
+
+void test_softEngageRelease_threshold_boundary_is_inclusive()
+{
+    // |angle| == threshold (50) → centred (<= inclusive)
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, false, true, 0, 50,
+                                           true, false, 50));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -337,6 +400,16 @@ int main()
     RUN_TEST(test_ui_bit5_is_not_detected);
     RUN_TEST(test_ui_bit6_still_reads_real_bit);
     RUN_TEST(test_runtime_defaults_start_disabled);
+
+    RUN_TEST(test_softEngageRelease_disabled_bypasses);
+    RUN_TEST(test_softEngageRelease_already_sent_latches);
+    RUN_TEST(test_softEngageRelease_not_settle_defers_to_settle_gate);
+    RUN_TEST(test_softEngageRelease_centred_releases);
+    RUN_TEST(test_softEngageRelease_off_centre_holds);
+    RUN_TEST(test_softEngageRelease_off_centre_timeout_releases);
+    RUN_TEST(test_softEngageRelease_unseen_angle_holds);
+    RUN_TEST(test_softEngageRelease_invalid_validity_holds);
+    RUN_TEST(test_softEngageRelease_threshold_boundary_is_inclusive);
 
     return UNITY_END();
 }
