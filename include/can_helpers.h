@@ -46,6 +46,11 @@ inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEn
 inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};
 inline Shared<bool> enhancedAutopilotRuntime{kEnhancedAutopilotDefaultEnabled};
 inline Shared<bool> nagKillerRuntime{kNagKillerDefaultEnabled};
+// Opt-in torque-tamper mode for NagHandler 0x370 echo (1.80 Nm fixed torque).
+// DEFAULT false = PASSTHROUGH (torque bytes untouched). True = TORQUE_TAMPER.
+// Torque-tamper is the documented primary-suspect vector of the 2026-06-19 EPAS
+// fault (docs/EPAS-NAG-REMOVAL-INCIDENT.md) — opt-in only, never the default.
+inline Shared<bool> nagTorqueTamperRuntime{false};
 
 inline bool enhancedAutopilotInjectionAllowed(bool adEnabled)
 {
