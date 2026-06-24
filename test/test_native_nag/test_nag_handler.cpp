@@ -477,6 +477,33 @@ void test_nag_real_counter_interleave_analysis()
         TEST_ASSERT_EQUAL_INT(0, collisions);
 }
 
+// T4: handsOn signal sanity.
+// NagHandler keys off 0x370 byte4 bits[7:6]. If these never go non-zero in the
+// real capture -- even during the driver's manual dismissal -- then NagHandler's
+// trigger is inert on this vehicle and cannot detect "hands returned". The
+// authoritative nag level is 0x399 byte5 (per the public-source reference).
+// This test SURFACES the finding; it does not hide it.
+void test_nag_real_handson_signal_sanity()
+{
+    int handson0 = 0;
+    int handsonNonzero = 0;
+    for (size_t i = 0; i < kRealEpasSampleCount; i++)
+    {
+        uint8_t ho = (kRealEpasSamples[i].bytes[4] >> 6) & 0x03;
+        if (ho == 0)
+            handson0++;
+        else
+            handsonNonzero++;
+    }
+    printf("[REAL-DATA] handsOn: total=%u ==0=%d !=0=%d\n",
+           (unsigned)kRealEpasSampleCount, handson0, handsonNonzero);
+
+    // Sanity: every frame was classified into one bucket.
+    TEST_ASSERT_EQUAL_INT((int)kRealEpasSampleCount, handson0 + handsonNonzero);
+    // Expected finding (not asserted): handsonNonzero is small (~10/1256 in the
+    // captured data) -- logged above for review, not hard-asserted.
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -531,6 +558,7 @@ int main()
     RUN_TEST(test_nag_real_frames_echo_wellformed);
     RUN_TEST(test_nag_real_echo_count_matches_handson0);
     RUN_TEST(test_nag_real_counter_interleave_analysis);
+    RUN_TEST(test_nag_real_handson_signal_sanity);
 
     return UNITY_END();
 }
