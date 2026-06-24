@@ -416,6 +416,67 @@ void test_nag_real_echo_count_matches_handson0()
     TEST_ASSERT_EQUAL_UINT32(expected, mock.sent.size());
 }
 
+// T3: counter-interleaving collision analysis (core).
+// Simulate the bus timeline: real frames arrive in capture order; NagHandler
+// emits an echo (counter = real+1) after each handsOn==0 frame. A "collision"
+// is when a real frame's counter equals the immediately-preceding echo's
+// counter -- i.e. EPAS would see a duplicate/stale counter (the 2026-06-19
+// fault mechanism). We read the ACTUAL echo counter from NagHandler (not an
+// assumption) to stay faithful to the implementation.
+//
+// NOTE: across warning-event boundaries the capture pauses, so the real
+// counter sequence may show non-+2 deltas there. The distribution is printed
+// so the finding is visible regardless of where gaps fall.
+void test_nag_real_counter_interleave_analysis()
+{
+    int collisions = 0;
+    int stridesPlus2 = 0;
+    int stridesOther = 0;
+    int prevRealCounter = -1;
+    int prevEchoCounter = -1;
+
+    for (size_t i = 0; i < kRealEpasSampleCount; i++)
+    {
+        CanFrame f = makeFrameFromSample(kRealEpasSamples[i]);
+        uint8_t realCnt = f.data[6] & 0x0F;
+
+        if (prevRealCounter >= 0)
+        {
+            int delta = (realCnt - prevRealCounter) & 0x0F;
+            if (delta == 2)
+                stridesPlus2++;
+            else
+                stridesOther++;
+            // collision: this real frame duplicates the previous echo's counter
+            if (prevEchoCounter >= 0 && realCnt == prevEchoCounter)
+                collisions++;
+        }
+        prevRealCounter = realCnt;
+
+        // drive NagHandler to obtain the actual echo counter
+        int echoCounter = -1;
+        if (kRealEpasSamples[i].expectEcho)
+        {
+            mock.reset();
+            handler.handleMessage(f, mock);
+            if (mock.sent.size() == 1)
+                echoCounter = mock.sent[0].data[6] & 0x0F;
+        }
+        prevEchoCounter = echoCounter;
+    }
+
+    printf("[REAL-DATA] interleave: frames=%u strides(+2)=%d strides(other)=%d collisions=%d\n",
+           (unsigned)kRealEpasSampleCount, stridesPlus2, stridesOther, collisions);
+
+    // The analysis must have run over a real sequence.
+    TEST_ASSERT_TRUE(stridesPlus2 + stridesOther > 0);
+    // If the real sequence strides UNIFORMLY +2, echo(+1) cannot collide with
+    // the next real frame (N -> N+2, echo is N+1). Assert the clean case.
+    // If there are boundary gaps (stridesOther > 0), only print -- don't over-claim.
+    if (stridesOther == 0 && stridesPlus2 > 0)
+        TEST_ASSERT_EQUAL_INT(0, collisions);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -469,6 +530,7 @@ int main()
     // Real-data bench validation
     RUN_TEST(test_nag_real_frames_echo_wellformed);
     RUN_TEST(test_nag_real_echo_count_matches_handson0);
+    RUN_TEST(test_nag_real_counter_interleave_analysis);
 
     return UNITY_END();
 }
