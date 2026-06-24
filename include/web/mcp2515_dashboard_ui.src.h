@@ -1317,6 +1317,14 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
+      <div class="setting-name">扭矩篡改(1.80Nm) <span class="exp-badge">高危</span></div>
+      <div class="setting-desc">0x370 固定扭矩注入(2026-06-19事故嫌疑向量)</div>
+      <div class="setting-desc" id="def-ntt-warn" style="color:#ef4444;display:none">⚠ 仅台架测试,严禁上车</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-ntt-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
       <div class="setting-name">声音警告抑制</div>
       <div class="setting-desc">ISA bit 抑制 + 0x3C2 音量滚轮DND</div>
     </div>
@@ -1878,6 +1886,8 @@ function experimentSummary(){
   if(apeap&&apeap.checked)flags.push('AP/EAP');
   var bionic=$('def-bionic-tgl');
   if(bionic&&bionic.checked)flags.push('FSD增强');
+  var ntt=$('def-ntt-tgl');
+  if(ntt&&ntt.checked)flags.push('扭矩篡改');
   return flags.length?('实验: '+flags.join('/')):'实验项需实车验证';
 }
 function fmtUp(sec){
@@ -2411,6 +2421,8 @@ async function loadDefenseConfig(){
   var tgl=$('hw3-slew-tgl');
   if(tgl)tgl.checked=!!d.enabled;
   var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
+  var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
+  var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
   // Bionic auto-disabled warning
   var bioWarn=$('def-bionic-warn');
   if(bioWarn)bioWarn.style.display=!!d.bionic_disabled?'block':'none';
@@ -2729,6 +2741,7 @@ async function saveHw3Slew(){
 async function saveDefenseConfig(){
   var tgl=$('hw3-slew-tgl');
   var bio=$('def-bionic-tgl');
+  var ntt=$('def-ntt-tgl');
   var sound=$('def-sound-tgl');
   var isaOvr=$('def-isa-override-tgl');
   var dndVol=$('def-dnd-vol-tgl');
@@ -2738,6 +2751,7 @@ async function saveDefenseConfig(){
   var data={
     enabled:tgl&&tgl.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
+    nag_torque_tamper:ntt&&ntt.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
     isa_override:isaOvr&&isaOvr.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
