@@ -1406,6 +1406,7 @@ static void dashSavePrefs()
     prefs.putBool("def_en", dashDefenseEnabled);
     prefs.putBool("def_bio", dashBionicSteering);
     prefs.putBool("def_ntt", dashNagTorqueTamper);
+    prefs.putBool("def_se", dashSoftEngage);
     prefs.putBool("def_nd", dashSpeedNoDisturb);
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
@@ -1611,6 +1612,7 @@ static void dashLoadPrefs()
     dashBionicSteering = prefs.getBool("def_bio", false);
     dashNagTorqueTamper = prefs.getBool("def_ntt", false);
     nagTorqueTamperRuntime = dashNagTorqueTamper; // boot-sync opt-in to NagHandler
+    dashSoftEngage = prefs.getBool("def_se", kSoftEngageDefaultEnabled);
     dashSpeedNoDisturb = prefs.getBool("def_nd", false);
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
