@@ -193,6 +193,7 @@ static bool dashSpeedNoDisturb = false;
 static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行逻辑）
 static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
 static bool dashBionicDisabled = false; // bionic auto-disabled after 3 failures
+static bool dashNagTorqueTamper = false; // OPT-IN 0x370 torque-tamper (1.80Nm). DEFAULT OFF.
 static bool dashApEapCompatible = true;
 static LegacyFsdPolicy dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
 static bool dashLegacyFsdMux1Enable = false;
@@ -1377,6 +1378,7 @@ static void dashSavePrefs()
     prefs.putUChar("lt_fog", dashRearFogStrategy);
     prefs.putBool("def_en", dashDefenseEnabled);
     prefs.putBool("def_bio", dashBionicSteering);
+    prefs.putBool("def_ntt", dashNagTorqueTamper);
     prefs.putBool("def_nd", dashSpeedNoDisturb);
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
@@ -1580,6 +1582,8 @@ static void dashLoadPrefs()
         dashRearFogStrategy = 0;
     dashDefenseEnabled = prefs.getBool("def_en", false);
     dashBionicSteering = prefs.getBool("def_bio", false);
+    dashNagTorqueTamper = prefs.getBool("def_ntt", false);
+    nagTorqueTamperRuntime = dashNagTorqueTamper; // boot-sync opt-in to NagHandler
     dashSpeedNoDisturb = prefs.getBool("def_nd", false);
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
@@ -3086,6 +3090,8 @@ static String dashDefenseConfigJson()
     j += dashDefenseEnabled ? "true" : "false";
     j += ",\"bionic_steering\":";
     j += dashBionicSteering ? "true" : "false";
+    j += ",\"nag_torque_tamper\":";
+    j += dashNagTorqueTamper ? "true" : "false";
     // Bionic disabled warning (3 consecutive failures)
     bool bionicDisabled = dashHandler ? dashHandler->bionicDisabled() : dashBionicDisabled;
     j += ",\"bionic_disabled\":";
@@ -3115,7 +3121,8 @@ static void handleDefenseConfig()
     if (server.hasArg("enabled") || server.hasArg("bionic_steering") ||
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
-        server.hasArg("dnd_speed") || server.hasArg("isa_override"))
+        server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
+        server.hasArg("nag_torque_tamper"))
     {
         bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
@@ -3136,6 +3143,14 @@ static void handleDefenseConfig()
                 if (v)
                     dashHandler->resetBionic((uint32_t)millis());
             }
+        }
+        if (server.hasArg("nag_torque_tamper"))
+        {
+            // WARNING: torque-tamper is the documented primary-suspect vector of
+            // the 2026-06-19 EPAS fault. Opt-in only; never the default.
+            bool v = dashArgTruthy(server.arg("nag_torque_tamper"));
+            dashNagTorqueTamper = v;
+            nagTorqueTamperRuntime = v; // sync to NagHandler immediately
         }
         if (server.hasArg("sound_warning_suppression"))
         {
@@ -5530,6 +5545,7 @@ static void handleSettingsExport()
     uint8_t storedRearFogStrategy = dashRearFogStrategy;
     bool storedDefenseEnabled = dashDefenseEnabled;
     bool storedBionicSteering = dashBionicSteering;
+    bool storedNagTorqueTamper = dashNagTorqueTamper;
     bool storedSpeedNoDisturb = dashSpeedNoDisturb;
     bool storedDndVolume = dashDndVolume;
     bool storedDndSpeed = dashDndSpeed;
@@ -5591,6 +5607,7 @@ static void handleSettingsExport()
         storedRearFogStrategy = p.getUChar("lt_fog", dashRearFogStrategy);
         storedDefenseEnabled = p.getBool("def_en", dashDefenseEnabled);
         storedBionicSteering = p.getBool("def_bio", dashBionicSteering);
+        storedNagTorqueTamper = p.getBool("def_ntt", dashNagTorqueTamper);
         storedSpeedNoDisturb = p.getBool("def_nd", dashSpeedNoDisturb);
         storedDndVolume = p.getBool("def_dv", dashDndVolume);
         storedDndSpeed = p.getBool("def_ds", dashDndSpeed);
@@ -5726,6 +5743,7 @@ static void handleSettingsExport()
     j += ",\"rearFogValue\":" + String(storedRearFogStrategy) + "}";
     j += ",\"defense\":{\"enabled\":" + String(storedDefenseEnabled ? "true" : "false");
     j += ",\"bionicSteering\":" + String(storedBionicSteering ? "true" : "false");
+    j += ",\"nagTorqueTamper\":" + String(storedNagTorqueTamper ? "true" : "false");
     j += ",\"speedNoDisturb\":" + String(storedSpeedNoDisturb ? "true" : "false");
     j += ",\"dndVolume\":" + String(storedDndVolume ? "true" : "false");
     j += ",\"dndSpeed\":" + String(storedDndSpeed ? "true" : "false");
@@ -6006,6 +6024,8 @@ static void handleSettingsImport()
             p.putBool("def_en", defense["enabled"].as<bool>());
         if (defense["bionicSteering"].is<bool>())
             p.putBool("def_bio", defense["bionicSteering"].as<bool>());
+        if (defense["nagTorqueTamper"].is<bool>())
+            p.putBool("def_ntt", defense["nagTorqueTamper"].as<bool>());
         if (defense["speedNoDisturb"].is<bool>())
             p.putBool("def_nd", defense["speedNoDisturb"].as<bool>());
         if (defense["dndVolume"].is<bool>())
