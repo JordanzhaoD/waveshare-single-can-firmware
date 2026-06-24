@@ -6802,7 +6802,8 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 
     // Phase 3: Bionic PRNG uses default seed 0xDEADBEEF.
     // For better entropy, re-seed from millis() at boot via appActiveHandler.
-    // NagHandler::bionic.init() is called on first handleMessage via needsNewPhase.
+    // NOTE: NagHandler's bionic path was removed (dual-mode refactor, 2026-06-24);
+    // DashBionicSteer is retained (standalone-tested) but currently unused in production.
 
     // Phase 1: 初始化功耗管理
     dashPowerMgmtInit();
