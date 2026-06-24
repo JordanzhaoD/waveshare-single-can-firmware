@@ -1358,24 +1358,25 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("dashDefenseEnabled && dashDndVolume && (!prevDefenseEnabled || !prevDndVolume)", body)
         self.assertIn("dashDefenseEnabled && dashDndSpeed && (!prevDefenseEnabled || !prevDndSpeed)", body)
 
-    def test_phase3_naghandler_bionic_branch(self) -> None:
-        """NagHandler must branch on bionicSteering with fallback."""
+    def test_naghandler_dual_mode_passthrough_default(self) -> None:
+        """NagHandler branches on nagTorqueTamperRuntime; DEFAULT = PASSTHROUGH
+        (torque bytes copied unchanged), opt-in = TORQUE_TAMPER (1.80 Nm fixed
+        0xB6 + positive sign nibble). The bionic path was removed in the
+        2026-06-24 dual-mode refactor and must stay out of NagHandler."""
         nag = re.search(r"struct NagHandler.*?^\};", self.handlers, re.S | re.M)
         self.assertIsNotNone(nag)
         body = nag.group(0)
-        # Must check bionicSteering flag
-        self.assertIn("bionicSteering", body)
-        # Must have DashBionicSteer instance
-        self.assertIn("DashBionicSteer bionic;", body)
-        # Must use bionic path
-        self.assertIn("bionic.beginPhase()", body)
-        self.assertIn("bionic.computePerturbation()", body)
-        self.assertIn("bionic.applyToFrame(", body)
-        # Must have failure reporting
-        self.assertIn("bionic.reportFailure()", body)
-        self.assertIn("bionic.reportSuccess()", body)
-        # Must still have legacy echo fallback
+        # Opt-in flag branch
+        self.assertIn("nagTorqueTamperRuntime", body)
+        # PASSTHROUGH default (else): torque bytes copied through unchanged
+        self.assertIn("echo.data[2] = frame.data[2]", body)
+        self.assertIn("echo.data[3] = frame.data[3]", body)
+        # TORQUE_TAMPER opt-in: fixed 1.80 Nm torque + positive sign nibble
         self.assertIn("0xB6", body)
+        self.assertIn("(frame.data[2] & 0xF0) | 0x08", body)
+        # Removed bionic path must stay out of NagHandler (regression guard)
+        self.assertNotIn("DashBionicSteer", body)
+        self.assertNotIn("bionic.computePerturbation", body)
 
     def test_dashboard_runtime_state_syncs_defense_to_handlers(self) -> None:
         """Loaded NVS/UI defense state must reach active handler and handlerPool."""
