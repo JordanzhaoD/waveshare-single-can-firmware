@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# 烧录 Waveshare 单 CAN 版 v__VERSION__-atlas-single-can
+#
+# 用法:
+#   ./flash.sh /dev/cu.usbserial-XXXX            # 合并固件一键烧录（推荐）
+#   ./flash.sh --split /dev/cu.usbserial-XXXX    # 逐分区烧录（合并失败时备选）
+#
+# 依赖: esptool.py (pip install esptool)
+#
+# 分区布局（partitions_16mb_ota_4096k_nvs64.csv）:
+#   bootloader       @ 0x0
+#   partitions       @ 0x8000
+#   ota_data_initial @ 0x19000   ← 首次烧录必须，否则 OTA slot 不可启动（v1.0.0 漏了）
+#   firmware(app0)   @ 0x20000   ← v1.0.0 误写 0x10000，导致 bootloop
+set -e
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+SPLIT=0
+if [ "${1:-}" = "--split" ]; then
+  SPLIT=1; shift
+fi
+PORT="${1:-/dev/cu.usbserial-XXXX}"
+
+if [ ! -f "$DIR/merged-flash.bin" ] || [ ! -f "$DIR/firmware.bin" ]; then
+  echo "❌ 错误: 在 $DIR 找不到固件资产（merged-flash.bin / firmware.bin）"
+  echo "   请从 GitHub Release 下载完整资产包并解压后运行此脚本。"
+  exit 1
+fi
+
+if ! command -v esptool.py >/dev/null 2>&1; then
+  echo "❌ 未找到 esptool.py，请先安装: pip install esptool"
+  exit 1
+fi
+
+echo "🔑 烧录端口: $PORT"
+echo "⚠️  烧录前 esptool 会先读 chip_id，请确认连接的是你的开发板"
+echo ""
+
+if [ "$SPLIT" = "1" ]; then
+  echo "📦 逐分区烧录（bootloader + partitions + ota_data_initial + firmware）..."
+  esptool.py --chip esp32s3 --port "$PORT" --baud 921600 write_flash -z \
+    0x0 bootloader.bin \
+    0x8000 partitions.bin \
+    0x19000 ota_data_initial.bin \
+    0x20000 firmware.bin
+else
+  echo "📦 合并固件一键烧录（merged-flash.bin @ 0x0，推荐）..."
+  esptool.py --chip esp32s3 --port "$PORT" --baud 921600 write_flash -z \
+    0x0 merged-flash.bin
+fi
+
+echo ""
+echo "✅ 烧录完成。"
+echo "   串口监听: pio device monitor  或  esptool.py --port $PORT run"
+echo "   首次连接: 连开发板 WiFi 热点（默认 Atlas-FSD / 12345678，建议自行修改），"
+echo "             浏览器打开 http://100.100.1.1 访问 Dashboard。"
+echo "   自定义热点名/密码: 编辑 platformio_profile.h 后重新编译（见 README）。"

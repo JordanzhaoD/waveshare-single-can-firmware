@@ -54,7 +54,13 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_path }}
+          # Upload ALL 4 flash artifacts so the release job can build merged-flash.bin.
+          path: |
+            .pio/build/waveshare_single_can_standalone/bootloader.bin
+            .pio/build/waveshare_single_can_standalone/partitions.bin
+            .pio/build/waveshare_single_can_standalone/ota_data_initial.bin
+            .pio/build/waveshare_single_can_standalone/firmware.bin
+          if-no-files-found: error
 
   release:
     needs:
@@ -64,16 +70,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install esptool
       - uses: actions/download-artifact@v8
         with:
           name: firmware-waveshare-single-can
-          path: release-assets
-      - name: Rename firmware file to release asset name
-        run: mv release-assets/firmware.bin release-assets/firmware-waveshare-single-can.bin
+          path: build
+      - name: Build standard 8-asset bundle (merged-flash.bin + flash.sh + SHA256SUMS)
+        run: bash scripts/build_release_assets.sh build release-assets
       - name: Extract changelog section for this tag
         run: |
           TAG="${GITHUB_REF_NAME}"
           VER="${TAG#v}"
+          VER="${VER%%-*}"   # strip the -atlas-single-can suffix → 1.0.4
           awk -v v="$VER" 'BEGIN{f=0} /^## \[/{ if(f) exit; if($0 ~ "^## \\[" v "\\]") { f=1; print; next } } f { print }' CHANGELOG.md > release-notes.md
           if [ ! -s release-notes.md ]; then
             echo "Release ${TAG}" > release-notes.md
@@ -88,7 +99,14 @@ jobs:
             'alpha') || contains(github.ref_name, 'rc') }}
           draft: true
           files: |
+            release-assets/bootloader.bin
+            release-assets/partitions.bin
+            release-assets/ota_data_initial.bin
+            release-assets/firmware.bin
             release-assets/firmware-waveshare-single-can.bin
+            release-assets/merged-flash.bin
+            release-assets/flash.sh
+            release-assets/SHA256SUMS
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ github.token }}
