@@ -3121,6 +3121,8 @@ static String dashDefenseConfigJson()
     j += dashBionicSteering ? "true" : "false";
     j += ",\"nag_torque_tamper\":";
     j += dashNagTorqueTamper ? "true" : "false";
+    j += ",\"soft_engage\":";
+    j += dashSoftEngage ? "true" : "false";
     // Bionic disabled warning (3 consecutive failures)
     bool bionicDisabled = dashHandler ? dashHandler->bionicDisabled() : dashBionicDisabled;
     j += ",\"bionic_disabled\":";
@@ -3151,7 +3153,8 @@ static void handleDefenseConfig()
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
-        server.hasArg("nag_torque_tamper"))
+        server.hasArg("nag_torque_tamper") ||
+        server.hasArg("soft_engage"))
     {
         bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
@@ -3180,6 +3183,11 @@ static void handleDefenseConfig()
             bool v = dashArgTruthy(server.arg("nag_torque_tamper"));
             dashNagTorqueTamper = v;
             nagTorqueTamperRuntime = v; // sync to NagHandler immediately
+        }
+        if (server.hasArg("soft_engage"))
+        {
+            bool v = dashArgTruthy(server.arg("soft_engage"));
+            dashSoftEngage = v; // gate reads this directly on the next Legacy mux0 frame
         }
         if (server.hasArg("sound_warning_suppression"))
         {
@@ -5575,6 +5583,7 @@ static void handleSettingsExport()
     bool storedDefenseEnabled = dashDefenseEnabled;
     bool storedBionicSteering = dashBionicSteering;
     bool storedNagTorqueTamper = dashNagTorqueTamper;
+    bool storedSoftEngage = dashSoftEngage;
     bool storedSpeedNoDisturb = dashSpeedNoDisturb;
     bool storedDndVolume = dashDndVolume;
     bool storedDndSpeed = dashDndSpeed;
@@ -5637,6 +5646,7 @@ static void handleSettingsExport()
         storedDefenseEnabled = p.getBool("def_en", dashDefenseEnabled);
         storedBionicSteering = p.getBool("def_bio", dashBionicSteering);
         storedNagTorqueTamper = p.getBool("def_ntt", dashNagTorqueTamper);
+        storedSoftEngage = p.getBool("def_se", dashSoftEngage);
         storedSpeedNoDisturb = p.getBool("def_nd", dashSpeedNoDisturb);
         storedDndVolume = p.getBool("def_dv", dashDndVolume);
         storedDndSpeed = p.getBool("def_ds", dashDndSpeed);
@@ -5773,6 +5783,7 @@ static void handleSettingsExport()
     j += ",\"defense\":{\"enabled\":" + String(storedDefenseEnabled ? "true" : "false");
     j += ",\"bionicSteering\":" + String(storedBionicSteering ? "true" : "false");
     j += ",\"nagTorqueTamper\":" + String(storedNagTorqueTamper ? "true" : "false");
+    j += ",\"softEngage\":" + String(storedSoftEngage ? "true" : "false");
     j += ",\"speedNoDisturb\":" + String(storedSpeedNoDisturb ? "true" : "false");
     j += ",\"dndVolume\":" + String(storedDndVolume ? "true" : "false");
     j += ",\"dndSpeed\":" + String(storedDndSpeed ? "true" : "false");
@@ -6055,6 +6066,8 @@ static void handleSettingsImport()
             p.putBool("def_bio", defense["bionicSteering"].as<bool>());
         if (defense["nagTorqueTamper"].is<bool>())
             p.putBool("def_ntt", defense["nagTorqueTamper"].as<bool>());
+        if (defense["softEngage"].is<bool>())
+            p.putBool("def_se", defense["softEngage"].as<bool>());
         if (defense["speedNoDisturb"].is<bool>())
             p.putBool("def_nd", defense["speedNoDisturb"].as<bool>());
         if (defense["dndVolume"].is<bool>())
