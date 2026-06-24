@@ -74,7 +74,7 @@ def format_header(samples):
     lines = [_HEADER_PRELUDE]
     for b, eo, tag in samples:
         bs = ", ".join("0x%02X" % x for x in b)
-        lines.append("    {{%s}, %s, \"%s\"}," % (bs, "true" if eo else "false", tag))
+        lines.append("    {{%s}, %s, \"%s\"},\n" % (bs, "true" if eo else "false", tag))
     lines.append(_HEADER_POSTLUDE)
     return "".join(lines)
 
