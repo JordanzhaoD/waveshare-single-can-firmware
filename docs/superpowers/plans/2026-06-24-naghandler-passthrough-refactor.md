@@ -16,7 +16,7 @@ The approved spec (`docs/superpowers/specs/2026-06-24-naghandler-passthrough-ref
 
 1. **`nagTorqueTamper` is a free global, not a NagHandler member.** The dashboard reaches handlers via `CarManagerBase *dashHandler` (`mcp2515_dashboard.h:112`) and a `handlerPool[3]` of `{Legacy, HW3, HW4}` (`:6672-6678`) — none is a `NagHandler*`, so a NagHandler-only member is unreachable from the dashboard. The existing NagHandler runtime knob `nagKillerRuntime` solves this by being an `inline Shared<bool>` global in `can_helpers.h:48` that NagHandler reads directly. We mirror that exactly with `nagTorqueTamperRuntime`. Coverage is identical: the guard asserts it defaults false and the tamper branch is gated on it; native tests set the global directly.
 
-2. **Dashboard = backend `/defense_config` + NVS + `/status`; the minified web UI control is deferred.** The car-facing UI lives in a minified blob (`mcp2515_dashboard_ui.src.h`) that is fragile and error-prone to hand-edit. The backend toggle fully satisfies "executable for testing" (toggle via `curl -X POST /defense_config` or read via `/status`). The UI chip is a clean follow-up. This is flagged here so it can be objected to at plan review.
+2. **Dashboard = backend (`/defense_config` GET+POST + NVS + `/status`) AND a wired UI toggle.** The car-facing UI source is `mcp2515_dashboard_ui.src.h` (editable), minified into `mcp2515_dashboard_ui.h` by `scripts/minify_dashboard.py`. We mirror the existing `bionicSteering` / `def-bionic-tgl` control exactly (HTML row + `loadDefenseConfig` populate + `saveDefenseConfig` POST + `experimentSummary` chip) for a new `def-ntt-tgl`, then regenerate the minified header. The minify script **preserves the existing `DASH_UI_BUILD_ID`** (currently `"manual"`) on regen, so there is no build-stamp churn — both `src.h` and `ui.h` are committed together cleanly.
 
 The 8 banned `DashEpasNag` symbols (`test/test_no_epas_nag_contract.py:FORBIDDEN`) stay banned. Only the *torque-tamper-within-NagHandler* policy changes (opt-in, default off).
 
@@ -26,7 +26,9 @@ The 8 banned `DashEpasNag` symbols (`test/test_no_epas_nag_contract.py:FORBIDDEN
 |---|---|---|
 | `include/can_helpers.h` | NagHandler runtime knobs (free globals) | **modify** — add `nagTorqueTamperRuntime{false}` next to `nagKillerRuntime` |
 | `include/handlers.h` | `NagHandler` (753-877) | **modify** — dual-mode branch, remove bionic path + member + overrides |
-| `include/web/mcp2515_dashboard.h` | dashboard opt-in surface | **modify** — global + NVS + `/defense_config` + `/status`, mirror `bionicSteering` |
+| `include/web/mcp2515_dashboard.h` | dashboard opt-in surface | **modify** — global + NVS + `/defense_config` (GET `dashDefenseConfigJson` + POST) + `/status`, mirror `bionicSteering` |
+| `include/web/mcp2515_dashboard_ui.src.h` | dashboard UI source (editable) | **modify** — add `def-ntt-tgl` row + JS wiring, mirror `def-bionic-tgl` |
+| `include/web/mcp2515_dashboard_ui.h` | minified UI (generated) | **regenerate** via `scripts/minify_dashboard.py` (build stamp preserved) |
 | `test/test_native_nag/test_nag_handler.cpp` | NagHandler unit + real-data tests | **modify** — rewrite 4 torque tests + T1 for dual mode; add opt-in/default-false regressions |
 | `test/test_no_epas_nag_contract.py` | guard rail | **modify** — keep 8-symbol ban; add opt-in/default-false/gating assertions |
 | `platformio.ini` | build profiles | **none** — `NAG_KILLER` stays off in waveshare production |
@@ -38,7 +40,7 @@ The 8 banned `DashEpasNag` symbols (`test/test_no_epas_nag_contract.py:FORBIDDEN
 - **Run native NagHandler tests:** `pio test -e native_nag` (this is source of truth; ignore IDE/clang red squiggles on `unity.h`/`CanFrame`).
 - **Run the guard:** `python3 -m pytest test/test_no_epas_nag_contract.py -q` (pytest-style, NOT unittest).
 - **Real-data findings are swallowed by the PlatformIO native adapter** — surface them via `scripts/run_nag_bench.sh` (runs the compiled binary directly).
-- **Do NOT edit `include/web/mcp2515_dashboard_ui*.h`** (minified; out of scope — see Scope note 2).
+- **Edit `mcp2515_dashboard_ui.src.h` (source), then regenerate `mcp2515_dashboard_ui.h`** via `python3 scripts/minify_dashboard.py` (never hand-edit the minified `ui.h`; the script preserves the `DASH_UI_BUILD_ID` stamp so there is no churn). Commit both files together.
 
 ---
 
@@ -511,10 +513,10 @@ git -c user.name=ziwind -c user.email=ziwind@Mac-mini.local \
 
 ### Task 4: Dashboard opt-in surface (backend: `/defense_config` + NVS + `/status`)
 
-Mirror the existing `bionicSteering` / `def_bio` wiring exactly, adding a `nagTorqueTamper` / `def_ntt` pair. This makes the opt-in toggle-able at runtime via HTTP and persistent across reboots, and visible in `/status`. (The minified web UI chip is deferred — see Scope note 2.)
+Mirror the existing `bionicSteering` / `def_bio` wiring exactly, adding a `nagTorqueTamper` / `def_ntt` pair. This makes the opt-in toggle-able at runtime via HTTP (the `/defense_config` GET returns the state the UI reads; the POST applies it), persistent across reboots, and visible in `/status`. The UI control itself is Task 5.
 
 **Files:**
-- Modify: `include/web/mcp2515_dashboard.h` (9 edits, all anchored on existing `bionicSteering`/`def_bio` lines)
+- Modify: `include/web/mcp2515_dashboard.h` (10 edits, all anchored on existing `bionicSteering`/`def_bio` lines)
 
 All edits use `Edit` with the exact `old_string` shown. Run `pio run -e waveshare_single_can_standalone` once at the end to confirm the production build still compiles.
 
@@ -673,6 +675,25 @@ new_string:
             p.putBool("def_nd", defense["speedNoDisturb"].as<bool>());
 ```
 
+- [ ] **Edit 10 — `/defense_config` GET response (`dashDefenseConfigJson`, around line 3085)**
+
+The UI's `loadDefenseConfig()` reads snake_case fields from `/defense_config` GET (it does NOT read `/status`). Add `nag_torque_tamper` next to `bionic_steering`.
+
+old_string:
+```cpp
+    j += ",\"bionic_steering\":";
+    j += dashBionicSteering ? "true" : "false";
+    // Bionic disabled warning (3 consecutive failures)
+```
+new_string:
+```cpp
+    j += ",\"bionic_steering\":";
+    j += dashBionicSteering ? "true" : "false";
+    j += ",\"nag_torque_tamper\":";
+    j += dashNagTorqueTamper ? "true" : "false";
+    // Bionic disabled warning (3 consecutive failures)
+```
+
 - [ ] **Step: Verify the production build compiles**
 
 Run:
@@ -692,7 +713,131 @@ git -c user.name=ziwind -c user.email=ziwind@Mac-mini.local \
 
 ---
 
-### Task 5: Full validation + bench
+### Task 5: Dashboard UI toggle (`def-ntt-tgl`) + minify regen
+
+Add the visible, wired toggle to the dashboard UI by mirroring the existing `bionicSteering` control (`def-bionic-tgl`) at its five touch points: the HTML row, `loadDefenseConfig` populate, `saveDefenseConfig` var + POST payload, and the `experimentSummary` chip. Then regenerate the minified header so the firmware actually serves the new UI.
+
+**Files:**
+- Modify: `include/web/mcp2515_dashboard_ui.src.h` (5 edits)
+- Regenerate: `include/web/mcp2515_dashboard_ui.h` via `scripts/minify_dashboard.py`
+
+All `src.h` edits use `Edit` with the exact `old_string` shown (each anchors on the unique `def-bionic-*` line it sits next to).
+
+- [ ] **Edit 1 — toggle HTML row (insert after the bionic row, src.h:1316-1317)**
+
+old_string:
+```
+    <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+```
+new_string:
+```
+    <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">扭矩篡改(1.80Nm) <span class="exp-badge">高危</span></div>
+      <div class="setting-desc">0x370 固定扭矩注入(2026-06-19事故嫌疑向量)</div>
+      <div class="setting-desc" id="def-ntt-warn" style="color:#ef4444;display:none">⚠ 仅台架测试,严禁上车</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-ntt-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+```
+
+- [ ] **Edit 2 — `loadDefenseConfig` populate + warning (src.h:2413)**
+
+old_string:
+```
+  var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
+  // Bionic auto-disabled warning
+```
+new_string:
+```
+  var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
+  var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
+  var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
+  // Bionic auto-disabled warning
+```
+
+- [ ] **Edit 3 — `saveDefenseConfig` var decl (src.h:2731)**
+
+old_string:
+```
+  var bio=$('def-bionic-tgl');
+  var sound=$('def-sound-tgl');
+```
+new_string:
+```
+  var bio=$('def-bionic-tgl');
+  var ntt=$('def-ntt-tgl');
+  var sound=$('def-sound-tgl');
+```
+
+- [ ] **Edit 4 — `saveDefenseConfig` POST payload (src.h:2740)**
+
+old_string:
+```
+    bionic_steering:bio&&bio.checked?'1':'0',
+    sound_warning_suppression:sound&&sound.checked?'1':'0',
+```
+new_string:
+```
+    bionic_steering:bio&&bio.checked?'1':'0',
+    nag_torque_tamper:ntt&&ntt.checked?'1':'0',
+    sound_warning_suppression:sound&&sound.checked?'1':'0',
+```
+
+- [ ] **Edit 5 — `experimentSummary` chip (src.h:1879-1880)**
+
+old_string:
+```
+  var bionic=$('def-bionic-tgl');
+  if(bionic&&bionic.checked)flags.push('FSD增强');
+```
+new_string:
+```
+  var bionic=$('def-bionic-tgl');
+  if(bionic&&bionic.checked)flags.push('FSD增强');
+  var ntt=$('def-ntt-tgl');
+  if(ntt&&ntt.checked)flags.push('扭矩篡改');
+```
+
+- [ ] **Step 6: Regenerate the minified UI header**
+
+Run:
+```bash
+cd /Users/ziwind/my-vibe-project/waveshare-single-can-firmware && python3 scripts/minify_dashboard.py
+```
+Expected: rewrites `include/web/mcp2515_dashboard_ui.h`; `DASH_UI_BUILD_ID` stays `"manual"` (the script re-reads it from the existing header — no build-stamp churn). If it errors on missing Python deps, install them and retry: `pip install htmlmin csscompressor rjsmin` (`terser` is optional — `rjsmin` is the fallback minifier).
+
+- [ ] **Step 7: Verify the new toggle survived minification**
+
+Run:
+```bash
+cd /Users/ziwind/my-vibe-project/waveshare-single-can-firmware && grep -c "def-ntt-tgl" include/web/mcp2515_dashboard_ui.h
+```
+Expected: `2` or more (the id appears in the HTML input and the JS — minification keeps ids). `0` means the src.h edit did not land or minify read a stale file — re-check Edit 1/2/3.
+
+- [ ] **Step 8: Verify the production build compiles with the new UI**
+
+Run:
+```bash
+cd /Users/ziwind/my-vibe-project/waveshare-single-can-firmware && pio run -e waveshare_single_can_standalone
+```
+Expected: `SUCCESS`.
+
+- [ ] **Step 9: Commit both UI files**
+
+```bash
+cd /Users/ziwind/my-vibe-project/waveshare-single-can-firmware && \
+git add include/web/mcp2515_dashboard_ui.src.h include/web/mcp2515_dashboard_ui.h && \
+git -c user.name=ziwind -c user.email=ziwind@Mac-mini.local \
+  commit -m "feat(dashboard-ui): add torque-tamper opt-in toggle (def-ntt-tgl) + high-risk warning"
+```
+
+---
+
+### Task 6: Full validation + bench
 
 No code changes. Run every gate end-to-end and surface the real-data findings for both modes.
 
@@ -743,7 +888,18 @@ cd /Users/ziwind/my-vibe-project/waveshare-single-can-firmware && pio run -e wav
 ```
 Expected: `SUCCESS`.
 
-- [ ] **Step 6: Report findings (no commit)**
+- [ ] **Step 6: UI toggle is fully wired (round-trip)**
+
+Run:
+```bash
+cd /Users/ziwind/my-vibe-project/waveshare-single-can-firmware && \
+echo "src.h (def-ntt-tgl):" && grep -c "def-ntt-tgl" include/web/mcp2515_dashboard_ui.src.h && \
+echo "ui.h  (def-ntt-tgl, minified):" && grep -c "def-ntt-tgl" include/web/mcp2515_dashboard_ui.h && \
+echo "dashboard.h (nag_torque_tamper GET+POST):" && grep -c "nag_torque_tamper" include/web/mcp2515_dashboard.h
+```
+Expected: all three counts non-zero — `src.h` ≥ 3 (HTML + load + save + chip), `ui.h` ≥ 2 (minified HTML + JS), `dashboard.h` ≥ 3 (`hasArg` + handler block + `dashDefenseConfigJson`). Any zero = a wire is missing; re-check the corresponding task.
+
+- [ ] **Step 7: Report findings (no commit)**
 
 Summarize for Jordan: both modes produce well-formed echoes on all 1246 handsOn==0 real frames; counter collisions stay 0; tamper is opt-in/default-off; the 8 `DashEpasNag` symbols remain banned; production build is unchanged (NAG_KILLER off). State plainly that the bench verifies frame well-formedness ONLY — it does NOT verify on-vehicle safety for either mode (the 2026-06-19 fault involved torque-tamper; passthrough is unverified on Jordan's vehicle; on-car test is gated by separate sign-off).
 
@@ -751,7 +907,7 @@ Summarize for Jordan: both modes produce well-formed echoes on all 1246 handsOn=
 
 ## Self-review
 
-- **Spec coverage:** §3 dual-mode branch → Task 2. §3 bionic removal → Task 2 (member + overrides + branch + verify all removed; `DashBionicSteer` struct kept, Task 5 Step 4 confirms). §4 default-off → Task 1 (global `{false}`) + Task 3 (guard). §4 explicit opt-in → Task 4 (dashboard). §4 guard reframe → Task 3. §5 handlers.h → Task 2; mcp2515_dashboard.h → Task 4; test_nag_handler.cpp → Task 2; test_no_epas_nag_contract.py → Task 3; platformio.ini none. §6 unit rewrite → Task 2; new regression → Task 2; T1–T4 → Task 2 (T1) + Task 5 (T2 unchanged, T3/T4 unchanged, re-surfaced). §7 invariants pinned in the Task 2 source comment. All sections covered.
+- **Spec coverage:** §3 dual-mode branch → Task 2. §3 bionic removal → Task 2 (member + overrides + branch + verify all removed; `DashBionicSteer` struct kept, Task 6 Step 4 confirms). §4 default-off → Task 1 (global `{false}`) + Task 3 (guard). §4 explicit opt-in → Task 4 (dashboard backend) + Task 5 (wired UI toggle). §4 guard reframe → Task 3. §5 handlers.h → Task 2; mcp2515_dashboard.h → Task 4; mcp2515_dashboard_ui.src.h → Task 5; test_nag_handler.cpp → Task 2; test_no_epas_nag_contract.py → Task 3; platformio.ini none. §6 unit rewrite → Task 2; new regression → Task 2; T1–T4 → Task 2 (T1 rewritten) + Task 6 Step 2 (T2/T3/T4 re-surfaced via bench). §7 invariants pinned in the Task 2 source comment. All sections covered.
 - **Placeholder scan:** no TBD/TODO; every code step shows full code; every command shows expected output.
-- **Type/name consistency:** the global is `nagTorqueTamperRuntime` everywhere (can_helpers.h, handlers.h branch + print, dashboard Edit 3/5, test setUp, guard regex). NVS key `def_ntt`, dashboard global `dashNagTorqueTamper`, JSON field `nagTorqueTamper`, HTTP arg `nag_torque_tamper` — consistent within their layers and mirror the `bionicSteering`/`def_bio` naming.
-- **Refinement flags:** two deviations from spec are stated up front (global-not-member; UI deferred). Flag at plan review.
+- **Type/name consistency:** the runtime global is `nagTorqueTamperRuntime` everywhere (can_helpers.h, handlers.h branch + print, dashboard Edit 3/5, test setUp, guard regex). NVS key `def_ntt`, dashboard global `dashNagTorqueTamper`, `/status` JSON field `nagTorqueTamper`, `/defense_config` GET field + HTTP arg + UI payload key `nag_torque_tamper`, UI element id `def-ntt-tgl` — consistent within their layers and mirror the `bionicSteering` / `def_bio` / `def-bionic-tgl` naming exactly.
+- **Refinement flag:** one deviation from spec §3/§5 is stated up front — `nagTorqueTamper` is a free global (`nagTorqueTamperRuntime` in can_helpers.h), not a NagHandler member, because the dashboard only holds `CarManagerBase*` and the existing `nagKillerRuntime` already sets that precedent. The UI toggle is included (Task 5), not deferred.
