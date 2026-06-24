@@ -9,6 +9,7 @@ UI_SRC = ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h"
 UI_GEN = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
 DASH = ROOT / "include" / "web" / "mcp2515_dashboard.h"
 HANDLERS = ROOT / "include" / "handlers.h"
+CAN_HELPERS = ROOT / "include" / "can_helpers.h"
 LEGACY_SPEED = ROOT / "include" / "dash_legacy_speed.h"
 MAIN = ROOT / "src" / "main.cpp"
 VERSION = ROOT / "VERSION"
@@ -26,6 +27,7 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.ui_gen = UI_GEN.read_text(encoding="utf-8")
         cls.dash = DASH.read_text(encoding="utf-8")
         cls.handlers = HANDLERS.read_text(encoding="utf-8")
+        cls.can_helpers = CAN_HELPERS.read_text(encoding="utf-8")
         cls.legacy_speed = LEGACY_SPEED.read_text(encoding="utf-8")
         cls.main = MAIN.read_text(encoding="utf-8")
         cls.version = VERSION.read_text(encoding="utf-8")
@@ -1377,6 +1379,30 @@ class DashboardApiContractTests(unittest.TestCase):
         # Removed bionic path must stay out of NagHandler (regression guard)
         self.assertNotIn("DashBionicSteer", body)
         self.assertNotIn("bionic.computePerturbation", body)
+
+    def test_soft_engage_is_wired_into_legacy_gate(self) -> None:
+        """Soft Engage angle gate must be wired into the Legacy dashboard gate
+        and exposed via NVS + HTTP (spec rev.3). The pure helper lives in
+        can_helpers.h; the ESP-only dashboard gate calls it and reads
+        apRestoreState, with a per-episode latch."""
+        # 1. pure helper defined in can_helpers.h
+        self.assertIn("dashSoftEngageRelease(", self.can_helpers)
+        # 2. dashboard gate calls helper + reads steering angle + manages latch
+        self.assertIn("dashSoftEngageRelease(", self.dash)
+        self.assertIn("apRestoreState.steerSeen", self.dash)
+        self.assertIn("apRestoreState.steerValidity", self.dash)
+        self.assertIn("apRestoreState.steerAngleX10", self.dash)
+        self.assertIn("legacySoftEngageSent", self.dash)
+        self.assertIn("legacySoftEngageSent = false", self.dash)  # re-arm on new AP episode
+        # 3. constants + state
+        self.assertIn("SOFT_ENGAGE_ANGLE_THRESH_X10", self.dash)
+        self.assertIn("SOFT_ENGAGE_TIMEOUT_MS", self.dash)
+        self.assertIn("kSoftEngageDefaultEnabled", self.dash)
+        self.assertIn("dashSoftEngage", self.dash)
+        # 4. NVS key + HTTP fields
+        self.assertIn('"def_se"', self.dash)
+        self.assertIn('"soft_engage"', self.dash)
+        self.assertIn('"softEngage"', self.dash)
 
     def test_dashboard_runtime_state_syncs_defense_to_handlers(self) -> None:
         """Loaded NVS/UI defense state must reach active handler and handlerPool."""
