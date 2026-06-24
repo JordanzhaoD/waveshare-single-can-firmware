@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-06-25
+
+### Added
+- **Soft Engage（方向盘居中门控）**：对齐上游 `flipper-tesla-fsd` v2.16-beta.10。Legacy `0x3EE bit46` FSD 激活注入在 AP 稳定后额外 hold 到方向盘近居中（±5°，`SOFT_ENGAGE_ANGLE_THRESH_X10=50`）或 5s 超时（`SOFT_ENGAGE_TIMEOUT_MS=5000`）再注入，episode 内锁存——直接降低弯道激活边沿的转向猛甩（V1.0.3 AP-settle 门控的角度细化，解释"弯道猛甩更严重"=偏心时 DAS 路径重算大）。默认 ON；UI「Soft Engage 方向盘居中」开关可关（NVS `def_se`，OFF=精确回退 V1.0.3 行为）。±5°/5s 为保守默认，实车可调。纯 `0x3EE` 侧，不涉 EPAS/`0x370`。角度判定抽成纯函数 `dashSoftEngageRelease`（`can_helpers.h`）以支持 native TDD。
+- **NagHandler 双模式**：默认 PASSTHROUGH（0x370 扭矩字节直通不篡改），opt-in TORQUE_TAMPER（1.80Nm 固定扭矩 `0xB6`，UI「扭矩篡改」开关 + NVS `def_ntt`，默认关 + 「高危/严禁上车」警告）。生产构建 NAG_KILLER off → NagHandler 不注册 → 双模式运行时死代码（纵深防御：即使 opt-in 被翻 true 也不发包）。
+- NagHandler 真实 0x370 帧台架回放测试（1256 帧，counter 0 碰撞 + echo 整形验证）。
+- native 测试：`dashSoftEngageRelease` 纯函数 10 测试（含负角度右转符号约定守卫 `abs()`）；Soft Engage 全链路接线 Python 契约。
+
+### Changed
+- 移除 NagHandler bionic 正弦扰动路径（被双模式取代）；契约测试同步更新为断言双模式（passthrough 默认 + tamper opt-in），并增加 `DashBionicSteer`-stays-out 守卫。
+
+### Fixed
+- 修正 Phase-1 遗留的 stale NagHandler 契约测试（断言已移除的 bionic 路径，致 suite 1 failing）。
+
+### 安全
+- EPAS 禁令完整：8 个 `DashEpasNag` 禁用符号仍 0 命中（`test_no_epas_nag_contract.py` 守卫不变）。
+
 ## [1.0.3] - 2026-06-23
 
 ### Fixed
