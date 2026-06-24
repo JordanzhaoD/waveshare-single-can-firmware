@@ -172,10 +172,19 @@ static volatile uint32_t lastInjectMs = 0;
 static constexpr uint32_t kLegacyFsdActivationSettleDefaultMs = 2000;
 static constexpr uint32_t kLegacyFsdActivationSettleMinMs = 0;
 static constexpr uint32_t kLegacyFsdActivationSettleMaxMs = 3000;
+// Soft Engage (upstream flipper-tesla-fsd v2.16-beta.10 alignment): once AP
+// has settled, additionally hold the Legacy 0x3EE bit46 activation-edge
+// injection until the steering wheel is near-centred (or the timeout fires),
+// then latch for the rest of the episode. Reduces curve-entry jerk.
+static constexpr bool kSoftEngageDefaultEnabled = true;     // ON: Jordan is the 8.3.6 jerk owner
+static constexpr int SOFT_ENGAGE_ANGLE_THRESH_X10 = 50;     // ±5.0° (conservative; on-car tune)
+static constexpr uint32_t SOFT_ENGAGE_TIMEOUT_MS = 5000;    // long-curve fallback (never strand driver)
 static uint32_t legacyFsdApActiveSinceMs = 0;
 static uint32_t legacyFsdRequiredStableMs = kLegacyFsdActivationSettleDefaultMs;
 static uint32_t legacyFsdLastBlockedMs = 0;
 static bool legacyFsdLastAllowed = false;
+static bool dashSoftEngage = kSoftEngageDefaultEnabled;     // opt-in toggle (UI/NVS `def_se`)
+static bool legacySoftEngageSent = false;                   // per-episode latch: first bit46 release
 static bool dashSpeedProfileAuto = true;
 static uint8_t dashManualSpeedProfile = 1;
 static uint8_t dashDriveProfile = 0;  // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
@@ -961,8 +970,26 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
         return false;
     }
     if (legacyFsdApActiveSinceMs == 0)
+    {
         legacyFsdApActiveSinceMs = nowMs;
-    bool stable = (nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs;
+        legacySoftEngageSent = false; // new AP episode → re-arm soft-engage latch
+    }
+    const bool stable = (nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs;
+    const bool timeout = (nowMs - legacyFsdApActiveSinceMs)
+                         >= (legacyFsdRequiredStableMs + SOFT_ENGAGE_TIMEOUT_MS);
+    const bool release = dashSoftEngageRelease(dashSoftEngage, legacySoftEngageSent,
+                                               apRestoreState.steerSeen,
+                                               apRestoreState.steerValidity,
+                                               apRestoreState.steerAngleX10,
+                                               stable, timeout, SOFT_ENGAGE_ANGLE_THRESH_X10);
+    if (stable && !release)
+    {
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false; // Soft Engage hold: wheel off-centre, within timeout window
+    }
+    if (stable)
+        legacySoftEngageSent = true; // latch: angle ignored for rest of episode
     legacyFsdLastAllowed = stable;
     if (!stable)
         legacyFsdLastBlockedMs = nowMs;
