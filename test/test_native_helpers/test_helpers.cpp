@@ -355,6 +355,15 @@ void test_softEngageRelease_threshold_boundary_is_inclusive()
                                            true, false, 50));
 }
 
+void test_softEngageRelease_negative_angle_holds()
+{
+    // Right-turn sign convention: steerAngleX10 is NEGATIVE (e.g. -100).
+    // Guards the abs() — without it, -100 <= 50 would be TRUE and defeat the
+    // gate. |−100| = 100 > 50, no timeout → HOLD.
+    TEST_ASSERT_FALSE(dashSoftEngageRelease(true, false, true, 0, -100,
+                                            true, false, 50));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -410,6 +419,7 @@ int main()
     RUN_TEST(test_softEngageRelease_unseen_angle_holds);
     RUN_TEST(test_softEngageRelease_invalid_validity_holds);
     RUN_TEST(test_softEngageRelease_threshold_boundary_is_inclusive);
+    RUN_TEST(test_softEngageRelease_negative_angle_holds);
 
     return UNITY_END();
 }
