@@ -754,14 +754,6 @@ struct NagHandler : public CarManagerBase
 {
     Shared<bool> nagKillerActive{true};
     Shared<uint32_t> nagEchoCount{0};
-    DashBionicSteer bionic; // bionic steering state
-
-    bool bionicDisabled() const override { return bionic.isDisabled(); }
-    void resetBionic(uint32_t seed) override
-    {
-        bionic.reset();
-        bionic.init(seed ? seed : 0xDEADBEEF);
-    }
 
     const uint32_t *filterIds() const override
     {
@@ -785,71 +777,42 @@ struct NagHandler : public CarManagerBase
         if (checkAD && !checkAD())
             return;
 
-        // Read bionic steering mode from handler member (set by dashboard)
-        bool useBionic = (bool)bionicSteering && !bionic.isDisabled();
-
         CanFrame echo;
         echo.id = 880;
         echo.dlc = 8;
 
+        // Bytes copied through unchanged in BOTH modes.
         echo.data[0] = frame.data[0];
         echo.data[1] = frame.data[1];
-        echo.data[2] = (frame.data[2] & 0xF0) | 0x08;
         echo.data[5] = frame.data[5];
 
-        if (useBionic)
+        // Torque mode select (opt-in global; default false = PASSTHROUGH).
+        // TORQUE_TAMPER (1.80 Nm fixed) is the documented primary-suspect vector
+        // of the 2026-06-19 EPAS fault (docs/EPAS-NAG-REMOVAL-INCIDENT.md) —
+        // opt-in only, never the default code path.
+        if (nagTorqueTamperRuntime)
         {
-            // ── Bionic sine-wave torque path ──────────────────
-            if (bionic.needsNewPhase())
-                bionic.beginPhase();
-
-            int pert = bionic.computePerturbation();
-            uint8_t d2lo = 0x08;
-            uint8_t d3 = 0xB6;
-            bionic.applyToFrame(d2lo, d3, pert);
-            echo.data[2] = (frame.data[2] & 0xF0) | d2lo;
-            echo.data[3] = d3;
+            echo.data[2] = (frame.data[2] & 0xF0) | 0x08; // sign nibble positive
+            echo.data[3] = 0xB6;                           // 1.80 Nm fixed torque
         }
         else
         {
-            // ── Legacy fixed torque = 1.80 Nm (tRaw = 0x08B6) ─
-            echo.data[3] = 0xB6;
+            echo.data[2] = frame.data[2];                  // PASSTHROUGH
+            echo.data[3] = frame.data[3];                  // PASSTHROUGH
         }
 
-        // handsOnLevel = 1
+        // handsOnLevel = 1 (gate above guarantees bits 7:6 == 0)
         echo.data[4] = frame.data[4] | 0x40;
 
-        // Counter + 1
+        // Counter + 1 (low nibble)
         uint8_t cnt = (frame.data[6] & 0x0F);
         cnt = (cnt + 1) & 0x0F;
         echo.data[6] = (frame.data[6] & 0xF0) | cnt;
 
         // Checksum: sum(byte0..byte6) + 0x73
-        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
+        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] +
+                       echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
         echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
-
-        // Verify checksum (sanity check for bionic mode)
-        if (useBionic)
-        {
-            uint16_t verify = echo.data[0] + echo.data[1] + echo.data[2] +
-                              echo.data[3] + echo.data[4] + echo.data[5] +
-                              echo.data[6] + 0x73;
-            uint8_t expectedCs = static_cast<uint8_t>(verify & 0xFF);
-            if (echo.data[7] != expectedCs)
-            {
-                bionic.reportFailure();
-                // Fall back to legacy echo on checksum mismatch
-                echo.data[2] = (frame.data[2] & 0xF0) | 0x08;
-                echo.data[3] = 0xB6;
-                sum = echo.data[0] + echo.data[1] + echo.data[2] +
-                      echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
-                echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
-            }
-            else
-            {
-                bionic.reportSuccess();
-            }
-        }
 
         framesSent++;
         nagEchoCount++;
@@ -859,9 +822,9 @@ struct NagHandler : public CarManagerBase
         {
             char buf[LogRingBuffer::kMaxMsgLen];
             snprintf(buf, sizeof(buf),
-                     "NagHandler: echo=%u bionic=%s",
+                     "NagHandler: echo=%u tamper=%s",
                      (unsigned int)(uint32_t)nagEchoCount,
-                     useBionic ? "ON" : "off");
+                     (bool)nagTorqueTamperRuntime ? "ON" : "off");
             logRing.push(buf,
 #ifndef NATIVE_BUILD
                          millis()
