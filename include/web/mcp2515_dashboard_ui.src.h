@@ -1292,6 +1292,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="field"><select class="ap-delay-select" onchange="saveApDelay(this)"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label>
   </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">Soft Engage 方向盘居中</div>
+      <div class="setting-desc">激活时 hold 到方向盘近居中再注入，降弯道猛甩（超时 5s 兜底）</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-soft-engage-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
 </div>
 <!-- Master switch + 5 defense toggles -->
 <div class="card cockpit-card">
@@ -2423,6 +2430,7 @@ async function loadDefenseConfig(){
   var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
   var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
   var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
+  var se=$('def-soft-engage-tgl');if(se)se.checked=!!d.soft_engage;
   // Bionic auto-disabled warning
   var bioWarn=$('def-bionic-warn');
   if(bioWarn)bioWarn.style.display=!!d.bionic_disabled?'block':'none';
@@ -2742,6 +2750,7 @@ async function saveDefenseConfig(){
   var tgl=$('hw3-slew-tgl');
   var bio=$('def-bionic-tgl');
   var ntt=$('def-ntt-tgl');
+  var se=$('def-soft-engage-tgl');
   var sound=$('def-sound-tgl');
   var isaOvr=$('def-isa-override-tgl');
   var dndVol=$('def-dnd-vol-tgl');
@@ -2752,6 +2761,7 @@ async function saveDefenseConfig(){
     enabled:tgl&&tgl.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
     nag_torque_tamper:ntt&&ntt.checked?'1':'0',
+    soft_engage:se&&se.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
     isa_override:isaOvr&&isaOvr.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
