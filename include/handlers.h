@@ -739,7 +739,11 @@ struct HW3Handler : public CarManagerBase
  * - Listens for CAN 880 (0x370) = EPAS3P_sysStatus
  * - When handsOnLevel = 0 (nag would trigger):
  *   1. Copies the real frame
- *   2. Sets byte 3 = 0xB6 (fixed torsionBarTorque = 1.80 Nm)
+ *   2. Torque bytes (2,3): PASSTHROUGH by default (copied unchanged). Only when
+ *      the opt-in runtime global nagTorqueTamperRuntime is set does it write
+ *      byte 2 low nibble = 0x08 and byte 3 = 0xB6 (fixed 1.80 Nm). That tamper
+ *      mode is the documented primary-suspect vector of the 2026-06-19 EPAS
+ *      fault — opt-in only, never the default path.
  *   3. Sets byte 4 |= 0x40 (handsOnLevel = 1)
  *   4. Increments counter (byte 6 lower nibble + 1)
  *   5. Recalculates checksum (byte 7)
