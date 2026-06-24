@@ -4,6 +4,20 @@
 #include "can_helpers.h"
 #include "handlers.h"
 #include "drivers/mock_driver.h"
+#include <cstring>
+#include "real_epas_frames.h"
+
+// Build a CanFrame (id 880 / dlc 8) from a raw-bytes sample. Stored as raw
+// bytes in the fixture to keep the generator portable (no designated-init of
+// the data[] array in the header).
+static CanFrame makeFrameFromSample(const RealEpasSample &s)
+{
+    CanFrame f;
+    f.id = 880;
+    f.dlc = 8;
+    std::memcpy(f.data, s.bytes, 8);
+    return f;
+}
 
 static MockDriver mock;
 static NagHandler handler;
@@ -347,6 +361,61 @@ void test_nag_output_dlc_is_8()
     TEST_ASSERT_EQUAL_UINT8(8, mock.sent[0].dlc);
 }
 
+// ============================================================
+// Real-data bench validation (Jordan's captured 0x370 frames)
+// ============================================================
+
+// T1: every echo NagHandler emits for a real frame must be well-formed.
+void test_nag_real_frames_echo_wellformed()
+{
+    for (size_t i = 0; i < kRealEpasSampleCount; i++)
+    {
+        mock.reset();
+        CanFrame f = makeFrameFromSample(kRealEpasSamples[i]);
+        handler.handleMessage(f, mock);
+
+        if (!kRealEpasSamples[i].expectEcho)
+        {
+            TEST_ASSERT_EQUAL(0, mock.sent.size());
+            continue;
+        }
+        TEST_ASSERT_EQUAL_UINT32(1, mock.sent.size());
+        const CanFrame &e = mock.sent[0];
+
+        // checksum = sum(b0..b6) + 0x73
+        uint16_t sum = 0;
+        for (int j = 0; j < 7; j++)
+            sum += e.data[j];
+        TEST_ASSERT_EQUAL_HEX8((sum + 0x73) & 0xFF, e.data[7]);
+
+        // counter = input + 1 (mod 16)
+        uint8_t inCnt = f.data[6] & 0x0F;
+        TEST_ASSERT_EQUAL_HEX8((inCnt + 1) & 0x0F, e.data[6] & 0x0F);
+
+        // handsOnLevel = 1
+        TEST_ASSERT_EQUAL_UINT8(1, (e.data[4] >> 6) & 0x03);
+
+        // legacy fixed torque 0xB6 (bionic off by default in tests)
+        TEST_ASSERT_EQUAL_HEX8(0xB6, e.data[3]);
+    }
+}
+
+// T2: total echo count over the real sequence == number of handsOn==0 frames.
+void test_nag_real_echo_count_matches_handson0()
+{
+    size_t expected = 0;
+    for (size_t i = 0; i < kRealEpasSampleCount; i++)
+        if (kRealEpasSamples[i].expectEcho)
+            expected++;
+
+    for (size_t i = 0; i < kRealEpasSampleCount; i++)
+    {
+        CanFrame f = makeFrameFromSample(kRealEpasSamples[i]);
+        handler.handleMessage(f, mock);
+    }
+    TEST_ASSERT_EQUAL_UINT32(expected, mock.sent.size());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -396,6 +465,10 @@ int main()
     // Output frame
     RUN_TEST(test_nag_output_id_is_880);
     RUN_TEST(test_nag_output_dlc_is_8);
+
+    // Real-data bench validation
+    RUN_TEST(test_nag_real_frames_echo_wellformed);
+    RUN_TEST(test_nag_real_echo_count_matches_handson0);
 
     return UNITY_END();
 }
