@@ -125,6 +125,9 @@ static uint8_t followDist = 0;
 
 static unsigned long fpsFrames = 0;
 static unsigned long fpsLastMs = 0;
+// Reactive-NAG instrumentation counter persistence (NVS) — survive power-off.
+static unsigned long lastReactiveCountersMs = 0;
+static bool reactiveCountersLoaded = false;
 static float fps = 0.0f;
 
 static unsigned long muxRx[4] = {};
@@ -5296,6 +5299,7 @@ static void dashSerialPrintHelp()
     Serial.println("  can_status     print CAN/injection summary");
     Serial.println("  task_stats     sample FreeRTOS tasks for 1s asynchronously");
     Serial.println("  reactive_nag   reactive NAG-suppression diagnostics");
+    Serial.println("  reactive_nag_reset  zero the reactive counters (RAM+NVS)");
     Serial.println();
 }
 
@@ -5459,6 +5463,19 @@ static void dashSerialRunCommand(char *cmd)
         {
             Serial.println("=== Reactive NAG === (no handler)");
         }
+    }
+    else if (strcmp(start, "reactive_nag_reset") == 0)
+    {
+        if (dashHandler)
+            dashHandler->resetReactiveCounters();
+        prefs.remove("rn_ns");
+        prefs.remove("rn_bs");
+        prefs.remove("rn_bc");
+        prefs.remove("rn_bg");
+        prefs.remove("rn_es");
+        reactiveCountersLoaded = true; // don't reload stale NVS next loop tick
+        lastReactiveCountersMs = millis();
+        Serial.println("reactive_nag counters reset (RAM + NVS)");
     }
     else if (*start)
         Serial.println("Unknown command. Type help.");
@@ -7024,6 +7041,35 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     dashLog("[BOOT] ev-open-can-tools ready");
 }
 
+// Reactive-NAG instrumentation counter persistence (NVS). Counters live in RAM
+// in the engine; we boot-load them from NVS once (survive power-off/unplug) and
+// flush every 5 s. reset via serial `reactive_nag_reset`.
+// (statics declared near top of file so the serial reset cmd can see them.)
+static void dashReactiveCountersMaintenance()
+{
+    if (!dashHandler)
+        return;
+    unsigned long now = millis();
+    if (!reactiveCountersLoaded)
+    {
+        dashHandler->setReactiveCounters(prefs.getUInt("rn_ns", 0), prefs.getUInt("rn_bs", 0),
+                                         prefs.getUInt("rn_bc", 0), prefs.getUInt("rn_bg", 0),
+                                         prefs.getUInt("rn_es", 0));
+        reactiveCountersLoaded = true;
+        lastReactiveCountersMs = now;
+        return;
+    }
+    if (now - lastReactiveCountersMs < 5000)
+        return;
+    lastReactiveCountersMs = now;
+    DashReactiveDiag d = dashHandler->reactiveDiag();
+    prefs.putUInt("rn_ns", d.nagSamples);
+    prefs.putUInt("rn_bs", d.burstsStarted);
+    prefs.putUInt("rn_bc", d.blockedCooldown);
+    prefs.putUInt("rn_bg", d.blockedGap);
+    prefs.putUInt("rn_es", d.echoSent);
+}
+
 static void mcpDashboardLoop()
 {
     if (Update.isRunning())
@@ -7032,6 +7078,7 @@ static void mcpDashboardLoop()
     if (recActive && (millis() - recStartMs >= kRecMaxDurationMs))
         dashStopRecordingAndSave("time limit");
     dashCheckBusHealth();
+    dashReactiveCountersMaintenance();
     if (canOnline && millis() - lastFrameMs > 10000)
     {
         canOnline = false;

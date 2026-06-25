@@ -290,6 +290,10 @@ struct CarManagerBase
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
     virtual DashReactiveDiag reactiveDiag() const { return {}; }
+    // Instrumentation counter persistence (NVS round-trip) — survive power-off.
+    virtual void resetReactiveCounters() {}
+    virtual void setReactiveCounters(uint32_t /*ns*/, uint32_t /*bs*/, uint32_t /*bc*/,
+                                     uint32_t /*bg*/, uint32_t /*es*/) {}
     virtual ~CarManagerBase() = default;
 };
 
@@ -308,6 +312,11 @@ struct LegacyHandler : public CarManagerBase
         DashReactiveDiag d = nag.diag(dashDiagNowMs());
         d.enabled = (bool)bionicSteering;
         return d;
+    }
+    void resetReactiveCounters() override { nag.resetCounters(); }
+    void setReactiveCounters(uint32_t ns, uint32_t bs, uint32_t bc, uint32_t bg, uint32_t es) override
+    {
+        nag.setCounters(ns, bs, bc, bg, es);
     }
 
     const uint32_t *filterIds() const override

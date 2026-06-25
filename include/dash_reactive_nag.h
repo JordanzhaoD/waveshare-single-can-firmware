@@ -107,6 +107,25 @@ struct DashReactiveNagBurst
 
     void notifyEchoSent() { echoSent_++; }
 
+    // Instrumentation-only: zero / load the persistent counters (NVS round-trip).
+    // Separate from reset() so toggling the feature does not wipe a measurement.
+    void resetCounters()
+    {
+        nagSamples_ = 0;
+        burstsStarted_ = 0;
+        blockedCooldown_ = 0;
+        blockedGap_ = 0;
+        echoSent_ = 0;
+    }
+    void setCounters(uint32_t ns, uint32_t bs, uint32_t bc, uint32_t bg, uint32_t es)
+    {
+        nagSamples_ = ns;
+        burstsStarted_ = bs;
+        blockedCooldown_ = bc;
+        blockedGap_ = bg;
+        echoSent_ = es;
+    }
+
     bool isNagActive() const { return nagActive_; }
     bool shouldInject(unsigned long /*nowMs*/) const { return injecting; }
     int burstsThisCycle() const { return burstsThisCycle_; }
