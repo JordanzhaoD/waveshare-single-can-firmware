@@ -132,7 +132,7 @@ class MobileNavTests(UiV11RedesignTests):
         self.assertIsNotNone(show_mobile, "缺少 showMobilePage map")
         return show_mobile.group(1) if show_mobile else ""
 
-    def test_single_can_mobile_nav_has_exactly_five_ordered_tabs(self):
+    def test_single_can_mobile_nav_has_exactly_six_ordered_tabs(self):
         tabs = re.findall(
             r'<button class="mob-tab(?: active)?" data-mobile-page="([^"]+)" onclick="([^"]+)">\s*<div class="mob-icon">[^<]*</div><div>([^<]+)</div></button>',
             self._standalone_tabs_block(),
@@ -142,9 +142,10 @@ class MobileNavTests(UiV11RedesignTests):
              ("hardware", "showMobilePage('hardware')", "硬件"),
              ("speed", "showMobilePage('speed')", "速度"),
              ("network", "showMobilePage('network')", "网络"),
+             ("defense", "showMobilePage('defense')", "防护"),
              ("more", "toggleMobMore('mob-more-single')", "更多")],
             tabs,
-            "#mob-tabs 必须只有 5 个单 CAN tab，且顺序/标签/入口固定",
+            "#mob-tabs 必须只有 6 个单 CAN tab（含防护），且顺序/标签/入口固定",
         )
         self.assert_absent('data-mobile-page="home"')
         self.assert_absent('data-mobile-page="plugins"')
