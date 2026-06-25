@@ -24,7 +24,7 @@ struct DashReactivePRNG
         s ^= s << 5;
         return s;
     }
-    uint32_t range(uint32_t lo, uint32_t hi) { return lo + (next() % (hi - lo + 1)); }
+    uint32_t range(uint32_t lo, uint32_t hi) { return (hi < lo) ? lo : lo + (next() % (hi - lo + 1)); }
 };
 
 struct DashReactiveNagBurst
@@ -154,12 +154,12 @@ struct DashReactiveNagBurst
         {
             direction *= -1;
             waveStartMs = nowMs;
-            float phase = 0.0f;
-            int w = (int)(sinf(phase) * (float)amplitude * (float)direction);
-            return w == 0 ? 0 : w;   // phase 0 → ~0
         }
-        injecting = false;   // all strokes done
-        return 0;
+        else
+        {
+            injecting = false;   // all strokes done
+        }
+        return 0;   // stroke boundary frame: new stroke starts at sin(0)=0
     }
 
     // base decoded from data2Lo/data3 (caller passes frame bytes);
