@@ -1285,34 +1285,6 @@ class DashboardApiContractTests(unittest.TestCase):
 
     # ── Phase 3: Bionic Steering + Wheel DND ──────────────────
 
-    def test_phase3_bionic_steer_header_exists(self) -> None:
-        """dash_bionic_steer.h must exist with core API surface."""
-        bionic = (ROOT / "include" / "dash_bionic_steer.h").read_text(encoding="utf-8")
-        for symbol in ["DashBionicSteer", "DashBionicPRNG", "computePerturbation",
-                        "applyToFrame", "beginPhase", "reportFailure", "reportSuccess",
-                        "isDisabled", "reset", "kPerturbCap", "kMaxConsecutiveFails"]:
-            with self.subTest(symbol=symbol):
-                self.assertIn(symbol, bionic)
-        # Safety cap
-        self.assertIn("kPerturbCap{60}", bionic)
-        # Amplitude range
-        self.assertIn("kAmplitudeLo{30}", bionic)
-        self.assertIn("kAmplitudeHi{55}", bionic)
-
-    def test_phase3_bionic_steer_xorshift32(self) -> None:
-        """xorshift32 PRNG must produce deterministic sequence from seed."""
-        bionic = (ROOT / "include" / "dash_bionic_steer.h").read_text(encoding="utf-8")
-        self.assertIn("s ^= s << 13", bionic)
-        self.assertIn("s ^= s >> 17", bionic)
-        self.assertIn("s ^= s << 5", bionic)
-
-    def test_phase3_bionic_failure_disables_after_3(self) -> None:
-        """3 consecutive failures must auto-disable bionic."""
-        bionic = (ROOT / "include" / "dash_bionic_steer.h").read_text(encoding="utf-8")
-        self.assertIn("kMaxConsecutiveFails{3}", bionic)
-        self.assertIn("consecutiveFails++", bionic)
-        self.assertIn("disabled = true", bionic)
-
     def test_phase3_wheel_dnd_header_exists(self) -> None:
         """dash_wheel_dnd.h must exist with four-step sequence state machine."""
         dnd = (ROOT / "include" / "dash_wheel_dnd.h").read_text(encoding="utf-8")
@@ -1518,9 +1490,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(status)
         self.assertIn("dashDndSpeed ? \"true\" : \"false\"", status.group(0))
 
-    def test_phase3_handlers_includes_bionic_header(self) -> None:
-        """handlers.h must include dash_bionic_steer.h."""
-        self.assertIn('#include "dash_bionic_steer.h"', self.handlers)
+    def test_handlers_includes_reactive_nag_header(self) -> None:
+        """handlers.h must include dash_reactive_nag.h (reactive NAG suppression)."""
+        self.assertIn('#include "dash_reactive_nag.h"', self.handlers)
 
     # ── Phase 4: Light Stunt System ───────────────────────────
 
