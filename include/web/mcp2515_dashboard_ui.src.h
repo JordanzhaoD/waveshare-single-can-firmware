@@ -1319,6 +1319,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="setting-name">仿生方向盘 <span class="exp-badge">实验</span></div>
       <div class="setting-desc">0x370 正弦波随机扭矩，模拟人手握持</div>
       <div class="setting-desc" id="def-bionic-warn" style="color:#ef4444;display:none">⚠ 已自动回退至echo（连续帧异常）</div>
+      <div class="setting-desc" id="def-bionic-risk" style="color:#ef4444;display:none">⚠ 高危·严禁上车（动态扭矩注入，2026-06-19 事故同类）</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
@@ -2428,6 +2429,7 @@ async function loadDefenseConfig(){
   var tgl=$('hw3-slew-tgl');
   if(tgl)tgl.checked=!!d.enabled;
   var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
+  var bioRisk=$('def-bionic-risk');if(bioRisk)bioRisk.style.display=!!d.bionic_steering?'block':'none';
   var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
   var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
   var se=$('def-soft-engage-tgl');if(se)se.checked=!!d.soft_engage;
