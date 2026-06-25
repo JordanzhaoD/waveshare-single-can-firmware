@@ -2431,26 +2431,22 @@ static void handleStatus()
         DashReactiveDiag d = dashHandler->reactiveDiag();
         j += "\"enabled\":";
         j += d.enabled ? "true" : "false";
-        j += ",\"nagActive\":";
-        j += d.nagActive ? "true" : "false";
+        j += ",\"mode\":";
+        j += String((int)d.mode);
         j += ",\"injecting\":";
         j += d.injecting ? "true" : "false";
-        j += ",\"burstsThisCycle\":";
-        j += String(d.burstsThisCycle);
-        j += ",\"lastAmplitude\":";
-        j += String(d.lastAmplitude);
+        j += ",\"currentAmp\":";
+        j += String(d.currentAmp);
         j += ",\"lastHandsOnState\":";
         j += String(d.lastHandsOnState);
-        j += ",\"cooldownRemainMs\":";
-        j += String(d.cooldownRemainMs);
+        j += ",\"nextProactiveInMs\":";
+        j += String(d.nextProactiveInMs);
         j += ",\"nagSamples\":";
         j += String(d.nagSamples);
-        j += ",\"burstsStarted\":";
-        j += String(d.burstsStarted);
-        j += ",\"blockedCooldown\":";
-        j += String(d.blockedCooldown);
-        j += ",\"blockedGap\":";
-        j += String(d.blockedGap);
+        j += ",\"reactiveBursts\":";
+        j += String(d.reactiveBursts);
+        j += ",\"proactiveWiggles\":";
+        j += String(d.proactiveWiggles);
         j += ",\"echoSent\":";
         j += String(d.echoSent);
     }
@@ -5448,16 +5444,14 @@ static void dashSerialRunCommand(char *cmd)
         if (dashHandler)
         {
             DashReactiveDiag d = dashHandler->reactiveDiag();
-            Serial.println("=== Reactive NAG ===");
-            Serial.printf("enabled=%d nagActive=%d injecting=%d bursts=%d lastAmp=%d handsOn=%d cooldownMs=%lu\n",
-                          (int)d.enabled, (int)d.nagActive, (int)d.injecting,
-                          d.burstsThisCycle, d.lastAmplitude, d.lastHandsOnState,
-                          (unsigned long)d.cooldownRemainMs);
-            // Instrumentation counters (why burst did/didn't fire across the drive)
-            Serial.printf("nagSamples=%lu burstsStarted=%lu blockedCooldown=%lu blockedGap=%lu echoSent=%lu\n",
-                          (unsigned long)d.nagSamples, (unsigned long)d.burstsStarted,
-                          (unsigned long)d.blockedCooldown, (unsigned long)d.blockedGap,
-                          (unsigned long)d.echoSent);
+            Serial.println("=== Reactive NAG v2 ===");
+            Serial.printf("enabled=%d mode=%d injecting=%d amp=%d handsOn=%d nextProactiveMs=%lu\n",
+                          (int)d.enabled, (int)d.mode, (int)d.injecting, d.currentAmp,
+                          d.lastHandsOnState, (unsigned long)d.nextProactiveInMs);
+            // mode: 0=IDLE 1=PROACTIVE 2=REACTIVE
+            Serial.printf("nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu\n",
+                          (unsigned long)d.nagSamples, (unsigned long)d.reactiveBursts,
+                          (unsigned long)d.proactiveWiggles, (unsigned long)d.echoSent);
         }
         else
         {
@@ -5469,9 +5463,8 @@ static void dashSerialRunCommand(char *cmd)
         if (dashHandler)
             dashHandler->resetReactiveCounters();
         prefs.remove("rn_ns");
-        prefs.remove("rn_bs");
-        prefs.remove("rn_bc");
-        prefs.remove("rn_bg");
+        prefs.remove("rn_rb");
+        prefs.remove("rn_pw");
         prefs.remove("rn_es");
         reactiveCountersLoaded = true; // don't reload stale NVS next loop tick
         lastReactiveCountersMs = millis();
@@ -7052,21 +7045,19 @@ static void dashReactiveCountersMaintenance()
     unsigned long now = millis();
     if (!reactiveCountersLoaded)
     {
-        dashHandler->setReactiveCounters(prefs.getUInt("rn_ns", 0), prefs.getUInt("rn_bs", 0),
-                                         prefs.getUInt("rn_bc", 0), prefs.getUInt("rn_bg", 0),
-                                         prefs.getUInt("rn_es", 0));
+        dashHandler->setReactiveCounters(prefs.getUInt("rn_ns", 0), prefs.getUInt("rn_rb", 0),
+                                         prefs.getUInt("rn_pw", 0), prefs.getUInt("rn_es", 0));
         reactiveCountersLoaded = true;
         lastReactiveCountersMs = now;
         return;
     }
-    if (now - lastReactiveCountersMs < 5000)
+    if (now - lastReactiveCountersMs < 2000)
         return;
     lastReactiveCountersMs = now;
     DashReactiveDiag d = dashHandler->reactiveDiag();
     prefs.putUInt("rn_ns", d.nagSamples);
-    prefs.putUInt("rn_bs", d.burstsStarted);
-    prefs.putUInt("rn_bc", d.blockedCooldown);
-    prefs.putUInt("rn_bg", d.blockedGap);
+    prefs.putUInt("rn_rb", d.reactiveBursts);
+    prefs.putUInt("rn_pw", d.proactiveWiggles);
     prefs.putUInt("rn_es", d.echoSent);
 }
 
