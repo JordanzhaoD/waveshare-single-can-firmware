@@ -59,11 +59,11 @@ def test_nag_torque_tamper_constant_not_in_default_path():
 
 
 def test_reactive_nag_is_optin_and_bounded():
-    """DashReactiveNagBurst (0x370 reactive torque burst) must be opt-in and bounded:
-    bionicSteering defaults false, the burst is gated on bionicSteering + shouldInject,
-    0x399 NAG detection is read-only, amplitude is capped, and the burst is bounded
-    (max bursts + cooldown). Replaces the lifted 0x370 symbol-ban (Jordan 2026-06-25
-    authorized lifting the ban + ignoring the Mode-C incident)."""
+    """DashReactiveNagBurst v2 (3-mode reactive NAG suppression) must be opt-in + bounded:
+    bionicSteering defaults false, echo gated on active + shouldEcho, 0x399 NAG detection
+    read-only, data[4] handsOnLevel forged, amplitude capped, REACTIVE intra-episode gap
+    bounded, v1 stale-cooldown removed. Replaces the lifted 0x370 symbol-ban (Jordan
+    2026-06-25 authorized lifting the ban + ignoring the Mode-C incident)."""
     h = (ROOT / "include" / "handlers.h").read_text()
     rn = (ROOT / "include" / "dash_reactive_nag.h").read_text()
 
@@ -71,16 +71,20 @@ def test_reactive_nag_is_optin_and_bounded():
     assert re.search(r"Shared<bool>\s+bionicSteering\s*\{[^}]*\bfalse\b", h), \
         "bionicSteering must default to false"
 
-    # LegacyHandler 0x370 echo gated on bionicSteering + nag.shouldInject
-    assert "bool useReactive = (bool)bionicSteering && APActive && nag.shouldInject(nowMs)" in h, \
-        "reactive echo must be gated on bionicSteering + APActive + nag.shouldInject"
+    # LegacyHandler 0x370 echo gated on active + nag.shouldEcho
+    assert "bool useReactive = active && nag.shouldEcho(nowMs)" in h, \
+        "reactive echo must be gated on active + shouldEcho"
 
     # 0x399 NAG detection reads byte5 bits[5:2] (read-only, no forge)
     assert "(frame.data[5] >> 2) & 0x0F" in h, "0x399 handsOn decode must read byte5 bits[5:2]"
 
-    # DashReactiveNagBurst exists with bounded burst + amplitude cap
+    # data[4] handsOnLevel=1 forged (v2 C: torque + handsOn flag combo)
+    assert "(frame.data[4] & 0x3F) | 0x40" in h, "data[4] handsOnLevel=1 must be forged"
+
+    # DashReactiveNagBurst v2: amplitude cap + REACTIVE gap bounded + v1 cooldown removed
     assert "DashReactiveNagBurst" in rn
-    assert "kMaxBursts{3}" in rn, "burst must be bounded (max 3)"
-    assert "kCooldownMs{3000}" in rn, "cooldown must be enforced (3 s)"
     assert "kAmplitudeCap{95}" in rn, "amplitude hard cap must exist"
+    assert "kReactiveGapMs{800}" in rn, "REACTIVE intra-episode gap must be bounded"
     assert "kHumanWeight{8}" in rn
+    assert "kMaxBursts" not in rn, "v1 3-burst-cooldown must be gone (rec8 fix)"
+    assert "kCooldownMs" not in rn, "v1 3s cooldown must be gone (rec8 fix)"
