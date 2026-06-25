@@ -289,8 +289,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .overlay { display: none !important; }
   .mobile-toggle { display: none !important; }
   .mobile-theme-toggle { display: inline-flex; align-items: center; justify-content: center; order: 7; box-shadow: 0 1px 4px rgba(0,0,0,0.18); }
-  .mob-tabs { display: flex; min-height: 68px; padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); }
-  .mob-tab { min-height: 58px; padding: 7px 2px; font-size: 12px; gap: 2px; }
+  .mob-tabs { display: flex; min-height: 68px; padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); transform: translateZ(0); -webkit-backface-visibility: hidden; }
+  .mob-tab { flex: 1 1 0; min-width: 0; min-height: 58px; padding: 7px 2px; font-size: 12px; gap: 2px; overflow: hidden; }
   .mob-tab .mob-icon { font-size: 29px; margin-bottom: 2px; }
   .mob-more-panel { bottom: 72px; padding: 16px 18px; }
   .mob-more-item { padding: 14px 0; font-size: 15px; }
