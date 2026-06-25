@@ -195,32 +195,38 @@ struct DashReactiveNagBurst
         }
     }
 
-    // DC-biased sustained hold, frame-driven. Each call advances one stroke and
-    // returns a positive DC bias (+ sine jitter) for that stroke → integral > 0
-    // across the burst (fixes v1 rec9 zero-mean). Advances strokeCount per call
-    // so a drain loop at a fixed nowMs terminates (fixes infinite-loop hazard).
-    // After the final stroke, clears injecting and records end time.
+    // DC-biased sustained hold, TIME-driven (real-ms pacing). Burst lasts
+    // totalStrokes × strokeDurMs (~0.6-1.2 s) → a REAL sustained hold on the bus
+    // (fixes v1 rec9 zero-mean + keeps v2's "driver grab" duration). Caller passes
+    // real nowMs per 0x370 frame; elapsed = nowMs - waveStartMs drives stroke advance.
+    // Every frame during the burst (incl. the terminal one) returns a POSITIVE DC
+    // bias + sine jitter → integral > 0. The terminal frame clears injecting AFTER
+    // returning its hold, so the burst ends on a positive frame (no zero leak).
+    // NOTE: drain loops MUST advance nowMs (>strokeDurMs per step) to terminate.
     int computeHold(unsigned long nowMs)
     {
         if (!injecting) return 0;
-        // current stroke: DC bias + sine jitter (always same-sign → sustained)
-        int pert = amp_ + (int)(sinf((float)M_PI * 0.5f) * (float)jitter_);
+        unsigned long elapsed = nowMs - waveStartMs;
+        float phase = ((float)elapsed / (float)strokeDurMs) * (float)M_PI;
+        if (phase > (float)M_PI) phase = (float)M_PI; // clamp past-stroke to stroke end
+        int pert = amp_ + (int)(sinf(phase) * (float)jitter_);
         if (pert > kAmplitudeCap) pert = kAmplitudeCap;
         if (pert < 0) pert = 0;
-        // advance one stroke per call
-        strokeCount++;
-        if (strokeCount < totalStrokes)
+        if (elapsed > (unsigned long)strokeDurMs)
         {
-            waveStartMs = nowMs;
-            return pert;
+            strokeCount++;
+            if (strokeCount < totalStrokes)
+                waveStartMs = nowMs; // start next stroke
+            else
+            {
+                injecting = false; // burst done (after this positive frame)
+                if (proactiveBurst_)
+                    nextProactiveMs = nowMs + rng.range(kProactiveIntLo, kProactiveIntHi);
+                else
+                    lastReactiveEndMs = nowMs;
+            }
         }
-        // burst done
-        injecting = false;
-        if (proactiveBurst_)
-            nextProactiveMs = nowMs + rng.range(kProactiveIntLo, kProactiveIntHi);
-        else
-            lastReactiveEndMs = nowMs;
-        return pert; // final stroke still returns positive hold (no zero-frame)
+        return pert;
     }
 
     // base decoded from data2Lo/data3; adds human_weight + pert. data[2] high nibble caller-kept.
