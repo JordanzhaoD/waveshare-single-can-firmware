@@ -294,6 +294,15 @@ struct CarManagerBase
 
 struct LegacyHandler : public CarManagerBase
 {
+    DashBionicSteer bionic;  // bionic steering state (sine perturbation on 0x08B6 base)
+
+    bool bionicDisabled() const override { return bionic.isDisabled(); }
+    void resetBionic(uint32_t seed) override
+    {
+        bionic.reset();
+        bionic.init(seed ? seed : 0xDEADBEEF);
+    }
+
     const uint32_t *filterIds() const override
     {
         // 1080 added for UI_driverAssistAnonDebugParams visionSpeedSlider override.
@@ -309,6 +318,63 @@ struct LegacyHandler : public CarManagerBase
         if (onFrame)
             onFrame(frame);
         updateHwDetectedFrom920(frame);
+        if (frame.id == 880 && frame.dlc >= 8)
+        {
+            // Bionic nag suppression (opt-in via bionicSteering; default OFF).
+            uint8_t handsOn = static_cast<uint8_t>((frame.data[4] >> 6) & 0x03);
+            bool useBionic = (bool)bionicSteering && !bionic.isDisabled() && handsOn == 0;
+            if (checkAD && !checkAD())
+                useBionic = false;
+            if (useBionic)
+            {
+                if (bionic.needsNewPhase())
+                    bionic.beginPhase();
+                int pert = bionic.computePerturbation();
+
+                CanFrame echo;
+                echo.id = 880;
+                echo.dlc = 8;
+                echo.data[0] = frame.data[0];
+                echo.data[1] = frame.data[1];
+                uint8_t d2lo = 0x08;                       // sign nibble positive
+                uint8_t d3   = 0xB6;                       // 1.80 Nm base
+                bionic.applyToFrame(d2lo, d3, pert);       // sine perturbs the 0x08B6 base
+                echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) | d2lo);
+                echo.data[3] = d3;
+                echo.data[4] = static_cast<uint8_t>(frame.data[4] | 0x40);  // handsOnLevel = 1
+                echo.data[5] = frame.data[5];
+                uint8_t cnt = static_cast<uint8_t>(frame.data[6] & 0x0F);
+                cnt = static_cast<uint8_t>((cnt + 1) & 0x0F);
+                echo.data[6] = static_cast<uint8_t>((frame.data[6] & 0xF0) | cnt);
+                uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] +
+                               echo.data[4] + echo.data[5] + echo.data[6];
+                echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+
+                // Self-validation (LILYGO-faithful): re-check the output checksum.
+                // NOTE: by construction this is always self-consistent (echo.data[7] was
+                // computed from echo.data[0..6]), so reportFailure() here is not reached
+                // in production — the 3-fail auto-disable is exercised in tests via direct
+                // reportFailure() calls. Kept for parity with the proven LILYGO path.
+                uint16_t verify = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] +
+                                  echo.data[4] + echo.data[5] + echo.data[6] + 0x73;
+                if (echo.data[7] != static_cast<uint8_t>(verify & 0xFF))
+                {
+                    bionic.reportFailure();
+                    echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) | 0x08);
+                    echo.data[3] = 0xB6;
+                    uint16_t fbSum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] +
+                                     echo.data[4] + echo.data[5] + echo.data[6];
+                    echo.data[7] = static_cast<uint8_t>((fbSum + 0x73) & 0xFF);
+                }
+                else
+                {
+                    bionic.reportSuccess();
+                }
+
+                framesSent++;
+                driver.send(echo);
+            }
+        }
         // STW_ACTN_RQ (0x045 = 69): Follow-Distance-Stalk as Source for Profile Mapping
         // byte[1]: 0x00=Pos1, 0x21=Pos2, 0x42=Pos3, 0x64=Pos4, 0x85=Pos5, 0xA6=Pos6, 0xC8=Pos7
         if (frame.id == 69)

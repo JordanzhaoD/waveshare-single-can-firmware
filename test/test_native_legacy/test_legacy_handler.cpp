@@ -19,6 +19,30 @@ static FsdGateBlockReason denyByApGate()
     return FsdGateBlockReason::ApGate;
 }
 
+// Helper: build a realistic CAN 880 (0x370 EPAS3P_sysStatus) frame.
+static CanFrame makeEpasFrame(uint8_t handsOn, float torqueNm, uint8_t counter)
+{
+    CanFrame f = {.id = 880, .dlc = 8};
+    f.data[0] = 0x12;
+    f.data[1] = 0x00;
+    uint16_t tRaw = static_cast<uint16_t>((torqueNm + 20.5) / 0.01);
+    f.data[2] = static_cast<uint8_t>(0x08 | ((tRaw >> 8) & 0x0F));
+    f.data[3] = static_cast<uint8_t>(tRaw & 0xFF);
+    f.data[4] = static_cast<uint8_t>(((handsOn & 0x03) << 6) | 0x1F);
+    f.data[5] = 0x89;
+    f.data[6] = static_cast<uint8_t>((2 << 5) | (counter & 0x0F));
+    uint16_t sum = 0;
+    for (int i = 0; i < 7; i++)
+        sum += f.data[i];
+    f.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+    return f;
+}
+
+static int32_t decodeEchoTorqueRaw(const CanFrame &f)
+{
+    return static_cast<int32_t>(((f.data[2] & 0x0F) << 8) | f.data[3]);
+}
+
 void setUp()
 {
     mock.reset();
@@ -34,6 +58,7 @@ void setUp()
     smoothedOffset = 0.0f;
     actualOffset = 0.0f;
     forceActivateRuntime = false;
+    handler.bionicSteering = false; // default = bionic OFF; bionic tests opt in explicitly
 }
 
 void tearDown() {}
@@ -688,6 +713,100 @@ void test_legacy_health_gate_blocked_when_last_blocked()
     TEST_ASSERT_EQUAL(FsdHealthState::GateBlocked, s);
 }
 
+// ============================================================
+// Bionic steering (sine on 0x08B6 base) — opt-in via bionicSteering, in LegacyHandler
+// ============================================================
+
+// Bionic OFF (default) → no 0x370 echo at all.
+void test_legacy_bionic_off_no_echo()
+{
+    handler.bionicSteering = false;
+    CanFrame f = makeEpasFrame(0, 0.10, 0x0C);
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+// Bionic ON + handsOn==0 → echo sent; first frame torque == base 0x08B6 (sin(0)=0).
+void test_legacy_bionic_first_frame_is_base_torque()
+{
+    handler.bionicSteering = true;
+    CanFrame f = makeEpasFrame(0, 0.10, 0x0C);
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT32(0x08B6, decodeEchoTorqueRaw(mock.sent[0]));
+}
+
+// Bionic ON over many frames → sine produces at least one non-base torque.
+void test_legacy_bionic_sine_varies_over_frames()
+{
+    handler.bionicSteering = true;
+    bool varied = false;
+    for (uint8_t c = 0; c < 40; ++c)
+    {
+        mock.reset();
+        CanFrame f = makeEpasFrame(0, 0.10, c);
+        handler.handleMessage(f, mock);
+        if (mock.sent.size() == 1 && decodeEchoTorqueRaw(mock.sent[0]) != 0x08B6)
+            varied = true;
+    }
+    TEST_ASSERT_TRUE(varied);
+}
+
+// Bionic ON → echo torque always within [base - cap, base + cap] = [2170, 2290].
+void test_legacy_bionic_respects_perturbation_cap()
+{
+    handler.bionicSteering = true;
+    for (uint8_t c = 0; c < 60; ++c)
+    {
+        mock.reset();
+        CanFrame f = makeEpasFrame(0, 0.10, c);
+        handler.handleMessage(f, mock);
+        TEST_ASSERT_EQUAL(1, mock.sent.size());
+        int32_t t = decodeEchoTorqueRaw(mock.sent[0]);
+        TEST_ASSERT_TRUE(t >= 2230 - 60);
+        TEST_ASSERT_TRUE(t <= 2230 + 60);
+    }
+}
+
+// Bionic ON + handsOn!=0 → no echo (gate: only when hands off).
+void test_legacy_bionic_hands_on_no_echo()
+{
+    handler.bionicSteering = true;
+    CanFrame f = makeEpasFrame(1, 0.10, 0x0C); // handsOn=1
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+// Bionic ON but auto-disabled (3 fails) → no echo until re-arm.
+void test_legacy_bionic_disabled_no_echo()
+{
+    handler.bionicSteering = true;
+    handler.bionic.reportFailure();
+    handler.bionic.reportFailure();
+    handler.bionic.reportFailure();
+    TEST_ASSERT_TRUE(handler.bionic.isDisabled());
+    CanFrame f = makeEpasFrame(0, 0.10, 0x0C);
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+// Bionic echo checksum is always valid.
+void test_legacy_bionic_echo_checksum_valid()
+{
+    handler.bionicSteering = true;
+    for (uint8_t c = 0; c < 30; ++c)
+    {
+        mock.reset();
+        CanFrame f = makeEpasFrame(0, 0.10, c);
+        handler.handleMessage(f, mock);
+        TEST_ASSERT_EQUAL(1, mock.sent.size());
+        uint16_t sum = 0;
+        for (int i = 0; i < 7; i++)
+            sum += mock.sent[0].data[i];
+        TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>((sum + 0x73) & 0xFF), mock.sent[0].data[7]);
+    }
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -740,6 +859,14 @@ int main()
     RUN_TEST(test_legacy_can1080_records_tx_fail);
 
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
+
+    RUN_TEST(test_legacy_bionic_off_no_echo);
+    RUN_TEST(test_legacy_bionic_first_frame_is_base_torque);
+    RUN_TEST(test_legacy_bionic_sine_varies_over_frames);
+    RUN_TEST(test_legacy_bionic_respects_perturbation_cap);
+    RUN_TEST(test_legacy_bionic_hands_on_no_echo);
+    RUN_TEST(test_legacy_bionic_disabled_no_echo);
+    RUN_TEST(test_legacy_bionic_echo_checksum_valid);
 
     return UNITY_END();
 }
