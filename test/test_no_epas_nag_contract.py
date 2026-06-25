@@ -93,3 +93,26 @@ def test_nag_torque_tamper_constant_not_in_default_path():
     assert "0xB6" not in passthrough_block, (
         "0xB6 torque-tamper must NOT appear in the default (passthrough) path"
     )
+
+
+def test_legacy_bionic_steering_is_optin_and_gated():
+    """LegacyHandler bionic (0x370 sine-on-0x08B6 echo) must be opt-in: bionicSteering
+    defaults false, the bionic echo is gated on bionicSteering + handsOn==0, and the 8
+    banned DashEpasNag symbols stay absent (DashBionicSteer is not one of them)."""
+    h = (ROOT / "include" / "handlers.h").read_text()
+
+    # bionicSteering member defaults false (on CarManagerBase)
+    assert re.search(r"Shared<bool>\s+bionicSteering\s*\{[^}]*\bfalse\b", h), \
+        "bionicSteering must default to false"
+
+    # LegacyHandler has the bionic echo gated on bionicSteering + handsOn==0
+    assert "bool useBionic = (bool)bionicSteering && !bionic.isDisabled() && handsOn == 0" in h, \
+        "LegacyHandler bionic echo must be gated on bionicSteering + handsOn==0"
+
+    # bionic uses the 0x08B6 tamper base + sine (DashBionicSteer.applyToFrame)
+    assert "bionic.applyToFrame(" in h
+    assert "0x08B6" in (ROOT / "include" / "dash_bionic_steer.h").read_text()
+
+    # 8 banned DashEpasNag symbols still absent from handlers.h
+    for sym in FORBIDDEN:
+        assert sym not in h, f"banned symbol {sym} must stay out of handlers.h"
