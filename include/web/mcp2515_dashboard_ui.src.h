@@ -3886,6 +3886,7 @@ function restartPoll(ms){
   <button class="mob-tab" data-mobile-page="hardware" onclick="showMobilePage('hardware')"><div class="mob-icon">◇</div><div>硬件</div></button>
   <button class="mob-tab" data-mobile-page="speed" onclick="showMobilePage('speed')"><div class="mob-icon">↗</div><div>速度</div></button>
   <button class="mob-tab" data-mobile-page="network" onclick="showMobilePage('network')"><div class="mob-icon">◎</div><div>网络</div></button>
+  <button class="mob-tab" data-mobile-page="defense" onclick="showMobilePage('defense')"><div class="mob-icon">◈</div><div>防护</div></button>
   <button class="mob-tab" data-mobile-page="more" onclick="toggleMobMore('mob-more-single')"><div class="mob-icon">···</div><div>更多</div></button>
 </div>
 <div class="mob-more-panel" id="mob-more-single" data-dual-hide="1">
