@@ -744,50 +744,37 @@ void test_legacy_reactive_off_no_echo()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
-// toggle ON + NAG(921 byte5=13) → 0x370 回声；扭矩 = base + human_weight(8) + wave
-void test_legacy_reactive_nag_echoes_with_human_weight()
+// v2: toggle ON + NAG(921 byte5=13) → 0x370 回声；扭矩 = base + human_weight + 持续 hold(>0)；
+// data[4] handsOnLevel=01 forged（C）；counter+1；checksum 合法
+void test_legacy_reactive_v2_nag_echo_sustained_and_forge()
 {
     handler.bionicSteering = true;
-    CanFrame das = makeDasFrame(13);              // 触发 NAG
+    CanFrame das = makeDasFrame(13);              // 触发 NAG (byte0=4 → APActive)
     CanFrame epas = makeEpasFrame(0, 0.10, 0x0C); // base 0x080C=2060
     handler.handleMessage(das, mock);
     handler.handleMessage(epas, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    int32_t t = decodeEchoTorqueRaw(mock.sent[0]);
-    // 首帧 wave≈0（elapsed≈1 → phase≈0 → sin≈0）；扭矩 = base(2060) + human_weight(8)
-    // 紧边界：human_weight 若丢失→2060（外）、base 误解码→大偏移（外），容忍 ≤4 wave 抖动
-    TEST_ASSERT_TRUE(t >= 2064);
-    TEST_ASSERT_TRUE(t <= 2072);
-}
-
-// toggle ON 但无 NAG（byte5=2）→ 无回声
-void test_legacy_reactive_no_nag_no_echo()
-{
-    handler.bionicSteering = true;
-    CanFrame das = makeDasFrame(2); // 非 NAG
-    CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);
-    handler.handleMessage(das, mock);
-    handler.handleMessage(epas, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-}
-
-// 回声 data[4] handsOn 不被改写；counter+1；checksum 合法
-void test_legacy_reactive_echo_frame_shape()
-{
-    handler.bionicSteering = true;
-    CanFrame in = makeEpasFrame(0, 0.10, 0x0C);
-    uint8_t origB4 = in.data[4];
-    CanFrame das = makeDasFrame(13);
-    handler.handleMessage(das, mock);
-    handler.handleMessage(in, mock);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
     CanFrame e = mock.sent[0];
-    TEST_ASSERT_EQUAL_UINT8(origB4, e.data[4]);                       // data[4] 不 forge
+    int32_t t = decodeEchoTorqueRaw(e);
+    // base(2060) + human_weight(8) + 持续 DC 偏置 hold(~70) → 显著 > base+8
+    TEST_ASSERT_TRUE(t >= 2060 + 8 + 30);
+    TEST_ASSERT_TRUE((e.data[4] & 0xC0) == 0x40);                     // C: handsOnLevel=01
     TEST_ASSERT_EQUAL_UINT8(((0x0C + 1) & 0x0F), (e.data[6] & 0x0F)); // counter+1
     uint16_t sum = 0;
     for (int i = 0; i < 7; ++i)
         sum += e.data[i];
     TEST_ASSERT_EQUAL_UINT8((sum + 0x73) & 0xFF, e.data[7]); // checksum
+}
+
+// v2: toggle ON + 无 NAG（byte5=2）→ PROACTIVE 基线 hold 回声（B：预防触发）
+void test_legacy_reactive_no_nag_proactive_echo()
+{
+    handler.bionicSteering = true;
+    CanFrame das = makeDasFrame(2); // 非 NAG (byte0=4 → APActive)
+    CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);
+    handler.handleMessage(das, mock);
+    handler.handleMessage(epas, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size()); // PROACTIVE 周期 hold（首次立即排）
 }
 
 // toggle ON + NAG，但 checkAD 返回 false（非 AD）→ 不注入
@@ -857,9 +844,8 @@ int main()
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
 
     RUN_TEST(test_legacy_reactive_off_no_echo);
-    RUN_TEST(test_legacy_reactive_nag_echoes_with_human_weight);
-    RUN_TEST(test_legacy_reactive_no_nag_no_echo);
-    RUN_TEST(test_legacy_reactive_echo_frame_shape);
+    RUN_TEST(test_legacy_reactive_v2_nag_echo_sustained_and_forge);
+    RUN_TEST(test_legacy_reactive_no_nag_proactive_echo);
     RUN_TEST(test_legacy_reactive_checkad_blocks);
 
     return UNITY_END();
