@@ -112,6 +112,7 @@ struct DashReactiveNagBurst
             if (handsOnState <= 2)
             {
                 nagActive_ = false;
+                injecting = false;    // C-1: NAG cleared → halt any in-progress burst immediately
                 burstsThisCycle_ = 0; // hands back on → reset cycle
             }
         }
@@ -150,6 +151,7 @@ struct DashReactiveNagBurst
         else
         {
             nagActive_ = false;
+            injecting = false; // C-1: NAG cleared → halt burst
         }
     }
 

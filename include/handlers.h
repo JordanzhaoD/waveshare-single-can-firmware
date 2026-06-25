@@ -330,7 +330,7 @@ struct LegacyHandler : public CarManagerBase
             // Reactive NAG-suppression burst (opt-in via bionicSteering; default OFF).
             // Only echoes during an active burst started by 0x399 NAG detection.
             unsigned long nowMs = dashDiagNowMs();
-            bool useReactive = (bool)bionicSteering && nag.shouldInject(nowMs);
+            bool useReactive = (bool)bionicSteering && APActive && nag.shouldInject(nowMs);
             if (checkAD && !checkAD())
                 useReactive = false;
             if (useReactive)

@@ -25,6 +25,18 @@ void test_nag_starts_burst()
     TEST_ASSERT_EQUAL(1, n.burstsThisCycle());
 }
 
+// 2b. NAG clears (handsOnState<=2) mid-burst → injection halts immediately (no leak)
+void test_nag_clear_halts_injecting()
+{
+    DashReactiveNagBurst n;
+    n.init(42);
+    n.onNagSample(13, 100); // NAG → burst starts
+    TEST_ASSERT_TRUE(n.shouldInject(100));
+    n.onNagSample(2, 110); // hands back on → NAG clears
+    TEST_ASSERT_FALSE(n.isNagActive());
+    TEST_ASSERT_FALSE(n.shouldInject(110)); // C-1: no residual injection
+}
+
 // 3. 第二次爆发需 1500ms 间隔（burst gap）
 void test_burst_gap_enforced()
 {
@@ -126,6 +138,7 @@ int main()
     UNITY_BEGIN();
     RUN_TEST(test_no_nag_no_inject);
     RUN_TEST(test_nag_starts_burst);
+    RUN_TEST(test_nag_clear_halts_injecting);
     RUN_TEST(test_burst_gap_enforced);
     RUN_TEST(test_cooldown_after_three_bursts);
     RUN_TEST(test_wave_half_sine_shape);

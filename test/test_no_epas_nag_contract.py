@@ -72,8 +72,8 @@ def test_reactive_nag_is_optin_and_bounded():
         "bionicSteering must default to false"
 
     # LegacyHandler 0x370 echo gated on bionicSteering + nag.shouldInject
-    assert "bool useReactive = (bool)bionicSteering && nag.shouldInject(nowMs)" in h, \
-        "reactive echo must be gated on bionicSteering + nag.shouldInject"
+    assert "bool useReactive = (bool)bionicSteering && APActive && nag.shouldInject(nowMs)" in h, \
+        "reactive echo must be gated on bionicSteering + APActive + nag.shouldInject"
 
     # 0x399 NAG detection reads byte5 bits[5:2] (read-only, no forge)
     assert "(frame.data[5] >> 2) & 0x0F" in h, "0x399 handsOn decode must read byte5 bits[5:2]"

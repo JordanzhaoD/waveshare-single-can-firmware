@@ -3195,8 +3195,7 @@ static void handleDefenseConfig()
             if (dashHandler)
             {
                 dashHandler->bionicSteering = v;
-                if (v)
-                    dashHandler->resetBionic((uint32_t)millis());
+                dashHandler->resetBionic((uint32_t)millis()); // I-2: reset burst state on any toggle change (on or off)
             }
         }
         if (server.hasArg("nag_torque_tamper"))
