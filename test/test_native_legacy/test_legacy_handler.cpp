@@ -751,9 +751,10 @@ void test_legacy_reactive_nag_echoes_with_human_weight()
     handler.handleMessage(epas, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     int32_t t = decodeEchoTorqueRaw(mock.sent[0]);
-    // base(2060) + 8 + wave(首帧 phase 小 → 小)；允许 ±amplitudeCap 抖动
-    TEST_ASSERT_TRUE(t >= 2060 + 8 - 95);
-    TEST_ASSERT_TRUE(t <= 2060 + 8 + 95 + 8);
+    // 首帧 wave≈0（elapsed≈1 → phase≈0 → sin≈0）；扭矩 = base(2060) + human_weight(8)
+    // 紧边界：human_weight 若丢失→2060（外）、base 误解码→大偏移（外），容忍 ≤4 wave 抖动
+    TEST_ASSERT_TRUE(t >= 2064);
+    TEST_ASSERT_TRUE(t <= 2072);
 }
 
 // toggle ON 但无 NAG（byte5=2）→ 无回声
@@ -785,13 +786,10 @@ void test_legacy_reactive_echo_frame_shape()
 }
 
 // toggle ON + NAG，但 checkAD 返回 false（非 AD）→ 不注入
-static bool t_checkad_flag = false;
-static bool t_checkAD_fn() { return t_checkad_flag; }
 void test_legacy_reactive_checkad_blocks()
 {
     handler.bionicSteering = true;
-    t_checkad_flag = false;
-    handler.checkAD = t_checkAD_fn;
+    handler.checkAD = denyAD;
     CanFrame das = makeDasFrame(13);
     CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);
     handler.handleMessage(das, mock);
