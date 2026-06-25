@@ -19,7 +19,7 @@ void test_nag_starts_burst()
 {
     DashReactiveNagBurst n;
     n.init(1);
-    n.onNagSample(13, 100);   // Jordan 实测 NAG 值 12,13
+    n.onNagSample(13, 100); // Jordan 实测 NAG 值 12,13
     TEST_ASSERT_TRUE(n.isNagActive());
     TEST_ASSERT_TRUE(n.shouldInject(100));
     TEST_ASSERT_EQUAL(1, n.burstsThisCycle());
@@ -30,16 +30,20 @@ void test_burst_gap_enforced()
 {
     DashReactiveNagBurst n;
     n.init(2);
-    n.onNagSample(13, 100);            // burst #1, lastBurstMs=100
+    n.onNagSample(13, 100); // burst #1, lastBurstMs=100
     TEST_ASSERT_TRUE(n.shouldInject(100));
     // 推进到爆发结束（stroke 完成）→ injecting=false。
     // 必须递增 nowMs：computeWave 在 elapsed>strokeDur 时推进一个 stroke 并把
     // waveStartMs 重置为 nowMs，故每步 +500ms（>strokeDur 400）才推进。
     unsigned long t = 100;
-    while (n.shouldInject(t)) { n.computeWave(t); t += 500; }
-    n.onNagSample(13, 200);            // 距上次 100ms < 1500 → 不启动新爆发
+    while (n.shouldInject(t))
+    {
+        n.computeWave(t);
+        t += 500;
+    }
+    n.onNagSample(13, 200); // 距上次 100ms < 1500 → 不启动新爆发
     TEST_ASSERT_FALSE(n.shouldInject(200));
-    n.onNagSample(13, 1700);           // 距上次 1600ms > 1500 → 启动 #2
+    n.onNagSample(13, 1700); // 距上次 1600ms > 1500 → 启动 #2
     TEST_ASSERT_TRUE(n.shouldInject(1700));
     TEST_ASSERT_EQUAL(2, n.burstsThisCycle());
 }
@@ -54,15 +58,19 @@ void test_cooldown_after_three_bursts()
     {
         n.onNagSample(13, t);
         TEST_ASSERT_TRUE(n.shouldInject(t));
-        unsigned long dt = t;          // 递增 drain（同上）
-        while (n.shouldInject(dt)) { n.computeWave(dt); dt += 500; }
-        t += 1600;                     // 下一爆发 gap
+        unsigned long dt = t; // 递增 drain（同上）
+        while (n.shouldInject(dt))
+        {
+            n.computeWave(dt);
+            dt += 500;
+        }
+        t += 1600; // 下一爆发 gap
     }
     TEST_ASSERT_EQUAL(3, n.burstsThisCycle());
-    n.onNagSample(13, t);              // 第 4 次 → 触发冷却
+    n.onNagSample(13, t); // 第 4 次 → 触发冷却
     TEST_ASSERT_FALSE(n.shouldInject(t));
     TEST_ASSERT_TRUE(n.cooldownRemainingMs(t) > 0);
-    n.onNagSample(13, t + 3100);       // 冷却过后 → 可再爆发
+    n.onNagSample(13, t + 3100); // 冷却过后 → 可再爆发
     TEST_ASSERT_TRUE(n.shouldInject(t + 3100));
 }
 
@@ -106,8 +114,8 @@ void test_apply_to_frame()
 {
     DashReactiveNagBurst n;
     n.init(7);
-    uint8_t d2lo = 0x08, d3 = 0x12;    // base = 0x0812 = 2066
-    n.applyToFrame(d2lo, d3, 50);      // +human_weight 8 + pert 50 = +58 → 0x084C
+    uint8_t d2lo = 0x08, d3 = 0x12; // base = 0x0812 = 2066
+    n.applyToFrame(d2lo, d3, 50);   // +human_weight 8 + pert 50 = +58 → 0x084C
     int16_t out = (int16_t)(((uint16_t)d2lo << 8) | d3);
     TEST_ASSERT_EQUAL_INT16(0x0812 + 8 + 50, out);
     TEST_ASSERT_EQUAL_UINT8(0x08, d2lo);

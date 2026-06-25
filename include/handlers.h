@@ -295,9 +295,9 @@ struct CarManagerBase
 
 struct LegacyHandler : public CarManagerBase
 {
-    DashReactiveNagBurst nag;  // reactive NAG-suppression burst state machine
+    DashReactiveNagBurst nag; // reactive NAG-suppression burst state machine
 
-    bool bionicDisabled() const override { return false; }  // reactive has no auto-disable
+    bool bionicDisabled() const override { return false; } // reactive has no auto-disable
     void resetBionic(uint32_t seed) override
     {
         nag.reset();
@@ -341,12 +341,12 @@ struct LegacyHandler : public CarManagerBase
                 echo.dlc = 8;
                 echo.data[0] = frame.data[0];
                 echo.data[1] = frame.data[1];
-                uint8_t d2lo = frame.data[2] & 0x0F;   // Legacy 扭矩字段 base（高 nibble 保）
+                uint8_t d2lo = frame.data[2] & 0x0F; // Legacy 扭矩字段 base（高 nibble 保）
                 uint8_t d3 = frame.data[3];
-                nag.applyToFrame(d2lo, d3, pert);        // 写回 base + human_weight + wave
+                nag.applyToFrame(d2lo, d3, pert); // 写回 base + human_weight + wave
                 echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) | d2lo);
                 echo.data[3] = d3;
-                echo.data[4] = frame.data[4];            // 不 forge handsOn（车不读它判 NAG）
+                echo.data[4] = frame.data[4]; // 不 forge handsOn（车不读它判 NAG）
                 echo.data[5] = frame.data[5];
                 uint8_t cnt = static_cast<uint8_t>(frame.data[6] & 0x0F);
                 cnt = static_cast<uint8_t>((cnt + 1) & 0x0F);

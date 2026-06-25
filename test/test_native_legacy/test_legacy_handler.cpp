@@ -47,11 +47,14 @@ static int32_t decodeEchoTorqueRaw(const CanFrame &f)
 static CanFrame makeDasFrame(uint8_t handsOnState)
 {
     CanFrame f = {.id = 921, .dlc = 8};
-    f.data[0] = 0x04;  // AP active (isDASAutopilotActive accepts byte0 in {3,4,5})
+    f.data[0] = 0x04; // AP active (isDASAutopilotActive accepts byte0 in {3,4,5})
     f.data[1] = 0x00;
-    f.data[2] = 0; f.data[3] = 0; f.data[4] = 0;
+    f.data[2] = 0;
+    f.data[3] = 0;
+    f.data[4] = 0;
     f.data[5] = static_cast<uint8_t>((handsOnState & 0x0F) << 2);
-    f.data[6] = 0; f.data[7] = 0;
+    f.data[6] = 0;
+    f.data[7] = 0;
     return f;
 }
 
@@ -71,7 +74,7 @@ void setUp()
     actualOffset = 0.0f;
     forceActivateRuntime = false;
     handler.bionicSteering = false; // default = bionic OFF; bionic tests opt in explicitly
-    handler.checkAD = nullptr; // default: no AD gate; checkAD test opts in explicitly
+    handler.checkAD = nullptr;      // default: no AD gate; checkAD test opts in explicitly
 }
 
 void tearDown() {}
@@ -734,7 +737,7 @@ void test_legacy_health_gate_blocked_when_last_blocked()
 void test_legacy_reactive_off_no_echo()
 {
     handler.bionicSteering = false;
-    CanFrame das = makeDasFrame(13);   // NAG
+    CanFrame das = makeDasFrame(13); // NAG
     CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);
     handler.handleMessage(das, mock);
     handler.handleMessage(epas, mock);
@@ -745,8 +748,8 @@ void test_legacy_reactive_off_no_echo()
 void test_legacy_reactive_nag_echoes_with_human_weight()
 {
     handler.bionicSteering = true;
-    CanFrame das = makeDasFrame(13);                 // 触发 NAG
-    CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);    // base 0x080C=2060
+    CanFrame das = makeDasFrame(13);              // 触发 NAG
+    CanFrame epas = makeEpasFrame(0, 0.10, 0x0C); // base 0x080C=2060
     handler.handleMessage(das, mock);
     handler.handleMessage(epas, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
@@ -761,7 +764,7 @@ void test_legacy_reactive_nag_echoes_with_human_weight()
 void test_legacy_reactive_no_nag_no_echo()
 {
     handler.bionicSteering = true;
-    CanFrame das = makeDasFrame(2);                  // 非 NAG
+    CanFrame das = makeDasFrame(2); // 非 NAG
     CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);
     handler.handleMessage(das, mock);
     handler.handleMessage(epas, mock);
@@ -779,10 +782,12 @@ void test_legacy_reactive_echo_frame_shape()
     handler.handleMessage(in, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     CanFrame e = mock.sent[0];
-    TEST_ASSERT_EQUAL_UINT8(origB4, e.data[4]);                    // data[4] 不 forge
+    TEST_ASSERT_EQUAL_UINT8(origB4, e.data[4]);                       // data[4] 不 forge
     TEST_ASSERT_EQUAL_UINT8(((0x0C + 1) & 0x0F), (e.data[6] & 0x0F)); // counter+1
-    uint16_t sum = 0; for (int i = 0; i < 7; ++i) sum += e.data[i];
-    TEST_ASSERT_EQUAL_UINT8((sum + 0x73) & 0xFF, e.data[7]);       // checksum
+    uint16_t sum = 0;
+    for (int i = 0; i < 7; ++i)
+        sum += e.data[i];
+    TEST_ASSERT_EQUAL_UINT8((sum + 0x73) & 0xFF, e.data[7]); // checksum
 }
 
 // toggle ON + NAG，但 checkAD 返回 false（非 AD）→ 不注入
@@ -794,7 +799,7 @@ void test_legacy_reactive_checkad_blocks()
     CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);
     handler.handleMessage(das, mock);
     handler.handleMessage(epas, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());                         // checkAD false → 阻断
+    TEST_ASSERT_EQUAL(0, mock.sent.size()); // checkAD false → 阻断
     handler.checkAD = nullptr;
 }
 

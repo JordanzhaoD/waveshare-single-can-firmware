@@ -99,8 +99,8 @@ struct DashReactiveNagBurst
 
     DashReactiveDiag diag(unsigned long nowMs) const
     {
-        return { false, nagActive_, injecting, burstsThisCycle_,
-                 lastAmplitude_, (int)lastHandsOnState, cooldownRemainingMs(nowMs) };
+        return {false, nagActive_, injecting, burstsThisCycle_,
+                lastAmplitude_, (int)lastHandsOnState, cooldownRemainingMs(nowMs)};
     }
 
     // Called from 0x399 handler. handsOnState = (0x399 data[5] >> 2) & 0x0F.
@@ -112,22 +112,22 @@ struct DashReactiveNagBurst
             if (handsOnState <= 2)
             {
                 nagActive_ = false;
-                burstsThisCycle_ = 0;   // hands back on → reset cycle
+                burstsThisCycle_ = 0; // hands back on → reset cycle
             }
         }
         if (handsOnState >= kNagThreshold)
         {
             nagActive_ = true;
             if (injecting)
-                return;   // current burst ongoing
+                return; // current burst ongoing
             if (nowMs < cooldownUntilMs)
-                return;   // in forced cooldown (0 = never set, allowed)
+                return; // in forced cooldown (0 = never set, allowed)
             bool gapOk = (lastBurstMs == 0) || ((nowMs - lastBurstMs) > kBurstGapMs);
             if (!gapOk)
                 return;
             if (burstsThisCycle_ >= kMaxBursts)
             {
-                cooldownUntilMs = nowMs + kCooldownMs;   // 3 bursts done → rest 3 s
+                cooldownUntilMs = nowMs + kCooldownMs; // 3 bursts done → rest 3 s
                 burstsThisCycle_ = 0;
                 return;
             }
@@ -177,9 +177,9 @@ struct DashReactiveNagBurst
         }
         else
         {
-            injecting = false;   // all strokes done
+            injecting = false; // all strokes done
         }
-        return 0;   // stroke boundary frame: new stroke starts at sin(0)=0
+        return 0; // stroke boundary frame: new stroke starts at sin(0)=0
     }
 
     // base decoded from data2Lo/data3 (caller passes frame bytes);

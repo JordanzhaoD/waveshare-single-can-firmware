@@ -2426,13 +2426,20 @@ static void handleStatus()
     if (dashHandler)
     {
         DashReactiveDiag d = dashHandler->reactiveDiag();
-        j += "\"enabled\":"; j += d.enabled ? "true" : "false";
-        j += ",\"nagActive\":"; j += d.nagActive ? "true" : "false";
-        j += ",\"injecting\":"; j += d.injecting ? "true" : "false";
-        j += ",\"burstsThisCycle\":"; j += String(d.burstsThisCycle);
-        j += ",\"lastAmplitude\":"; j += String(d.lastAmplitude);
-        j += ",\"lastHandsOnState\":"; j += String(d.lastHandsOnState);
-        j += ",\"cooldownRemainMs\":"; j += String(d.cooldownRemainMs);
+        j += "\"enabled\":";
+        j += d.enabled ? "true" : "false";
+        j += ",\"nagActive\":";
+        j += d.nagActive ? "true" : "false";
+        j += ",\"injecting\":";
+        j += d.injecting ? "true" : "false";
+        j += ",\"burstsThisCycle\":";
+        j += String(d.burstsThisCycle);
+        j += ",\"lastAmplitude\":";
+        j += String(d.lastAmplitude);
+        j += ",\"lastHandsOnState\":";
+        j += String(d.lastHandsOnState);
+        j += ",\"cooldownRemainMs\":";
+        j += String(d.cooldownRemainMs);
     }
     else
     {
