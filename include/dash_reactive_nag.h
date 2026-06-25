@@ -1,14 +1,16 @@
 #pragma once
 
-// dash_reactive_nag.h — Reactive NAG-suppression torque burst
-// Port of public-source web_dnd_steer, Legacy-adapted.
+// dash_reactive_nag.h — Reactive NAG-suppression v2: 3-mode (IDLE/PROACTIVE/REACTIVE)
+// + sustained DC-biased torque hold (integral > 0, vs v1 zero-mean sine).
+// Port of public-source web_dnd_steer, Legacy-adapted + v2 optimizations (A+B+C).
 //
-// Mechanism: detect NAG via 0x399 byte5 bits[5:2] >= 3, then inject a bounded
-// half-sine torque burst on 0x370 data[2:3] (Legacy torque field). 2-3 strokes,
-// 3 bursts then 3 s cooldown.
+// Modes (when active = toggle ON + APActive):
+//   PROACTIVE  hos<=2 → periodic gentle sustained hold (every 2-5 s) to prevent NAG trigger
+//   REACTIVE   hos>=3 → sustained strong hold (DC bias + jitter), fires at hos=3
+//   IDLE       inactive
+// NAG clear (hos<=2) fully resets reactive state + throttle (fixes v1 rec8 stale-cooldown).
 //
-// Pure logic: all time passed explicitly as nowMs (testable; native
-// dashDiagNowMs() is a per-call counter, not real ms).
+// Pure logic: all time passed explicitly as nowMs (testable).
 
 #include <cstdint>
 #include <cmath>
@@ -27,218 +29,213 @@ struct DashReactivePRNG
     uint32_t range(uint32_t lo, uint32_t hi) { return (hi < lo) ? lo : lo + (next() % (hi - lo + 1)); }
 };
 
-// POD snapshot of reactive-NAG runtime state for /status + serial diag.
-// No String — keeps it native-compilable. `enabled` is filled by the handler
-// (the engine does not know about the bionicSteering toggle).
+enum class NagMode
+{
+    IDLE,
+    PROACTIVE,
+    REACTIVE
+};
+
+// POD snapshot for /status + serial diag. No String (native-compilable).
 struct DashReactiveDiag
 {
     bool enabled{false};
-    bool nagActive{false};
+    NagMode mode{NagMode::IDLE};
     bool injecting{false};
-    int burstsThisCycle{0};
-    int lastAmplitude{0};
-    int lastHandsOnState{0};
-    unsigned long cooldownRemainMs{0};
-    // Instrumentation counters (gate-evaluation diagnostics). Let the device
-    // self-diagnose WHY a burst did/didn't fire across a drive.
-    uint32_t nagSamples{0};      // onNagSample calls with hos>=threshold
-    uint32_t burstsStarted{0};   // bursts actually started
-    uint32_t blockedCooldown{0}; // blocked: nowMs < cooldownUntilMs
-    uint32_t blockedGap{0};      // blocked: within kBurstGapMs of last burst
-    uint32_t echoSent{0};        // 0x370 reactive echoes actually transmitted
+    uint8_t lastHandsOnState{0};
+    int currentAmp{0};
+    uint32_t nagSamples{0};
+    uint32_t reactiveBursts{0};
+    uint32_t proactiveWiggles{0};
+    uint32_t echoSent{0};
+    unsigned long nextProactiveInMs{0};
 };
 
 struct DashReactiveNagBurst
 {
-    // tunables (public-source-faithful + Legacy cap)
-    static constexpr int kHumanWeight{8};
+    // tunables
+    static constexpr int kHumanWeight{8}; // baseline hands-present offset (added in applyToFrame)
     static constexpr int kNagThreshold{3};
-    static constexpr int kAmpLight{60};
-    static constexpr int kAmpLightJitter{15};
-    static constexpr int kAmpHeavy{80};
-    static constexpr int kAmpHeavyJitter{15};
-    static constexpr int kAmplitudeCap{95};
-    static constexpr int kStrokesMin{2};
-    static constexpr int kStrokesMax{3};
-    static constexpr int kStrokeDurLo{300};
-    static constexpr int kStrokeDurHi{400};
-    static constexpr int kMaxBursts{3};
-    static constexpr unsigned long kBurstGapMs{1500};
-    static constexpr unsigned long kCooldownMs{3000};
+    static constexpr int kReactiveAmp{70};    // REACTIVE DC bias magnitude
+    static constexpr int kReactiveJitter{15}; // ± sine jitter on REACTIVE hold
+    static constexpr int kProactiveAmp{35};   // PROACTIVE gentle DC bias
+    static constexpr int kProactiveJitter{12};
+    static constexpr int kAmplitudeCap{95}; // hard cap on |perturbation|
+    static constexpr int kStrokesMin{2}, kStrokesMax{3};
+    static constexpr int kStrokeDurLo{300}, kStrokeDurHi{400};                   // ms per stroke
+    static constexpr unsigned long kReactiveGapMs{800};                          // intra-episode REACTIVE burst gap
+    static constexpr unsigned long kProactiveIntLo{2000}, kProactiveIntHi{5000}; // PROACTIVE interval
 
     // runtime state
     DashReactivePRNG rng;
+    NagMode mode_{NagMode::IDLE};
     bool injecting{false};
+    bool proactiveBurst_{false}; // current burst is proactive (gentle) vs reactive (strong)
     unsigned long waveStartMs{0};
     int strokeCount{0};
     int totalStrokes{2};
-    int direction{1};
-    int amplitude{80};
     int strokeDurMs{350};
-    int burstsThisCycle_{0};
-    unsigned long lastBurstMs{0};
-    unsigned long cooldownUntilMs{0};
+    int amp_{0};    // DC bias magnitude for current burst
+    int jitter_{0}; // ± sine jitter amplitude for current burst
+    unsigned long lastReactiveEndMs{0};
+    unsigned long nextProactiveMs{0};
     uint8_t lastHandsOnState{0};
     bool nagActive_{false};
-    int lastAmplitude_{0};
-    // instrumentation counters
+    // instrumentation
     uint32_t nagSamples_{0};
-    uint32_t burstsStarted_{0};
-    uint32_t blockedCooldown_{0};
-    uint32_t blockedGap_{0};
+    uint32_t reactiveBursts_{0};
+    uint32_t proactiveWiggles_{0};
     uint32_t echoSent_{0};
 
-    void init(uint32_t seed) { rng.seed(seed); }
+    void init(uint32_t seed)
+    {
+        rng.seed(seed);
+        nextProactiveMs = 0;
+    }
     void reset()
     {
+        mode_ = NagMode::IDLE;
         injecting = false;
+        proactiveBurst_ = false;
         strokeCount = 0;
-        burstsThisCycle_ = 0;
-        lastBurstMs = 0;
-        cooldownUntilMs = 0;
+        lastReactiveEndMs = 0;
+        nextProactiveMs = 0;
         lastHandsOnState = 0;
         nagActive_ = false;
-        nagSamples_ = 0;
-        burstsStarted_ = 0;
-        blockedCooldown_ = 0;
-        blockedGap_ = 0;
-        echoSent_ = 0;
     }
-
-    void notifyEchoSent() { echoSent_++; }
-
-    // Instrumentation-only: zero / load the persistent counters (NVS round-trip).
-    // Separate from reset() so toggling the feature does not wipe a measurement.
     void resetCounters()
     {
         nagSamples_ = 0;
-        burstsStarted_ = 0;
-        blockedCooldown_ = 0;
-        blockedGap_ = 0;
+        reactiveBursts_ = 0;
+        proactiveWiggles_ = 0;
         echoSent_ = 0;
     }
-    void setCounters(uint32_t ns, uint32_t bs, uint32_t bc, uint32_t bg, uint32_t es)
+    void setCounters(uint32_t ns, uint32_t rb, uint32_t pw, uint32_t es)
     {
         nagSamples_ = ns;
-        burstsStarted_ = bs;
-        blockedCooldown_ = bc;
-        blockedGap_ = bg;
+        reactiveBursts_ = rb;
+        proactiveWiggles_ = pw;
         echoSent_ = es;
     }
+    void notifyEchoSent() { echoSent_++; }
 
     bool isNagActive() const { return nagActive_; }
-    bool shouldInject(unsigned long /*nowMs*/) const { return injecting; }
-    int burstsThisCycle() const { return burstsThisCycle_; }
-    int lastAmplitude() const { return lastAmplitude_; }
+    NagMode mode() const { return mode_; }
+    bool shouldEcho(unsigned long /*nowMs*/) const { return injecting; }
     int amplitudeCap() const { return kAmplitudeCap; }
-    unsigned long cooldownRemainingMs(unsigned long nowMs) const
+    int currentAmp() const { return injecting ? amp_ : 0; }
+    uint32_t reactiveBursts() const { return reactiveBursts_; }
+    uint32_t proactiveWiggles() const { return proactiveWiggles_; }
+    unsigned long nextProactiveInMs(unsigned long nowMs) const
     {
-        return (nowMs < cooldownUntilMs) ? (cooldownUntilMs - nowMs) : 0UL;
+        return (mode_ == NagMode::PROACTIVE && nextProactiveMs > nowMs) ? (nextProactiveMs - nowMs) : 0;
     }
 
-    DashReactiveDiag diag(unsigned long nowMs) const
+    void startBurst(bool proactive, unsigned long nowMs)
     {
-        return {false, nagActive_, injecting, burstsThisCycle_,
-                lastAmplitude_, (int)lastHandsOnState, cooldownRemainingMs(nowMs),
-                nagSamples_, burstsStarted_, blockedCooldown_, blockedGap_, echoSent_};
-    }
-
-    // Called from 0x399 handler. handsOnState = (0x399 data[5] >> 2) & 0x0F.
-    void onNagSample(uint8_t handsOnState, unsigned long nowMs)
-    {
-        if (handsOnState != lastHandsOnState)
+        injecting = true;
+        proactiveBurst_ = proactive;
+        strokeCount = 0;
+        waveStartMs = nowMs;
+        totalStrokes = (int)rng.range(kStrokesMin, kStrokesMax);
+        strokeDurMs = (int)rng.range(kStrokeDurLo, kStrokeDurHi);
+        if (proactive)
         {
-            lastHandsOnState = handsOnState;
-            if (handsOnState <= 2)
+            amp_ = kProactiveAmp;
+            jitter_ = kProactiveJitter;
+            proactiveWiggles_++;
+        }
+        else
+        {
+            amp_ = kReactiveAmp;
+            jitter_ = kReactiveJitter;
+            reactiveBursts_++;
+        }
+    }
+
+    // Called per 0x399. hos = (0x399 data[5]>>2)&0x0F. active = toggle ON && APActive.
+    void onNagSample(uint8_t hos, unsigned long nowMs, bool active)
+    {
+        if (hos != lastHandsOnState)
+        {
+            lastHandsOnState = hos;
+            if (hos <= 2)
             {
+                // NAG cleared → full reset of reactive state + throttle (fixes v1 rec8)
                 nagActive_ = false;
-                injecting = false;    // C-1: NAG cleared → halt any in-progress burst immediately
-                burstsThisCycle_ = 0; // hands back on → reset cycle
+                if (mode_ == NagMode::REACTIVE)
+                {
+                    injecting = false;
+                    lastReactiveEndMs = 0;
+                    mode_ = NagMode::PROACTIVE;
+                    nextProactiveMs = nowMs; // schedule proactive soon
+                }
             }
         }
-        if (handsOnState >= kNagThreshold)
+        if (hos >= kNagThreshold)
         {
             nagActive_ = true;
             nagSamples_++;
-            if (injecting)
-                return; // current burst ongoing
-            if (nowMs < cooldownUntilMs)
-            {
-                blockedCooldown_++; // instrumentation: blocked by stale cooldown
-                return;
-            }
-            bool gapOk = (lastBurstMs == 0) || ((nowMs - lastBurstMs) > kBurstGapMs);
-            if (!gapOk)
-            {
-                blockedGap_++; // instrumentation: within burst gap
-                return;
-            }
-            if (burstsThisCycle_ >= kMaxBursts)
-            {
-                cooldownUntilMs = nowMs + kCooldownMs; // 3 bursts done → rest 3 s
-                burstsThisCycle_ = 0;
-                return;
-            }
-            // start a burst
-            burstsStarted_++;
-            injecting = true;
-            strokeCount = 0;
-            waveStartMs = nowMs;
-            totalStrokes = (int)rng.range(kStrokesMin, kStrokesMax);
-            int base = (handsOnState == 3) ? kAmpLight : kAmpHeavy;
-            int jitter = (handsOnState == 3) ? kAmpLightJitter : kAmpHeavyJitter;
-            amplitude = base + (int)rng.range(0, jitter);
-            if (amplitude > kAmplitudeCap)
-                amplitude = kAmplitudeCap;
-            lastAmplitude_ = amplitude;
-            strokeDurMs = (int)rng.range(kStrokeDurLo, kStrokeDurHi);
-            direction = (rng.next() & 1u) ? 1 : -1;
-            burstsThisCycle_++;
-            lastBurstMs = nowMs;
+            mode_ = NagMode::REACTIVE;
+            if (!active) return;
+            if (injecting && proactiveBurst_)
+                injecting = false; // preempt ongoing proactive wiggle with reactive
+            if (injecting) return; // reactive hold ongoing
+            bool gapOk = (lastReactiveEndMs == 0) || ((nowMs - lastReactiveEndMs) > kReactiveGapMs);
+            if (gapOk) startBurst(false, nowMs);
         }
         else
         {
             nagActive_ = false;
-            injecting = false; // C-1: NAG cleared → halt burst
+            if (mode_ == NagMode::REACTIVE) return; // wait for the hos-change block to transition
+            mode_ = NagMode::PROACTIVE;
+            if (!active) return;
+            if (nextProactiveMs == 0) nextProactiveMs = nowMs;
+            if (!injecting && nowMs >= nextProactiveMs) startBurst(true, nowMs);
         }
     }
 
-    // Half-sine perturbation for current stroke. Returns 0 when burst done
-    // (and clears injecting).
-    int computeWave(unsigned long nowMs)
+    // DC-biased sustained hold, frame-driven. Each call advances one stroke and
+    // returns a positive DC bias (+ sine jitter) for that stroke → integral > 0
+    // across the burst (fixes v1 rec9 zero-mean). Advances strokeCount per call
+    // so a drain loop at a fixed nowMs terminates (fixes infinite-loop hazard).
+    // After the final stroke, clears injecting and records end time.
+    int computeHold(unsigned long nowMs)
     {
-        if (!injecting)
-            return 0;
-        unsigned long elapsed = nowMs - waveStartMs;
-        if (elapsed <= (unsigned long)strokeDurMs)
-        {
-            float phase = ((float)elapsed / (float)strokeDurMs) * (float)M_PI;
-            int w = (int)(sinf(phase) * (float)amplitude * (float)direction);
-            if (w > kAmplitudeCap) w = kAmplitudeCap;
-            if (w < -kAmplitudeCap) w = -kAmplitudeCap;
-            return w;
-        }
-        // stroke finished → advance
+        if (!injecting) return 0;
+        // current stroke: DC bias + sine jitter (always same-sign → sustained)
+        int pert = amp_ + (int)(sinf((float)M_PI * 0.5f) * (float)jitter_);
+        if (pert > kAmplitudeCap) pert = kAmplitudeCap;
+        if (pert < 0) pert = 0;
+        // advance one stroke per call
         strokeCount++;
         if (strokeCount < totalStrokes)
         {
-            direction *= -1;
             waveStartMs = nowMs;
+            return pert;
         }
+        // burst done
+        injecting = false;
+        if (proactiveBurst_)
+            nextProactiveMs = nowMs + rng.range(kProactiveIntLo, kProactiveIntHi);
         else
-        {
-            injecting = false; // all strokes done
-        }
-        return 0; // stroke boundary frame: new stroke starts at sin(0)=0
+            lastReactiveEndMs = nowMs;
+        return pert; // final stroke still returns positive hold (no zero-frame)
     }
 
-    // base decoded from data2Lo/data3 (caller passes frame bytes);
-    // adds human_weight + pert, writes back. data[2] high nibble is caller-kept.
+    // base decoded from data2Lo/data3; adds human_weight + pert. data[2] high nibble caller-kept.
     void applyToFrame(uint8_t &data2Lo, uint8_t &data3, int pert)
     {
         int torque = (int)(((uint16_t)data2Lo << 8) | data3);
         torque += (kHumanWeight + pert);
         data2Lo = (uint8_t)((torque >> 8) & 0x0F);
         data3 = (uint8_t)(torque & 0xFF);
+    }
+
+    DashReactiveDiag diag(unsigned long nowMs) const
+    {
+        return {false, mode_, injecting, lastHandsOnState, currentAmp(),
+                nagSamples_, reactiveBursts_, proactiveWiggles_, echoSent_,
+                nextProactiveInMs(nowMs)};
     }
 };
