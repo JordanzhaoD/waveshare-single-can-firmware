@@ -2422,6 +2422,23 @@ static void handleStatus()
     j += dashHandler ? ((bool)dashHandler->removeVisionSpeedLimit ? "true" : "false") : "false";
     j += ",\"overrideSpeedLimit\":";
     j += dashHandler ? ((bool)dashHandler->overrideSpeedLimit ? "true" : "false") : "false";
+    j += ",\"reactiveNag\":{";
+    if (dashHandler)
+    {
+        DashReactiveDiag d = dashHandler->reactiveDiag();
+        j += "\"enabled\":"; j += d.enabled ? "true" : "false";
+        j += ",\"nagActive\":"; j += d.nagActive ? "true" : "false";
+        j += ",\"injecting\":"; j += d.injecting ? "true" : "false";
+        j += ",\"burstsThisCycle\":"; j += String(d.burstsThisCycle);
+        j += ",\"lastAmplitude\":"; j += String(d.lastAmplitude);
+        j += ",\"lastHandsOnState\":"; j += String(d.lastHandsOnState);
+        j += ",\"cooldownRemainMs\":"; j += String(d.cooldownRemainMs);
+    }
+    else
+    {
+        j += "\"enabled\":false";
+    }
+    j += "}";
     j += ",\"hw3AutoSpeed\":";
     j += hw3AutoSpeed ? "true" : "false";
     j += ",\"can\":";
@@ -5262,6 +5279,7 @@ static void dashSerialPrintHelp()
     Serial.println("  system_status  print CPU/heap/WiFi summary");
     Serial.println("  can_status     print CAN/injection summary");
     Serial.println("  task_stats     sample FreeRTOS tasks for 1s asynchronously");
+    Serial.println("  reactive_nag   reactive NAG-suppression diagnostics");
     Serial.println();
 }
 
@@ -5405,6 +5423,22 @@ static void dashSerialRunCommand(char *cmd)
         dashSerialPrintCanStatus();
     else if (strcmp(start, "task_stats") == 0 || strcmp(start, "tasks") == 0)
         dashSerialStartTaskStats();
+    else if (strcmp(start, "reactive_nag") == 0)
+    {
+        if (dashHandler)
+        {
+            DashReactiveDiag d = dashHandler->reactiveDiag();
+            Serial.println("=== Reactive NAG ===");
+            Serial.printf("enabled=%d nagActive=%d injecting=%d bursts=%d lastAmp=%d handsOn=%d cooldownMs=%lu\n",
+                          (int)d.enabled, (int)d.nagActive, (int)d.injecting,
+                          d.burstsThisCycle, d.lastAmplitude, d.lastHandsOnState,
+                          (unsigned long)d.cooldownRemainMs);
+        }
+        else
+        {
+            Serial.println("=== Reactive NAG === (no handler)");
+        }
+    }
     else if (*start)
         Serial.println("Unknown command. Type help.");
 }

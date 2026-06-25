@@ -27,6 +27,20 @@ struct DashReactivePRNG
     uint32_t range(uint32_t lo, uint32_t hi) { return (hi < lo) ? lo : lo + (next() % (hi - lo + 1)); }
 };
 
+// POD snapshot of reactive-NAG runtime state for /status + serial diag.
+// No String — keeps it native-compilable. `enabled` is filled by the handler
+// (the engine does not know about the bionicSteering toggle).
+struct DashReactiveDiag
+{
+    bool enabled{false};
+    bool nagActive{false};
+    bool injecting{false};
+    int burstsThisCycle{0};
+    int lastAmplitude{0};
+    int lastHandsOnState{0};
+    unsigned long cooldownRemainMs{0};
+};
+
 struct DashReactiveNagBurst
 {
     // tunables (public-source-faithful + Legacy cap)
@@ -81,6 +95,12 @@ struct DashReactiveNagBurst
     unsigned long cooldownRemainingMs(unsigned long nowMs) const
     {
         return (nowMs < cooldownUntilMs) ? (cooldownUntilMs - nowMs) : 0UL;
+    }
+
+    DashReactiveDiag diag(unsigned long nowMs) const
+    {
+        return { false, nagActive_, injecting, burstsThisCycle_,
+                 lastAmplitude_, (int)lastHandsOnState, cooldownRemainingMs(nowMs) };
     }
 
     // Called from 0x399 handler. handsOnState = (0x399 data[5] >> 2) & 0x0F.

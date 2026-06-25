@@ -1316,10 +1316,10 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
-      <div class="setting-name">仿生方向盘 <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">0x370 正弦波随机扭矩，模拟人手握持</div>
+      <div class="setting-name">NAG 抑制 <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">检测到握方向盘警告(0x399)时，反应式爆发扭矩抑制 NAG（实车验证中，故障即关）</div>
       <div class="setting-desc" id="def-bionic-warn" style="color:#ef4444;display:none">⚠ 已自动回退至echo（连续帧异常）</div>
-      <div class="setting-desc" id="def-bionic-risk" style="color:#ef4444;display:none">⚠ 高危·严禁上车（动态扭矩注入，2026-06-19 事故同类）</div>
+      <div class="setting-desc" id="def-bionic-risk" style="color:#ef4444;display:none">⚠ 反应式扭矩注入 · 实车验证中 / 故障立即关闭</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>

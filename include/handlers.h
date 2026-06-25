@@ -289,6 +289,7 @@ struct CarManagerBase
     virtual uint8_t filterIdCount() const = 0;
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
+    virtual DashReactiveDiag reactiveDiag() const { return {}; }
     virtual ~CarManagerBase() = default;
 };
 
@@ -301,6 +302,12 @@ struct LegacyHandler : public CarManagerBase
     {
         nag.reset();
         nag.init(seed ? seed : 0xDEADBEEF);
+    }
+    DashReactiveDiag reactiveDiag() const override
+    {
+        DashReactiveDiag d = nag.diag(dashDiagNowMs());
+        d.enabled = (bool)bionicSteering;
+        return d;
     }
 
     const uint32_t *filterIds() const override
