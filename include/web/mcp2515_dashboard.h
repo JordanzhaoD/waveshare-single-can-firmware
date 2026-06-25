@@ -2440,6 +2440,16 @@ static void handleStatus()
         j += String(d.lastHandsOnState);
         j += ",\"cooldownRemainMs\":";
         j += String(d.cooldownRemainMs);
+        j += ",\"nagSamples\":";
+        j += String(d.nagSamples);
+        j += ",\"burstsStarted\":";
+        j += String(d.burstsStarted);
+        j += ",\"blockedCooldown\":";
+        j += String(d.blockedCooldown);
+        j += ",\"blockedGap\":";
+        j += String(d.blockedGap);
+        j += ",\"echoSent\":";
+        j += String(d.echoSent);
     }
     else
     {
@@ -5439,6 +5449,11 @@ static void dashSerialRunCommand(char *cmd)
                           (int)d.enabled, (int)d.nagActive, (int)d.injecting,
                           d.burstsThisCycle, d.lastAmplitude, d.lastHandsOnState,
                           (unsigned long)d.cooldownRemainMs);
+            // Instrumentation counters (why burst did/didn't fire across the drive)
+            Serial.printf("nagSamples=%lu burstsStarted=%lu blockedCooldown=%lu blockedGap=%lu echoSent=%lu\n",
+                          (unsigned long)d.nagSamples, (unsigned long)d.burstsStarted,
+                          (unsigned long)d.blockedCooldown, (unsigned long)d.blockedGap,
+                          (unsigned long)d.echoSent);
         }
         else
         {

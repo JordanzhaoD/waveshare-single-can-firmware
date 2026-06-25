@@ -356,6 +356,7 @@ struct LegacyHandler : public CarManagerBase
                 echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
                 framesSent++;
                 driver.send(echo);
+                nag.notifyEchoSent();
             }
         }
         // STW_ACTN_RQ (0x045 = 69): Follow-Distance-Stalk as Source for Profile Mapping

@@ -39,6 +39,13 @@ struct DashReactiveDiag
     int lastAmplitude{0};
     int lastHandsOnState{0};
     unsigned long cooldownRemainMs{0};
+    // Instrumentation counters (gate-evaluation diagnostics). Let the device
+    // self-diagnose WHY a burst did/didn't fire across a drive.
+    uint32_t nagSamples{0};      // onNagSample calls with hos>=threshold
+    uint32_t burstsStarted{0};   // bursts actually started
+    uint32_t blockedCooldown{0}; // blocked: nowMs < cooldownUntilMs
+    uint32_t blockedGap{0};      // blocked: within kBurstGapMs of last burst
+    uint32_t echoSent{0};        // 0x370 reactive echoes actually transmitted
 };
 
 struct DashReactiveNagBurst
@@ -74,6 +81,12 @@ struct DashReactiveNagBurst
     uint8_t lastHandsOnState{0};
     bool nagActive_{false};
     int lastAmplitude_{0};
+    // instrumentation counters
+    uint32_t nagSamples_{0};
+    uint32_t burstsStarted_{0};
+    uint32_t blockedCooldown_{0};
+    uint32_t blockedGap_{0};
+    uint32_t echoSent_{0};
 
     void init(uint32_t seed) { rng.seed(seed); }
     void reset()
@@ -85,7 +98,14 @@ struct DashReactiveNagBurst
         cooldownUntilMs = 0;
         lastHandsOnState = 0;
         nagActive_ = false;
+        nagSamples_ = 0;
+        burstsStarted_ = 0;
+        blockedCooldown_ = 0;
+        blockedGap_ = 0;
+        echoSent_ = 0;
     }
+
+    void notifyEchoSent() { echoSent_++; }
 
     bool isNagActive() const { return nagActive_; }
     bool shouldInject(unsigned long /*nowMs*/) const { return injecting; }
@@ -100,7 +120,8 @@ struct DashReactiveNagBurst
     DashReactiveDiag diag(unsigned long nowMs) const
     {
         return {false, nagActive_, injecting, burstsThisCycle_,
-                lastAmplitude_, (int)lastHandsOnState, cooldownRemainingMs(nowMs)};
+                lastAmplitude_, (int)lastHandsOnState, cooldownRemainingMs(nowMs),
+                nagSamples_, burstsStarted_, blockedCooldown_, blockedGap_, echoSent_};
     }
 
     // Called from 0x399 handler. handsOnState = (0x399 data[5] >> 2) & 0x0F.
@@ -119,13 +140,20 @@ struct DashReactiveNagBurst
         if (handsOnState >= kNagThreshold)
         {
             nagActive_ = true;
+            nagSamples_++;
             if (injecting)
                 return; // current burst ongoing
             if (nowMs < cooldownUntilMs)
-                return; // in forced cooldown (0 = never set, allowed)
+            {
+                blockedCooldown_++; // instrumentation: blocked by stale cooldown
+                return;
+            }
             bool gapOk = (lastBurstMs == 0) || ((nowMs - lastBurstMs) > kBurstGapMs);
             if (!gapOk)
+            {
+                blockedGap_++; // instrumentation: within burst gap
                 return;
+            }
             if (burstsThisCycle_ >= kMaxBursts)
             {
                 cooldownUntilMs = nowMs + kCooldownMs; // 3 bursts done → rest 3 s
@@ -133,6 +161,7 @@ struct DashReactiveNagBurst
                 return;
             }
             // start a burst
+            burstsStarted_++;
             injecting = true;
             strokeCount = 0;
             waveStartMs = nowMs;
