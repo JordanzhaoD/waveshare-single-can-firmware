@@ -1,19 +1,9 @@
 #pragma once
 
-// dash_reactive_nag.h — Reactive NAG-suppression v2: 3-mode (IDLE/PROACTIVE/REACTIVE)
-// + sustained DC-biased torque hold (integral > 0, vs v1 zero-mean sine).
-// Port of public-source web_dnd_steer, Legacy-adapted + v2 optimizations (A+B+C).
-//
-// Modes (when active = toggle ON + APActive):
-//   PROACTIVE  hos<=2 → periodic gentle sustained hold (every 2-5 s) to prevent NAG trigger
-//   REACTIVE   hos>=3 → sustained strong hold (DC bias + jitter), fires at hos=3
-//   IDLE       inactive
-// NAG clear (hos<=2) fully resets reactive state + throttle (fixes v1 rec8 stale-cooldown).
-//
-// Pure logic: all time passed explicitly as nowMs (testable).
+// dash_reactive_nag.h — Human Torque Replay v3 reactive NAG state machine.
+// Pure logic: all time is passed explicitly as nowMs (native-testable).
 
 #include <cstdint>
-#include <cmath>
 
 struct DashReactivePRNG
 {
@@ -29,219 +19,398 @@ struct DashReactivePRNG
     uint32_t range(uint32_t lo, uint32_t hi) { return (hi < lo) ? lo : lo + (next() % (hi - lo + 1)); }
 };
 
-enum class NagMode
+enum class HumanReplayMode
 {
     IDLE,
-    PROACTIVE,
-    REACTIVE
+    REPLAYING,
+    OBSERVING,
+    COOLDOWN
+};
+
+// Backward-compatible name for older call sites that only store/print the mode.
+using NagMode = HumanReplayMode;
+
+enum class DashHumanReplayProfileId
+{
+    NONE,
+    POS_MED,
+    NEG_MED,
+    POS_STRONG,
+    NEG_STRONG
 };
 
 // POD snapshot for /status + serial diag. No String (native-compilable).
 struct DashReactiveDiag
 {
     bool enabled{false};
-    NagMode mode{NagMode::IDLE};
+    HumanReplayMode mode{HumanReplayMode::IDLE};
     bool injecting{false};
     uint8_t lastHandsOnState{0};
     int currentAmp{0};
     uint32_t nagSamples{0};
+    // Legacy field names kept for JSON/NVS compatibility. In v3 they map to
+    // attempts/successes so old persistence slots can be reused safely.
     uint32_t reactiveBursts{0};
     uint32_t proactiveWiggles{0};
     uint32_t echoSent{0};
     unsigned long nextProactiveInMs{0};
+
+    uint32_t replayAttempts{0};
+    uint32_t replaySuccesses{0};
+    uint32_t replayFailures{0};
+    DashHumanReplayProfileId lastProfileId{DashHumanReplayProfileId::NONE};
+    int lastProfileDir{0};
+    int lastPeakRaw{0};
+    int lastBaseRaw{0};
+    int lastOutDeltaRaw{0};
+    uint8_t profileIndex{0};
+    uint8_t lastHosBefore{0};
+    uint8_t lastHosAfter{0};
+    unsigned long cooldownRemainMs{0};
+    const char *blockedReason{""};
 };
 
 struct DashReactiveNagBurst
 {
-    // tunables
-    static constexpr int kHumanWeight{8}; // baseline hands-present offset (added in applyToFrame)
-    static constexpr int kNagThreshold{3};
-    static constexpr int kReactiveAmp{70};    // REACTIVE DC bias magnitude
-    static constexpr int kReactiveJitter{15}; // ± sine jitter on REACTIVE hold
-    static constexpr int kProactiveAmp{35};   // PROACTIVE gentle DC bias
-    static constexpr int kProactiveJitter{12};
-    static constexpr int kAmplitudeCap{95}; // hard cap on |perturbation|
-    static constexpr int kStrokesMin{2}, kStrokesMax{3};
-    static constexpr int kStrokeDurLo{300}, kStrokeDurHi{400};                   // ms per stroke
-    static constexpr unsigned long kReactiveGapMs{800};                          // intra-episode REACTIVE burst gap
-    static constexpr unsigned long kProactiveIntLo{2000}, kProactiveIntHi{5000}; // PROACTIVE interval
+    // Hard safety bounds: keep these visible for safety-contract tests/review.
+    static constexpr uint8_t kMaxAttempts{3};
+    static constexpr unsigned long kCooldownMs{3000};
+    static constexpr int kMaxDeltaRaw{180};
+    static constexpr int kMaxSignedOutRaw{220};
+    static constexpr uint8_t kProfileLen{10};
 
-    // runtime state
+    static constexpr int16_t POS_MED[kProfileLen] = {40, 80, 110, 130, 145, 145, 130, 105, 75, 40};
+    static constexpr int16_t NEG_MED[kProfileLen] = {-40, -80, -110, -130, -145, -145, -130, -105, -75, -40};
+    static constexpr int16_t POS_STRONG[kProfileLen] = {50, 100, 140, 165, 175, 170, 150, 120, 80, 45};
+    static constexpr int16_t NEG_STRONG[kProfileLen] = {-50, -100, -140, -165, -175, -170, -150, -120, -80, -45};
+
     DashReactivePRNG rng;
-    NagMode mode_{NagMode::IDLE};
+
+    HumanReplayMode mode_{HumanReplayMode::IDLE};
+    bool preferPositive_{true};
     bool injecting{false};
-    bool proactiveBurst_{false}; // current burst is proactive (gentle) vs reactive (strong)
-    unsigned long waveStartMs{0};
-    int strokeCount{0};
-    int totalStrokes{2};
-    int strokeDurMs{350};
-    int amp_{0};    // DC bias magnitude for current burst
-    int jitter_{0}; // ± sine jitter amplitude for current burst
-    unsigned long lastReactiveEndMs{0};
-    unsigned long nextProactiveMs{0};
     uint8_t lastHandsOnState{0};
     bool nagActive_{false};
-    // instrumentation
+
     uint32_t nagSamples_{0};
-    uint32_t reactiveBursts_{0};
-    uint32_t proactiveWiggles_{0};
+    uint32_t replayAttempts_{0};
+    uint32_t replaySuccesses_{0};
+    uint32_t replayFailures_{0};
     uint32_t echoSent_{0};
+    uint8_t episodeAttempts_{0};
+
+    DashHumanReplayProfileId lastProfileId_{DashHumanReplayProfileId::NONE};
+    int lastProfileDir_{0};
+    int lastPeakRaw_{0};
+    int lastBaseRaw_{0};
+    int lastOutDeltaRaw_{0};
+    uint8_t profileIndex_{0};
+    uint8_t lastHosBefore_{0};
+    uint8_t lastHosAfter_{0};
+    unsigned long cooldownStartMs_{0};
+    const char *blockedReason_{""};
+    uint8_t observeSamples_{0};
 
     void init(uint32_t seed)
     {
         rng.seed(seed);
-        nextProactiveMs = 0;
+        preferPositive_ = (rng.next() & 1u) == 0;
     }
+
     void reset()
     {
-        mode_ = NagMode::IDLE;
+        mode_ = HumanReplayMode::IDLE;
         injecting = false;
-        proactiveBurst_ = false;
-        strokeCount = 0;
-        lastReactiveEndMs = 0;
-        nextProactiveMs = 0;
         lastHandsOnState = 0;
         nagActive_ = false;
+        lastProfileId_ = DashHumanReplayProfileId::NONE;
+        lastProfileDir_ = 0;
+        lastPeakRaw_ = 0;
+        lastBaseRaw_ = 0;
+        lastOutDeltaRaw_ = 0;
+        profileIndex_ = 0;
+        episodeAttempts_ = 0;
+        lastHosBefore_ = 0;
+        lastHosAfter_ = 0;
+        cooldownStartMs_ = 0;
+        blockedReason_ = "";
+        observeSamples_ = 0;
     }
+
     void resetCounters()
     {
         nagSamples_ = 0;
-        reactiveBursts_ = 0;
-        proactiveWiggles_ = 0;
+        replayAttempts_ = 0;
+        replaySuccesses_ = 0;
+        replayFailures_ = 0;
         echoSent_ = 0;
+        episodeAttempts_ = 0;
     }
-    void setCounters(uint32_t ns, uint32_t rb, uint32_t pw, uint32_t es)
+
+    // Diagnostic test hook: add distinct magic amounts so persistence across
+    // power-cycle is unambiguous (111/222/333/444 after one bump).
+    void bumpCounters()
+    {
+        nagSamples_ += 111;
+        replayAttempts_ += 222;
+        replaySuccesses_ += 333;
+        echoSent_ += 444;
+    }
+
+    // Reuse old NVS slots: ns=nagSamples, attempts=old reactiveBursts,
+    // successes=old proactiveWiggles, es=echoSent.
+    void setCounters(uint32_t ns, uint32_t attempts, uint32_t successes, uint32_t es)
     {
         nagSamples_ = ns;
-        reactiveBursts_ = rb;
-        proactiveWiggles_ = pw;
+        replayAttempts_ = attempts;
+        replaySuccesses_ = successes;
         echoSent_ = es;
+        replayFailures_ = 0;
+        episodeAttempts_ = 0;
     }
+
     void notifyEchoSent() { echoSent_++; }
+    void noteBaseTorqueRaw(int raw) { lastBaseRaw_ = raw; }
 
     bool isNagActive() const { return nagActive_; }
-    NagMode mode() const { return mode_; }
-    bool shouldEcho(unsigned long /*nowMs*/) const { return injecting; }
-    int amplitudeCap() const { return kAmplitudeCap; }
-    int currentAmp() const { return injecting ? amp_ : 0; }
-    uint32_t reactiveBursts() const { return reactiveBursts_; }
-    uint32_t proactiveWiggles() const { return proactiveWiggles_; }
-    unsigned long nextProactiveInMs(unsigned long nowMs) const
+    HumanReplayMode mode() const { return mode_; }
+    bool shouldEcho(unsigned long /*nowMs*/) const { return mode_ == HumanReplayMode::REPLAYING && profileIndex_ < kProfileLen; }
+    int amplitudeCap() const { return kMaxDeltaRaw; }
+    int currentAmp() const { return shouldEcho(0) ? lastPeakRaw_ : 0; }
+    uint32_t nagSamples() const { return nagSamples_; }
+    uint32_t replayAttempts() const { return replayAttempts_; }
+    uint32_t replaySuccesses() const { return replaySuccesses_; }
+    uint32_t replayFailures() const { return replayFailures_; }
+    uint32_t reactiveBursts() const { return replayAttempts_; }
+    uint32_t proactiveWiggles() const { return replaySuccesses_; }
+    DashHumanReplayProfileId lastProfileId() const { return lastProfileId_; }
+    int lastProfileDir() const { return lastProfileDir_; }
+    int lastPeakRaw() const { return lastPeakRaw_; }
+    int lastOutDeltaRaw() const { return lastOutDeltaRaw_; }
+    const char *blockedReason() const { return blockedReason_; }
+    uint8_t lastHosBefore() const { return lastHosBefore_; }
+    uint8_t lastHosAfter() const { return lastHosAfter_; }
+    unsigned long cooldownRemainMs(unsigned long nowMs) const
     {
-        return (mode_ == NagMode::PROACTIVE && nextProactiveMs > nowMs) ? (nextProactiveMs - nowMs) : 0;
+        if (mode_ != HumanReplayMode::COOLDOWN) return 0;
+        unsigned long elapsed = nowMs - cooldownStartMs_;
+        return (elapsed >= kCooldownMs) ? 0 : (kCooldownMs - elapsed);
+    }
+    unsigned long nextProactiveInMs(unsigned long nowMs) const { return cooldownRemainMs(nowMs); }
+
+    static int clampInt(int value, int lo, int hi)
+    {
+        if (value < lo) return lo;
+        if (value > hi) return hi;
+        return value;
     }
 
-    void startBurst(bool proactive, unsigned long nowMs)
+    static int decodeSignedTorque(uint8_t data2Lo, uint8_t data3)
     {
-        injecting = true;
-        proactiveBurst_ = proactive;
-        strokeCount = 0;
-        waveStartMs = nowMs;
-        totalStrokes = (int)rng.range(kStrokesMin, kStrokesMax);
-        strokeDurMs = (int)rng.range(kStrokeDurLo, kStrokeDurHi);
-        if (proactive)
+        int raw = ((int)(data2Lo & 0x0F) << 8) | data3;
+        return raw - 0x800;
+    }
+
+    static uint16_t encodeSignedTorque(int signedRaw)
+    {
+        int bounded = clampInt(signedRaw, -2048, 2047) + 0x800;
+        return (uint16_t)(bounded & 0x0FFF);
+    }
+
+    void applyDeltaToFrame(uint8_t &data2Lo, uint8_t &data3, int deltaRaw)
+    {
+        int delta = clampInt(deltaRaw, -kMaxDeltaRaw, kMaxDeltaRaw);
+        int out = clampInt(decodeSignedTorque(data2Lo, data3) + delta, -kMaxSignedOutRaw, kMaxSignedOutRaw);
+        uint16_t encoded = encodeSignedTorque(out);
+        data2Lo = (uint8_t)((encoded >> 8) & 0x0F);
+        data3 = (uint8_t)(encoded & 0xFF);
+    }
+
+    const int16_t *currentProfile() const
+    {
+        switch (lastProfileId_)
         {
-            amp_ = kProactiveAmp;
-            jitter_ = kProactiveJitter;
-            proactiveWiggles_++;
-        }
-        else
-        {
-            amp_ = kReactiveAmp;
-            jitter_ = kReactiveJitter;
-            reactiveBursts_++;
+        case DashHumanReplayProfileId::POS_MED:
+            return POS_MED;
+        case DashHumanReplayProfileId::NEG_MED:
+            return NEG_MED;
+        case DashHumanReplayProfileId::POS_STRONG:
+            return POS_STRONG;
+        case DashHumanReplayProfileId::NEG_STRONG:
+            return NEG_STRONG;
+        case DashHumanReplayProfileId::NONE:
+        default:
+            return POS_MED;
         }
     }
+
+    static int peakAbs(const int16_t *profile)
+    {
+        int peak = 0;
+        for (uint8_t i = 0; i < kProfileLen; ++i)
+        {
+            int v = profile[i] < 0 ? -profile[i] : profile[i];
+            if (v > peak) peak = v;
+        }
+        return peak;
+    }
+
+    void startReplay(unsigned long nowMs)
+    {
+        if (episodeAttempts_ >= kMaxAttempts)
+        {
+            enterCooldown(nowMs);
+            return;
+        }
+
+        const uint8_t nextAttempt = static_cast<uint8_t>(episodeAttempts_ + 1);
+        const bool strong = nextAttempt >= kMaxAttempts;
+        bool positive = preferPositive_;
+        if (nextAttempt == 2) positive = !preferPositive_;
+
+        if (strong)
+            lastProfileId_ = positive ? DashHumanReplayProfileId::POS_STRONG : DashHumanReplayProfileId::NEG_STRONG;
+        else
+            lastProfileId_ = positive ? DashHumanReplayProfileId::POS_MED : DashHumanReplayProfileId::NEG_MED;
+
+        lastProfileDir_ = positive ? 1 : -1;
+        lastPeakRaw_ = peakAbs(currentProfile());
+        lastOutDeltaRaw_ = 0;
+        profileIndex_ = 0;
+        observeSamples_ = 0;
+        episodeAttempts_ = nextAttempt;
+        replayAttempts_++;
+        mode_ = HumanReplayMode::REPLAYING;
+        injecting = true;
+        blockedReason_ = "";
+    }
+
+    void enterCooldown(unsigned long nowMs)
+    {
+        mode_ = HumanReplayMode::COOLDOWN;
+        injecting = false;
+        profileIndex_ = kProfileLen;
+        cooldownStartMs_ = nowMs;
+        blockedReason_ = "maxAttempts";
+        replayFailures_++;
+    }
+
+    int nextReplayDelta(unsigned long /*nowMs*/)
+    {
+        if (!shouldEcho(0)) return 0;
+        const int16_t *profile = currentProfile();
+        int delta = profile[profileIndex_++];
+        lastOutDeltaRaw_ = delta;
+        if (profileIndex_ >= kProfileLen)
+        {
+            mode_ = HumanReplayMode::OBSERVING;
+            injecting = false;
+            observeSamples_ = 0;
+        }
+        return delta;
+    }
+
+    // Backward-compatible name used by LegacyHandler's 0x370 echo path.
+    int computeHold(unsigned long nowMs) { return nextReplayDelta(nowMs); }
+
+    // Backward-compatible wrapper: v3 treats the argument as the replay delta.
+    void applyToFrame(uint8_t &data2Lo, uint8_t &data3, int pert) { applyDeltaToFrame(data2Lo, data3, pert); }
 
     // Called per 0x399. hos = (0x399 data[5]>>2)&0x0F. active = toggle ON && APActive.
     void onNagSample(uint8_t hos, unsigned long nowMs, bool active)
     {
-        if (hos != lastHandsOnState)
-        {
-            lastHandsOnState = hos;
-            if (hos <= 2)
-            {
-                // NAG cleared → full reset of reactive state + throttle (fixes v1 rec8)
-                nagActive_ = false;
-                if (mode_ == NagMode::REACTIVE)
-                {
-                    injecting = false;
-                    lastReactiveEndMs = 0;
-                    mode_ = NagMode::PROACTIVE;
-                    nextProactiveMs = nowMs; // schedule proactive soon
-                }
-            }
-        }
-        if (hos >= kNagThreshold)
-        {
-            nagActive_ = true;
-            nagSamples_++;
-            mode_ = NagMode::REACTIVE;
-            if (!active) return;
-            if (injecting && proactiveBurst_)
-                injecting = false; // preempt ongoing proactive wiggle with reactive
-            if (injecting) return; // reactive hold ongoing
-            bool gapOk = (lastReactiveEndMs == 0) || ((nowMs - lastReactiveEndMs) > kReactiveGapMs);
-            if (gapOk) startBurst(false, nowMs);
-        }
-        else
+        lastHandsOnState = hos;
+
+        if (hos <= 2)
         {
             nagActive_ = false;
-            if (mode_ == NagMode::REACTIVE) return; // wait for the hos-change block to transition
-            mode_ = NagMode::PROACTIVE;
-            if (!active) return;
-            if (nextProactiveMs == 0) nextProactiveMs = nowMs;
-            if (!injecting && nowMs >= nextProactiveMs) startBurst(true, nowMs);
-        }
-    }
-
-    // DC-biased sustained hold, TIME-driven (real-ms pacing). Burst lasts
-    // totalStrokes × strokeDurMs (~0.6-1.2 s) → a REAL sustained hold on the bus
-    // (fixes v1 rec9 zero-mean + keeps v2's "driver grab" duration). Caller passes
-    // real nowMs per 0x370 frame; elapsed = nowMs - waveStartMs drives stroke advance.
-    // Every frame during the burst (incl. the terminal one) returns a POSITIVE DC
-    // bias + sine jitter → integral > 0. The terminal frame clears injecting AFTER
-    // returning its hold, so the burst ends on a positive frame (no zero leak).
-    // NOTE: drain loops MUST advance nowMs (>strokeDurMs per step) to terminate.
-    int computeHold(unsigned long nowMs)
-    {
-        if (!injecting) return 0;
-        unsigned long elapsed = nowMs - waveStartMs;
-        float phase = ((float)elapsed / (float)strokeDurMs) * (float)M_PI;
-        if (phase > (float)M_PI) phase = (float)M_PI; // clamp past-stroke to stroke end
-        int pert = amp_ + (int)(sinf(phase) * (float)jitter_);
-        if (pert > kAmplitudeCap) pert = kAmplitudeCap;
-        if (pert < 0) pert = 0;
-        if (elapsed > (unsigned long)strokeDurMs)
-        {
-            strokeCount++;
-            if (strokeCount < totalStrokes)
-                waveStartMs = nowMs; // start next stroke
-            else
+            if (mode_ == HumanReplayMode::REPLAYING || mode_ == HumanReplayMode::OBSERVING)
             {
-                injecting = false; // burst done (after this positive frame)
-                if (proactiveBurst_)
-                    nextProactiveMs = nowMs + rng.range(kProactiveIntLo, kProactiveIntHi);
-                else
-                    lastReactiveEndMs = nowMs;
+                replaySuccesses_++;
+                lastHosAfter_ = hos;
+            }
+            mode_ = HumanReplayMode::IDLE;
+            injecting = false;
+            profileIndex_ = kProfileLen;
+            episodeAttempts_ = 0;
+            observeSamples_ = 0;
+            blockedReason_ = "";
+            return;
+        }
+
+        if (hos < 3) return;
+
+        nagActive_ = true;
+        nagSamples_++;
+        lastHosBefore_ = hos;
+
+        if (mode_ == HumanReplayMode::COOLDOWN)
+        {
+            unsigned long elapsed = nowMs - cooldownStartMs_;
+            if (elapsed < kCooldownMs)
+            {
+                blockedReason_ = "maxAttempts";
+                return;
+            }
+            mode_ = HumanReplayMode::IDLE;
+            injecting = false;
+            profileIndex_ = kProfileLen;
+            episodeAttempts_ = 0;
+            observeSamples_ = 0;
+            blockedReason_ = "";
+        }
+
+        if (!active)
+        {
+            mode_ = HumanReplayMode::IDLE;
+            injecting = false;
+            profileIndex_ = kProfileLen;
+            observeSamples_ = 0;
+            blockedReason_ = "toggle";
+            return;
+        }
+
+        if (mode_ == HumanReplayMode::REPLAYING) return;
+
+        if (mode_ == HumanReplayMode::OBSERVING)
+        {
+            observeSamples_++;
+            if (observeSamples_ < 2) return;
+            if (episodeAttempts_ >= kMaxAttempts)
+            {
+                enterCooldown(nowMs);
+                return;
             }
         }
-        return pert;
-    }
 
-    // base decoded from data2Lo/data3; adds human_weight + pert. data[2] high nibble caller-kept.
-    void applyToFrame(uint8_t &data2Lo, uint8_t &data3, int pert)
-    {
-        int torque = (int)(((uint16_t)data2Lo << 8) | data3);
-        torque += (kHumanWeight + pert);
-        data2Lo = (uint8_t)((torque >> 8) & 0x0F);
-        data3 = (uint8_t)(torque & 0xFF);
+        startReplay(nowMs);
     }
 
     DashReactiveDiag diag(unsigned long nowMs) const
     {
-        return {false, mode_, injecting, lastHandsOnState, currentAmp(),
-                nagSamples_, reactiveBursts_, proactiveWiggles_, echoSent_,
-                nextProactiveInMs(nowMs)};
+        DashReactiveDiag d;
+        d.mode = mode_;
+        d.injecting = injecting;
+        d.lastHandsOnState = lastHandsOnState;
+        d.currentAmp = currentAmp();
+        d.nagSamples = nagSamples_;
+        d.reactiveBursts = replayAttempts_;
+        d.proactiveWiggles = replaySuccesses_;
+        d.echoSent = echoSent_;
+        d.nextProactiveInMs = nextProactiveInMs(nowMs);
+        d.replayAttempts = replayAttempts_;
+        d.replaySuccesses = replaySuccesses_;
+        d.replayFailures = replayFailures_;
+        d.lastProfileId = lastProfileId_;
+        d.lastProfileDir = lastProfileDir_;
+        d.lastPeakRaw = lastPeakRaw_;
+        d.lastBaseRaw = lastBaseRaw_;
+        d.lastOutDeltaRaw = lastOutDeltaRaw_;
+        d.profileIndex = profileIndex_;
+        d.lastHosBefore = lastHosBefore_;
+        d.lastHosAfter = lastHosAfter_;
+        d.cooldownRemainMs = cooldownRemainMs(nowMs);
+        d.blockedReason = blockedReason_;
+        return d;
     }
 };

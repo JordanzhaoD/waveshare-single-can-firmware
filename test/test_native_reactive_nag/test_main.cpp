@@ -107,6 +107,55 @@ void test_third_attempt_uses_strong_profile_then_cooldown()
     TEST_ASSERT_FALSE(n.shouldEcho(3100));
     TEST_ASSERT_TRUE(n.cooldownRemainMs(3100) > 0);
     TEST_ASSERT_EQUAL_STRING("maxAttempts", n.blockedReason());
+
+    n.onNagSample(3, 6101, true);
+    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
+    TEST_ASSERT_TRUE(n.shouldEcho(6101));
+    TEST_ASSERT_EQUAL_UINT32(4, n.replayAttempts());
+    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::POS_MED, n.lastProfileId());
+}
+
+void test_active_false_preserves_attempt_budget_during_continuous_nag()
+{
+    DashReactiveNagBurst n;
+    n.init(2);
+    n.noteBaseTorqueRaw(0);
+    n.onNagSample(3, 100, true);
+    feedFrames(n, 10, 100);
+
+    n.onNagSample(3, 600, false);
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(600));
+    TEST_ASSERT_EQUAL_STRING("toggle", n.blockedReason());
+
+    n.onNagSample(3, 1100, true);
+    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
+    TEST_ASSERT_EQUAL_UINT32(2, n.replayAttempts());
+    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::NEG_MED, n.lastProfileId());
+}
+
+void test_cooldown_clear_does_not_count_success()
+{
+    DashReactiveNagBurst n;
+    n.init(4);
+    n.noteBaseTorqueRaw(0);
+    n.onNagSample(3, 100, true);
+    feedFrames(n, 10, 100);
+    n.onNagSample(3, 600, true);
+    n.onNagSample(3, 1100, true);
+    feedFrames(n, 10, 1100);
+    n.onNagSample(3, 1600, true);
+    n.onNagSample(3, 2100, true);
+    feedFrames(n, 10, 2100);
+    n.onNagSample(3, 2600, true);
+    n.onNagSample(3, 3100, true);
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+    TEST_ASSERT_EQUAL_UINT32(0, n.replaySuccesses());
+
+    n.onNagSample(2, 3200, true);
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_EQUAL_UINT32(0, n.replaySuccesses());
+    TEST_ASSERT_EQUAL_UINT32(1, n.replayFailures());
 }
 
 void test_hos_clear_records_success_and_stops_replay()
@@ -192,6 +241,8 @@ int main()
     RUN_TEST(test_profile_outputs_exact_positive_medium_sequence);
     RUN_TEST(test_failed_attempt_retries_opposite_direction);
     RUN_TEST(test_third_attempt_uses_strong_profile_then_cooldown);
+    RUN_TEST(test_active_false_preserves_attempt_budget_during_continuous_nag);
+    RUN_TEST(test_cooldown_clear_does_not_count_success);
     RUN_TEST(test_hos_clear_records_success_and_stops_replay);
     RUN_TEST(test_apply_delta_to_legacy_torque_supports_negative_and_clamps);
     RUN_TEST(test_diag_reports_v3_fields);
