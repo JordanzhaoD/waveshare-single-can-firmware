@@ -754,9 +754,13 @@ void test_legacy_replay_hos3_sends_positive_profile_frame()
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     CanFrame e = mock.sent[0];
+    TEST_ASSERT_EQUAL_UINT32(880, e.id);
+    TEST_ASSERT_EQUAL_UINT8(8, e.dlc);
     int32_t out = decodeEchoTorqueRaw(e) - 0x800;
-    TEST_ASSERT_TRUE(out >= 40);
-    TEST_ASSERT_TRUE(out <= 220);
+    TEST_ASSERT_EQUAL_INT(52, out);
+    DashReactiveDiag d = handler.reactiveDiag();
+    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::POS_MED, d.lastProfileId);
+    TEST_ASSERT_EQUAL_INT(40, d.lastOutDeltaRaw);
     TEST_ASSERT_TRUE((e.data[4] & 0xC0) == 0x40);
     TEST_ASSERT_EQUAL_UINT8(((0x0C + 1) & 0x0F), (e.data[6] & 0x0F));
     uint16_t sum = 0;
@@ -832,7 +836,12 @@ void test_legacy_replay_checkad_blocks()
     handler.handleMessage(das, mock);
     handler.handleMessage(epas, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
+
     handler.checkAD = nullptr;
+    CanFrame epasAfterDeny = makeEpasFrame(0, 0.10, 0x0D);
+    handler.handleMessage(epasAfterDeny, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_NOT_EQUAL(HumanReplayMode::REPLAYING, handler.reactiveDiag().mode);
 }
 
 int main()
