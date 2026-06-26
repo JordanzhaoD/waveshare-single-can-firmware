@@ -28,7 +28,7 @@ void test_inactive_hos_does_not_start_replay()
 void test_hos3_active_starts_first_attempt_with_medium_profile()
 {
     DashReactiveNagBurst n;
-    n.init(1);
+    n.init(2);
     n.noteBaseTorqueRaw(12);
     n.onNagSample(3, 100, true);
 
@@ -60,7 +60,7 @@ void test_profile_outputs_exact_positive_medium_sequence()
 void test_failed_attempt_retries_opposite_direction()
 {
     DashReactiveNagBurst n;
-    n.init(3);
+    n.init(2);
     n.noteBaseTorqueRaw(15);
     n.onNagSample(3, 100, true);
     feedFrames(n, 10, 100);
@@ -73,7 +73,13 @@ void test_failed_attempt_retries_opposite_direction()
     TEST_ASSERT_EQUAL_UINT32(2, n.replayAttempts());
     TEST_ASSERT_EQUAL(DashHumanReplayProfileId::NEG_MED, n.lastProfileId());
     TEST_ASSERT_EQUAL_INT(-1, n.lastProfileDir());
-    TEST_ASSERT_TRUE(n.nextReplayDelta(1100) < 0);
+
+    const int expected[] = {-40, -80, -110, -130, -145, -145, -130, -105, -75, -40};
+    for (unsigned i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i)
+    {
+        TEST_ASSERT_TRUE(n.shouldEcho(1100 + i * 40));
+        TEST_ASSERT_EQUAL_INT(expected[i], n.nextReplayDelta(1100 + i * 40));
+    }
 }
 
 void test_third_attempt_uses_strong_profile_then_cooldown()
@@ -106,10 +112,11 @@ void test_third_attempt_uses_strong_profile_then_cooldown()
 void test_hos_clear_records_success_and_stops_replay()
 {
     DashReactiveNagBurst n;
-    n.init(5);
+    n.init(2);
     n.noteBaseTorqueRaw(0);
     n.onNagSample(3, 100, true);
     TEST_ASSERT_TRUE(n.shouldEcho(100));
+    TEST_ASSERT_EQUAL_INT(40, n.nextReplayDelta(100));
 
     n.onNagSample(2, 180, true);
     TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
@@ -134,11 +141,23 @@ void test_apply_delta_to_legacy_torque_supports_negative_and_clamps()
     d3 = 0x00;
     n.applyDeltaToFrame(d2lo, d3, 999);
     signedOut = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
-    TEST_ASSERT_EQUAL_INT(220, signedOut);
+    TEST_ASSERT_EQUAL_INT(180, signedOut);
 
     d2lo = 0x08;
     d3 = 0x00;
     n.applyDeltaToFrame(d2lo, d3, -999);
+    signedOut = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
+    TEST_ASSERT_EQUAL_INT(-180, signedOut);
+
+    d2lo = 0x08;
+    d3 = 0x80; // signed +128
+    n.applyDeltaToFrame(d2lo, d3, 180);
+    signedOut = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
+    TEST_ASSERT_EQUAL_INT(220, signedOut);
+
+    d2lo = 0x07;
+    d3 = 0x80; // signed -128
+    n.applyDeltaToFrame(d2lo, d3, -180);
     signedOut = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
     TEST_ASSERT_EQUAL_INT(-220, signedOut);
 }
@@ -146,7 +165,7 @@ void test_apply_delta_to_legacy_torque_supports_negative_and_clamps()
 void test_diag_reports_v3_fields()
 {
     DashReactiveNagBurst n;
-    n.init(7);
+    n.init(2);
     n.noteBaseTorqueRaw(12);
     n.onNagSample(3, 100, true);
     (void)n.nextReplayDelta(100);
