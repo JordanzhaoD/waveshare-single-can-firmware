@@ -72,7 +72,7 @@ class NoEpasNagContract(unittest.TestCase):
         )
 
     def test_reactive_nag_is_optin_and_bounded(self) -> None:
-        """DashReactiveNagBurst v3 (Human Torque Replay) must be opt-in, bounded, and 0x399 read-only."""
+        """DashReactiveNagBurst v4 (TSL6P Burst NAG) must be opt-in, bounded, and 0x399 read-only."""
         # bionicSteering member defaults false (on CarManagerBase)
         self.assertRegex(
             self.handlers,
@@ -108,7 +108,7 @@ class NoEpasNagContract(unittest.TestCase):
         self.assertIn("nag.onNagSample", block, "0x399 should only feed NAG samples")
         self.assertNotIn("driver.send", block, "0x399 must not be transmitted/spoofed")
         self.assertIsNone(
-            re.search(r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=", block),
+            re.search(r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=(?!=)", block),
             "0x399 block must not mutate any frame.data byte",
         )
 
@@ -122,49 +122,54 @@ class NoEpasNagContract(unittest.TestCase):
             "data[4] handsOnLevel=1 must be forged on 0x370 echo",
         )
         self.assertIn("DashReactiveNagBurst", self.reactive)
-        for token in ["kMaxAttempts{3}", "kCooldownMs{3000}", "kMaxDeltaRaw{180}", "kMaxSignedOutRaw{220}"]:
-            self.assertIn(token, self.reactive, f"v3 hard bound missing: {token}")
+        for token in ["kBurstOnMs{1000}", "kBurstOffMs{1500}", "kMaxSignedOutRaw{180}"]:
+            self.assertIn(token, self.reactive, f"v4 hard bound missing: {token}")
 
 
-class HumanTorqueReplayV3Contract(unittest.TestCase):
+class Tsl6pBurstNagV4Contract(unittest.TestCase):
     def setUp(self) -> None:
         root = Path(__file__).resolve().parents[1]
         self.reactive = (root / "include" / "dash_reactive_nag.h").read_text()
         self.handlers = (root / "include" / "handlers.h").read_text()
         self.legacy = legacy_handler_block(self.handlers)
 
-    def test_v3_replay_has_hard_attempt_and_torque_bounds(self) -> None:
-        self.assertIn("kMaxAttempts{3}", self.reactive)
-        self.assertIn("kCooldownMs{3000}", self.reactive)
-        self.assertIn("kMaxDeltaRaw{180}", self.reactive)
-        self.assertIn("kMaxSignedOutRaw{220}", self.reactive)
-
-    def test_v3_replay_profiles_are_bounded_and_bidirectional(self) -> None:
-        for token in ["POS_MED", "NEG_MED", "POS_STRONG", "NEG_STRONG"]:
+    def test_v4_burst_has_hard_timing_and_torque_bounds(self) -> None:
+        for token in ["kBurstOnMs{1000}", "kBurstOffMs{1500}", "kAbortCooldownMs{3000}", "kMaxSignedOutRaw{180}"]:
             self.assertIn(token, self.reactive)
-        self.assertIn("175", self.reactive)
-        self.assertIn("-175", self.reactive)
-        self.assertNotIn("250", self.reactive)
 
-    def test_v3_does_not_transmit_or_mutate_0x399(self) -> None:
+    def test_v4_tsl6p_sequence_is_bounded_and_bidirectional(self) -> None:
+        match = re.search(r"TSL6P_TORQUE_RAW\s*\[[^\]]+\]\s*=\s*\{([^}]*)\}", self.reactive, re.S)
+        self.assertIsNotNone(match, "TSL6P_TORQUE_RAW initializer must exist")
+        torque_sequence = [int(value) for value in re.findall(r"-?\d+", match.group(1))]
+        self.assertEqual(torque_sequence, [180, 150, -150, -180])
+        self.assertNotIn("kMaxSignedOutRaw{220}", self.reactive, "v4 NAG torque path must not keep the v3 2.20Nm cap")
+        self.assertNotIn("kMaxSignedOutRaw{250}", self.reactive)
+        self.assertNotIn("kMaxDeltaRaw", self.reactive)
+
+    def test_v4_does_not_transmit_or_mutate_0x399(self) -> None:
         block_start = self.legacy.index("if (frame.id == 921)")
         block_end = self.legacy.index("// 0x3EE", block_start)
         block = self.legacy[block_start:block_end]
         self.assertIn("nag.onNagSample", block)
+        self.assertIn("apState", block)
+        self.assertRegex(
+            block,
+            r"nag\.onNagSample\(\s*hos\s*,\s*dashDiagNowMs\(\)\s*,\s*active\s*,\s*apState\s*\)",
+        )
         self.assertNotIn("driver.send", block)
-        self.assertIsNone(re.search(r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=", block))
+        self.assertIsNone(re.search(r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=(?!=)", block))
         self.assertNotIn("echo.id = 921", self.handlers)
 
-    def test_v3_legacy_echo_remains_opt_in_and_checkad_gated(self) -> None:
+    def test_v4_legacy_echo_remains_opt_in_and_checkad_gated(self) -> None:
         block_start = self.legacy.index("if (frame.id == 880")
         block_end = self.legacy.index("// STW_ACTN_RQ", block_start)
         block = self.legacy[block_start:block_end]
-        self.assertIn("bionicSteering", block)
-        self.assertIn("APActive", block)
-        self.assertIn("checkAD", block)
-        self.assertIn("nag.shouldEcho", block)
-        self.assertIn("nag.peekReplayDelta", block)
-        self.assertIn("nag.commitReplayDelta", block)
-        self.assertIn("nag.failReplayTx", block)
-        self.assertIn("nag.cancel", block)
+        for token in ["bionicSteering", "APActive", "checkAD", "nag.shouldEcho", "nag.peekReplayDelta", "nag.commitReplayDelta", "nag.failReplayTx", "nag.cancel"]:
+            self.assertIn(token, block)
+        self.assertIn("nag.applyToFrame", block)
         self.assertIn("(frame.data[4] & 0x3F) | 0x40", block)
+
+    def test_v4_abort_guard_blocks_states_8_and_9(self) -> None:
+        self.assertIn("apState == 8 || apState == 9", self.reactive)
+        self.assertIn("enterAbortCooldown", self.reactive)
+        self.assertIn('"abort"', self.reactive)
