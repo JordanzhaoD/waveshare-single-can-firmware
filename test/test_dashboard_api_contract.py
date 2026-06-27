@@ -1494,6 +1494,88 @@ class DashboardApiContractTests(unittest.TestCase):
         """handlers.h must include dash_reactive_nag.h (reactive NAG suppression)."""
         self.assertIn('#include "dash_reactive_nag.h"', self.handlers)
 
+    def test_reactive_nag_v3_status_exposes_replay_diagnostics(self) -> None:
+        """Human Torque Replay v3 must expose attempt/profile/HOS diagnostics."""
+        status = re.search(r'j \+= ",\\"reactiveNag\\":\{";.*?j \+= "\}";', self.dash, re.S)
+        self.assertIsNotNone(status)
+        body = status.group(0)
+        required = [
+            '"replayAttempts"',
+            '"replaySuccesses"',
+            '"replayFailures"',
+            '"lastProfileId"',
+            '"lastProfileDir"',
+            '"lastPeakRaw"',
+            '"lastBaseRaw"',
+            '"lastOutDeltaRaw"',
+            '"profileIndex"',
+            '"lastHosBefore"',
+            '"lastHosAfter"',
+            '"cooldownRemainMs"',
+            '"blockedReason"',
+        ]
+        for token in required:
+            self.assertIn(token, body)
+        self.assertIn("jsonEscape", body)
+        self.assertIn("d.blockedReason && d.blockedReason[0]", body)
+        self.assertIn('"none"', body)
+        self.assertIn("dashReactiveNagHandler()", body)
+        self.assertIn("reactive->reactiveDiag()", body)
+        self.assertNotIn("dashHandler->reactiveDiag()", body)
+
+    def test_reactive_nag_serial_command_prints_v3_replay_fields(self) -> None:
+        """Serial reactive_nag output should be enough for post-drive diagnosis."""
+        serial = re.search(r'else if \(strcmp\(start, "reactive_nag"\) == 0\).*?else if \(strcmp\(start, "reactive_nag_reset"\)', self.dash, re.S)
+        self.assertIsNotNone(serial)
+        body = serial.group(0)
+        required = [
+            "replayAttempts=",
+            "replaySuccesses=",
+            "replayFailures=",
+            "lastProfileId=",
+            "lastProfileDir=",
+            "lastPeakRaw=",
+            "lastBaseRaw=",
+            "lastOutDeltaRaw=",
+            "profileIndex=",
+            "hosBefore=",
+            "hosAfter=",
+            "cooldownRemainMs=",
+            "blockedReason=",
+        ]
+        for token in required:
+            self.assertIn(token, body)
+        self.assertIn("0=IDLE 1=REPLAYING 2=OBSERVING 3=COOLDOWN", body)
+        self.assertIn("d.blockedReason && d.blockedReason[0]", body)
+        self.assertIn('"none"', body)
+
+    def test_reactive_nag_persistence_uses_legacy_handler_and_fixed_nvs_keys(self) -> None:
+        """Reactive replay counters must persist only Legacy-engine counters with stable NVS keys."""
+        helper = re.search(r"static CarManagerBase \*dashReactiveNagHandler\(\)\n\{.*?\n\}\n", self.dash, re.S)
+        self.assertIsNotNone(helper)
+        helper_body = helper.group(0)
+        self.assertRegex(helper_body, r"if \(handlerPool\[0\]\)\s*return handlerPool\[0\];\s*return dashHandler;")
+
+        maintenance = re.search(r"static void dashReactiveCountersMaintenance\(\).*?(?=static void mcpDashboardLoop\(\))", self.dash, re.S)
+        self.assertIsNotNone(maintenance)
+        body = maintenance.group(0)
+        self.assertIn("CarManagerBase *reactive = dashReactiveNagHandler();", body)
+        self.assertIn("reactive->setReactiveCounters", body)
+        self.assertIn("reactive->reactiveDiag()", body)
+        self.assertIn("Preferences p;", body)
+        self.assertIn("if (!p.begin(PREFS_NS, false))", body)
+        self.assertIn("return;", body)
+        self.assertNotIn("dashHandler->setReactiveCounters", body)
+        self.assertNotIn("dashHandler->reactiveDiag", body)
+
+        serial_reset = re.search(r'else if \(strcmp\(start, "reactive_nag_reset"\) == 0\).*?else if \(strcmp\(start, "reactive_nag_bump"\)', self.dash, re.S)
+        self.assertIsNotNone(serial_reset)
+        self.assertIn("dashReactiveNagHandler()", serial_reset.group(0))
+        self.assertIn("Preferences p;", serial_reset.group(0))
+
+        rn_keys = set(re.findall(r'"(rn_[a-z]+)"', self.dash))
+        self.assertEqual({"rn_ns", "rn_rb", "rn_pw", "rn_es"}, rn_keys)
+
     # ── Phase 4: Light Stunt System ───────────────────────────
 
     def test_phase4_fog_light_header_exists(self) -> None:

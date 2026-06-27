@@ -110,6 +110,7 @@ static constexpr uint8_t kDashUnsetU8 = 0xFF;
 static Preferences prefs;
 
 static CarManagerBase *dashHandler = nullptr;
+static CarManagerBase *dashReactiveNagHandler();
 static CanDriver *dashDriver = nullptr;
 #if defined(DRIVER_ESP32_EXT_MCP2515)
 static MCP2515 *dashMcp = nullptr;
@@ -2426,9 +2427,10 @@ static void handleStatus()
     j += ",\"overrideSpeedLimit\":";
     j += dashHandler ? ((bool)dashHandler->overrideSpeedLimit ? "true" : "false") : "false";
     j += ",\"reactiveNag\":{";
-    if (dashHandler)
+    CarManagerBase *reactive = dashReactiveNagHandler();
+    if (reactive)
     {
-        DashReactiveDiag d = dashHandler->reactiveDiag();
+        DashReactiveDiag d = reactive->reactiveDiag();
         j += "\"enabled\":";
         j += d.enabled ? "true" : "false";
         j += ",\"mode\":";
@@ -2449,6 +2451,33 @@ static void handleStatus()
         j += String(d.proactiveWiggles);
         j += ",\"echoSent\":";
         j += String(d.echoSent);
+        j += R"(,"replayAttempts":)";
+        j += String(d.replayAttempts);
+        j += R"(,"replaySuccesses":)";
+        j += String(d.replaySuccesses);
+        j += R"(,"replayFailures":)";
+        j += String(d.replayFailures);
+        j += R"(,"lastProfileId":)";
+        j += String((int)d.lastProfileId);
+        j += R"(,"lastProfileDir":)";
+        j += String(d.lastProfileDir);
+        j += R"(,"lastPeakRaw":)";
+        j += String(d.lastPeakRaw);
+        j += R"(,"lastBaseRaw":)";
+        j += String(d.lastBaseRaw);
+        j += R"(,"lastOutDeltaRaw":)";
+        j += String(d.lastOutDeltaRaw);
+        j += R"(,"profileIndex":)";
+        j += String((int)d.profileIndex);
+        j += R"(,"lastHosBefore":)";
+        j += String((int)d.lastHosBefore);
+        j += R"(,"lastHosAfter":)";
+        j += String((int)d.lastHosAfter);
+        j += R"(,"cooldownRemainMs":)";
+        j += String(d.cooldownRemainMs);
+        j += R"(,"blockedReason":")";
+        j += jsonEscape(d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
+        j += "\"";
     }
     else
     {
@@ -5296,6 +5325,7 @@ static void dashSerialPrintHelp()
     Serial.println("  task_stats     sample FreeRTOS tasks for 1s asynchronously");
     Serial.println("  reactive_nag   reactive NAG-suppression diagnostics");
     Serial.println("  reactive_nag_reset  zero the reactive counters (RAM+NVS)");
+    Serial.println("  reactive_nag_bump   +111/222/333/444 + flush (persistence self-test)");
     Serial.println();
 }
 
@@ -5441,17 +5471,38 @@ static void dashSerialRunCommand(char *cmd)
         dashSerialStartTaskStats();
     else if (strcmp(start, "reactive_nag") == 0)
     {
-        if (dashHandler)
+        CarManagerBase *reactive = dashReactiveNagHandler();
+        if (reactive)
         {
-            DashReactiveDiag d = dashHandler->reactiveDiag();
-            Serial.println("=== Reactive NAG v2 ===");
+            DashReactiveDiag d = reactive->reactiveDiag();
+            Serial.println("=== Human Torque Replay NAG v3 ===");
             Serial.printf("enabled=%d mode=%d injecting=%d amp=%d handsOn=%d nextProactiveMs=%lu\n",
                           (int)d.enabled, (int)d.mode, (int)d.injecting, d.currentAmp,
                           d.lastHandsOnState, (unsigned long)d.nextProactiveInMs);
-            // mode: 0=IDLE 1=PROACTIVE 2=REACTIVE
+            Serial.println("mode: 0=IDLE 1=REPLAYING 2=OBSERVING 3=COOLDOWN");
             Serial.printf("nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu\n",
                           (unsigned long)d.nagSamples, (unsigned long)d.reactiveBursts,
                           (unsigned long)d.proactiveWiggles, (unsigned long)d.echoSent);
+            Serial.printf("replayAttempts=%lu replaySuccesses=%lu replayFailures=%lu lastProfileId=%d lastProfileDir=%d\n",
+                          (unsigned long)d.replayAttempts, (unsigned long)d.replaySuccesses,
+                          (unsigned long)d.replayFailures, (int)d.lastProfileId, d.lastProfileDir);
+            Serial.printf("lastPeakRaw=%d lastBaseRaw=%d lastOutDeltaRaw=%d profileIndex=%u hosBefore=%u hosAfter=%u cooldownRemainMs=%lu blockedReason=%s\n",
+                          d.lastPeakRaw, d.lastBaseRaw, d.lastOutDeltaRaw, (unsigned)d.profileIndex,
+                          (unsigned)d.lastHosBefore, (unsigned)d.lastHosAfter,
+                          (unsigned long)d.cooldownRemainMs, d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
+            // Raw NVS read (diagnose putUInt vs load bug). rn_* should match RAM after a flush.
+            Preferences p;
+            if (p.begin(PREFS_NS, true))
+            {
+                Serial.printf("[NVS] rn_ns=%lu rn_rb=%lu rn_pw=%lu rn_es=%lu\n",
+                              (unsigned long)p.getUInt("rn_ns", 999), (unsigned long)p.getUInt("rn_rb", 999),
+                              (unsigned long)p.getUInt("rn_pw", 999), (unsigned long)p.getUInt("rn_es", 999));
+                p.end();
+            }
+            else
+            {
+                Serial.println("[NVS] reactive counter read failed");
+            }
         }
         else
         {
@@ -5460,15 +5511,56 @@ static void dashSerialRunCommand(char *cmd)
     }
     else if (strcmp(start, "reactive_nag_reset") == 0)
     {
-        if (dashHandler)
-            dashHandler->resetReactiveCounters();
-        prefs.remove("rn_ns");
-        prefs.remove("rn_rb");
-        prefs.remove("rn_pw");
-        prefs.remove("rn_es");
-        reactiveCountersLoaded = true; // don't reload stale NVS next loop tick
-        lastReactiveCountersMs = millis();
-        Serial.println("reactive_nag counters reset (RAM + NVS)");
+        CarManagerBase *reactive = dashReactiveNagHandler();
+        if (reactive)
+            reactive->resetReactiveCounters();
+        Preferences p;
+        if (p.begin(PREFS_NS, false))
+        {
+            p.remove("rn_ns");
+            p.remove("rn_rb");
+            p.remove("rn_pw");
+            p.remove("rn_es");
+            p.end();
+            reactiveCountersLoaded = true; // don't reload stale NVS next loop tick
+            lastReactiveCountersMs = millis();
+            Serial.println("reactive_nag counters reset (RAM + NVS)");
+        }
+        else
+        {
+            reactiveCountersLoaded = false; // retry NVS load later; RAM was still reset above
+            Serial.println("reactive_nag RAM counters reset; NVS reset failed");
+        }
+    }
+    else if (strcmp(start, "reactive_nag_bump") == 0)
+    {
+        // Persistence self-test: bump counters (magic 111/222/333/444) + immediate
+        // NVS flush. Power-cycle the device, then reactive_nag — values must survive.
+        CarManagerBase *reactive = dashReactiveNagHandler();
+        if (reactive)
+        {
+            reactive->bumpReactiveCounters();
+            DashReactiveDiag d = reactive->reactiveDiag();
+            Preferences p;
+            if (p.begin(PREFS_NS, false))
+            {
+                p.putUInt("rn_ns", d.nagSamples);
+                p.putUInt("rn_rb", d.reactiveBursts);
+                p.putUInt("rn_pw", d.proactiveWiggles);
+                p.putUInt("rn_es", d.echoSent);
+                p.end();
+                reactiveCountersLoaded = true; // ensure maintenance won't overwrite from stale NVS
+                lastReactiveCountersMs = millis();
+                Serial.printf("bumped+flushed: nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu (power-cycle to test persistence)\n",
+                              (unsigned long)d.nagSamples, (unsigned long)d.reactiveBursts,
+                              (unsigned long)d.proactiveWiggles, (unsigned long)d.echoSent);
+            }
+            else
+            {
+                reactiveCountersLoaded = false;
+                Serial.println("reactive_nag bumped RAM counters; NVS flush failed");
+            }
+        }
     }
     else if (*start)
         Serial.println("Unknown command. Type help.");
@@ -6797,6 +6889,13 @@ static void webTask(void *)
 
 static CarManagerBase *handlerPool[3] = {};
 
+static CarManagerBase *dashReactiveNagHandler()
+{
+    if (handlerPool[0])
+        return handlerPool[0];
+    return dashHandler;
+}
+
 static void dashInitHandlers()
 {
     handlerPool[0] = new LegacyHandler();
@@ -7036,29 +7135,39 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 
 // Reactive-NAG instrumentation counter persistence (NVS). Counters live in RAM
 // in the engine; we boot-load them from NVS once (survive power-off/unplug) and
-// flush every 5 s. reset via serial `reactive_nag_reset`.
+// flush every 2 s. reset via serial `reactive_nag_reset`.
 // (statics declared near top of file so the serial reset cmd can see them.)
 static void dashReactiveCountersMaintenance()
 {
-    if (!dashHandler)
+    CarManagerBase *reactive = dashReactiveNagHandler();
+    if (!reactive)
         return;
     unsigned long now = millis();
     if (!reactiveCountersLoaded)
     {
-        dashHandler->setReactiveCounters(prefs.getUInt("rn_ns", 0), prefs.getUInt("rn_rb", 0),
-                                         prefs.getUInt("rn_pw", 0), prefs.getUInt("rn_es", 0));
+        Preferences p;
+        if (!p.begin(PREFS_NS, false))
+            return;
+        uint32_t ns = p.getUInt("rn_ns", 0), rb = p.getUInt("rn_rb", 0),
+                 pw = p.getUInt("rn_pw", 0), es = p.getUInt("rn_es", 0);
+        p.end();
+        reactive->setReactiveCounters(ns, rb, pw, es);
         reactiveCountersLoaded = true;
         lastReactiveCountersMs = now;
         return;
     }
     if (now - lastReactiveCountersMs < 2000)
         return;
+    Preferences p;
+    if (!p.begin(PREFS_NS, false))
+        return;
+    DashReactiveDiag d = reactive->reactiveDiag();
+    p.putUInt("rn_ns", d.nagSamples);
+    p.putUInt("rn_rb", d.reactiveBursts);
+    p.putUInt("rn_pw", d.proactiveWiggles);
+    p.putUInt("rn_es", d.echoSent);
+    p.end();
     lastReactiveCountersMs = now;
-    DashReactiveDiag d = dashHandler->reactiveDiag();
-    prefs.putUInt("rn_ns", d.nagSamples);
-    prefs.putUInt("rn_rb", d.reactiveBursts);
-    prefs.putUInt("rn_pw", d.proactiveWiggles);
-    prefs.putUInt("rn_es", d.echoSent);
 }
 
 static void mcpDashboardLoop()
