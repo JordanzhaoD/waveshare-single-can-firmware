@@ -1,6 +1,6 @@
 #pragma once
 
-// dash_reactive_nag.h — Human Torque Replay v3 reactive NAG state machine.
+// dash_reactive_nag.h — Human Torque Replay TSL6P v4 reactive NAG state machine.
 // Pure logic: all time is passed explicitly as nowMs (native-testable).
 
 #include <cstdint>
@@ -22,8 +22,10 @@ struct DashReactivePRNG
 enum class HumanReplayMode
 {
     IDLE,
-    REPLAYING,
-    OBSERVING,
+    BURST_ON,
+    REPLAYING = BURST_ON,
+    BURST_OFF,
+    OBSERVING = BURST_OFF,
     COOLDOWN
 };
 
@@ -33,10 +35,11 @@ using NagMode = HumanReplayMode;
 enum class DashHumanReplayProfileId
 {
     NONE,
-    POS_MED,
-    NEG_MED,
-    POS_STRONG,
-    NEG_STRONG
+    TSL6P,
+    POS_MED = TSL6P,
+    NEG_MED = TSL6P,
+    POS_STRONG = TSL6P,
+    NEG_STRONG = TSL6P
 };
 
 // POD snapshot for /status + serial diag. No String (native-compilable).
@@ -48,8 +51,6 @@ struct DashReactiveDiag
     uint8_t lastHandsOnState{0};
     int currentAmp{0};
     uint32_t nagSamples{0};
-    // Legacy field names kept for JSON/NVS compatibility. In v3 they map to
-    // attempts/successes so old persistence slots can be reused safely.
     uint32_t reactiveBursts{0};
     uint32_t proactiveWiggles{0};
     uint32_t echoSent{0};
@@ -68,58 +69,68 @@ struct DashReactiveDiag
     uint8_t lastHosAfter{0};
     unsigned long cooldownRemainMs{0};
     const char *blockedReason{""};
+
+    uint32_t burstSessions{0};
+    uint32_t burstOnEntries{0};
+    uint32_t burstOffEntries{0};
+    uint32_t burstFramesSent{0};
+    uint32_t burstCyclesCompleted{0};
+    uint32_t hosClearEvents{0};
+    uint32_t hosClearDuringOn{0};
+    uint32_t hosClearDuringOff{0};
+    uint32_t abortBlocks{0};
+    uint32_t gateBlocks{0};
+    uint32_t txFailures{0};
+    uint8_t lastApState{0};
+    unsigned long phaseRemainMs{0};
+    int lastTorqueRaw{0};
+    int lastTorqueNmX100{0};
 };
 
 struct DashReactiveNagBurst
 {
     // Hard safety bounds: keep these visible for safety-contract tests/review.
-    static constexpr uint8_t kMaxAttempts{3};
-    static constexpr unsigned long kCooldownMs{3000};
-    static constexpr int kMaxDeltaRaw{180};
-    static constexpr int kMaxSignedOutRaw{220};
-    static constexpr uint8_t kProfileLen{10};
-
-    static constexpr int16_t POS_MED[kProfileLen] = {40, 80, 110, 130, 145, 145, 130, 105, 75, 40};
-    static constexpr int16_t NEG_MED[kProfileLen] = {-40, -80, -110, -130, -145, -145, -130, -105, -75, -40};
-    static constexpr int16_t POS_STRONG[kProfileLen] = {50, 100, 140, 165, 175, 170, 150, 120, 80, 45};
-    static constexpr int16_t NEG_STRONG[kProfileLen] = {-50, -100, -140, -165, -175, -170, -150, -120, -80, -45};
+    static constexpr unsigned long kBurstOnMs{1000};
+    static constexpr unsigned long kBurstOffMs{1500};
+    static constexpr unsigned long kAbortCooldownMs{3000};
+    static constexpr unsigned long kTxFailCooldownMs{3000};
+    static constexpr int kMaxSignedOutRaw{180};
+    static constexpr uint8_t kTorqueSequenceLen{4};
+    static constexpr int16_t TSL6P_TORQUE_RAW[kTorqueSequenceLen] = {180, 150, -150, -180};
 
     DashReactivePRNG rng;
 
     HumanReplayMode mode_{HumanReplayMode::IDLE};
-    bool preferPositive_{true};
     bool injecting{false};
     uint8_t lastHandsOnState{0};
     bool nagActive_{false};
 
     uint32_t nagSamples_{0};
-    uint32_t replayAttempts_{0};
-    uint32_t replaySuccesses_{0};
-    uint32_t replayFailures_{0};
-    uint32_t echoSent_{0};
-    uint8_t episodeAttempts_{0};
+    uint32_t burstSessions_{0};
+    uint32_t burstOnEntries_{0};
+    uint32_t burstOffEntries_{0};
+    uint32_t burstFramesSent_{0};
+    uint32_t burstCyclesCompleted_{0};
+    uint32_t hosClearEvents_{0};
+    uint32_t hosClearDuringOn_{0};
+    uint32_t hosClearDuringOff_{0};
+    uint32_t abortBlocks_{0};
+    uint32_t gateBlocks_{0};
+    uint32_t txFailures_{0};
 
-    DashHumanReplayProfileId lastProfileId_{DashHumanReplayProfileId::NONE};
-    int lastProfileDir_{0};
-    int lastPeakRaw_{0};
-    int lastBaseRaw_{0};
-    int lastOutDeltaRaw_{0};
-    uint8_t profileIndex_{0};
+    unsigned long phaseStartMs_{0};
+    unsigned long cooldownStartMs_{0};
+    unsigned long cooldownDurationMs_{0};
+    const char *blockedReason_{""};
+    uint8_t torqueIndex_{0};
     uint8_t lastHosBefore_{0};
     uint8_t lastHosAfter_{0};
-    unsigned long cooldownStartMs_{0};
-    const char *blockedReason_{""};
-    const char *cooldownReason_{""};
-    uint8_t observeSamples_{0};
-    uint8_t attemptEchoSent_{0};
-    bool successRecordedForAttempt_{false};
-    bool clearSeenDuringTxFailCooldown_{false};
+    uint8_t lastApState_{0};
+    int lastBaseRaw_{0};
+    int lastTorqueRaw_{0};
+    int lastOutDeltaRaw_{0};
 
-    void init(uint32_t seed)
-    {
-        rng.seed(seed);
-        preferPositive_ = (rng.next() & 1u) == 0;
-    }
+    void init(uint32_t seed) { rng.seed(seed); }
 
     void reset()
     {
@@ -127,35 +138,33 @@ struct DashReactiveNagBurst
         injecting = false;
         lastHandsOnState = 0;
         nagActive_ = false;
-        lastProfileId_ = DashHumanReplayProfileId::NONE;
-        lastProfileDir_ = 0;
-        lastPeakRaw_ = 0;
-        lastBaseRaw_ = 0;
-        lastOutDeltaRaw_ = 0;
-        profileIndex_ = 0;
-        episodeAttempts_ = 0;
+        phaseStartMs_ = 0;
+        cooldownStartMs_ = 0;
+        cooldownDurationMs_ = 0;
+        blockedReason_ = "";
+        torqueIndex_ = 0;
         lastHosBefore_ = 0;
         lastHosAfter_ = 0;
-        cooldownStartMs_ = 0;
-        blockedReason_ = "";
-        cooldownReason_ = "";
-        observeSamples_ = 0;
-        attemptEchoSent_ = 0;
-        successRecordedForAttempt_ = false;
-        clearSeenDuringTxFailCooldown_ = false;
+        lastApState_ = 0;
+        lastBaseRaw_ = 0;
+        lastTorqueRaw_ = 0;
+        lastOutDeltaRaw_ = 0;
     }
 
     void resetCounters()
     {
         nagSamples_ = 0;
-        replayAttempts_ = 0;
-        replaySuccesses_ = 0;
-        replayFailures_ = 0;
-        echoSent_ = 0;
-        episodeAttempts_ = 0;
-        attemptEchoSent_ = 0;
-        successRecordedForAttempt_ = false;
-        clearSeenDuringTxFailCooldown_ = false;
+        burstSessions_ = 0;
+        burstOnEntries_ = 0;
+        burstOffEntries_ = 0;
+        burstFramesSent_ = 0;
+        burstCyclesCompleted_ = 0;
+        hosClearEvents_ = 0;
+        hosClearDuringOn_ = 0;
+        hosClearDuringOff_ = 0;
+        abortBlocks_ = 0;
+        gateBlocks_ = 0;
+        txFailures_ = 0;
     }
 
     // Diagnostic test hook: add distinct magic amounts so persistence across
@@ -163,66 +172,98 @@ struct DashReactiveNagBurst
     void bumpCounters()
     {
         nagSamples_ += 111;
-        replayAttempts_ += 222;
-        replaySuccesses_ += 333;
-        echoSent_ += 444;
+        burstSessions_ += 222;
+        hosClearEvents_ += 333;
+        burstFramesSent_ += 444;
     }
 
-    // Reuse old NVS slots: ns=nagSamples, attempts=old reactiveBursts,
-    // successes=old proactiveWiggles, es=echoSent.
-    void setCounters(uint32_t ns, uint32_t attempts, uint32_t successes, uint32_t es)
+    void setCounters(uint32_t ns, uint32_t sessions, uint32_t clears, uint32_t sent)
     {
         nagSamples_ = ns;
-        replayAttempts_ = attempts;
-        replaySuccesses_ = successes;
-        echoSent_ = es;
-        replayFailures_ = 0;
-        episodeAttempts_ = 0;
-        successRecordedForAttempt_ = false;
-        clearSeenDuringTxFailCooldown_ = false;
+        burstSessions_ = sessions;
+        hosClearEvents_ = clears;
+        burstFramesSent_ = sent;
+        burstOnEntries_ = sessions;
+        burstOffEntries_ = 0;
+        burstCyclesCompleted_ = 0;
+        hosClearDuringOn_ = 0;
+        hosClearDuringOff_ = 0;
+        abortBlocks_ = 0;
+        gateBlocks_ = 0;
+        txFailures_ = 0;
     }
 
     void notifyEchoSent()
     {
-        echoSent_++;
-        if (attemptEchoSent_ < 0xFF) attemptEchoSent_++;
-    }
-
-    void recordAttemptSuccess(uint8_t hos)
-    {
-        if (attemptEchoSent_ == 0 || successRecordedForAttempt_) return;
-        replaySuccesses_++;
-        lastHosAfter_ = hos;
-        successRecordedForAttempt_ = true;
+        burstFramesSent_++;
     }
 
     void noteBaseTorqueRaw(int raw) { lastBaseRaw_ = raw; }
 
     bool isNagActive() const { return nagActive_; }
     HumanReplayMode mode() const { return mode_; }
-    bool shouldEcho(unsigned long /*nowMs*/) const { return mode_ == HumanReplayMode::REPLAYING && profileIndex_ < kProfileLen; }
-    int amplitudeCap() const { return kMaxDeltaRaw; }
-    int currentAmp() const { return shouldEcho(0) ? lastPeakRaw_ : 0; }
+    bool shouldEcho(unsigned long nowMs) const
+    {
+        return mode_ == HumanReplayMode::BURST_ON && (nowMs - phaseStartMs_) < kBurstOnMs;
+    }
+    int amplitudeCap() const { return kMaxSignedOutRaw; }
+    int currentAmp(unsigned long nowMs) const { return shouldEcho(nowMs) ? (lastTorqueRaw_ < 0 ? -lastTorqueRaw_ : lastTorqueRaw_) : 0; }
+    int currentAmp() const { return currentAmp(phaseStartMs_); }
     uint32_t nagSamples() const { return nagSamples_; }
-    uint32_t replayAttempts() const { return replayAttempts_; }
-    uint32_t replaySuccesses() const { return replaySuccesses_; }
-    uint32_t replayFailures() const { return replayFailures_; }
-    uint32_t reactiveBursts() const { return replayAttempts_; }
-    uint32_t proactiveWiggles() const { return replaySuccesses_; }
-    DashHumanReplayProfileId lastProfileId() const { return lastProfileId_; }
-    int lastProfileDir() const { return lastProfileDir_; }
-    int lastPeakRaw() const { return lastPeakRaw_; }
+    uint32_t burstSessions() const { return burstSessions_; }
+    uint32_t burstOnEntries() const { return burstOnEntries_; }
+    uint32_t burstOffEntries() const { return burstOffEntries_; }
+    uint32_t burstFramesSent() const { return burstFramesSent_; }
+    uint32_t burstCyclesCompleted() const { return burstCyclesCompleted_; }
+    uint32_t hosClearEvents() const { return hosClearEvents_; }
+    uint32_t hosClearDuringOn() const { return hosClearDuringOn_; }
+    uint32_t hosClearDuringOff() const { return hosClearDuringOff_; }
+    uint32_t abortBlocks() const { return abortBlocks_; }
+    uint32_t gateBlocks() const { return gateBlocks_; }
+    uint32_t txFailures() const { return txFailures_; }
+
+    uint32_t replayAttempts() const { return burstSessions_; }
+    uint32_t replaySuccesses() const { return hosClearEvents_; }
+    uint32_t replayFailures() const { return txFailures_ + abortBlocks_; }
+    uint32_t reactiveBursts() const { return burstSessions_; }
+    uint32_t proactiveWiggles() const { return hosClearEvents_; }
+    uint32_t echoSent() const { return burstFramesSent_; }
+    DashHumanReplayProfileId lastProfileId() const { return burstSessions_ ? DashHumanReplayProfileId::TSL6P : DashHumanReplayProfileId::NONE; }
+    int lastProfileDir() const { return lastTorqueRaw_ < 0 ? -1 : (lastTorqueRaw_ > 0 ? 1 : 0); }
+    int lastPeakRaw() const { return kMaxSignedOutRaw; }
+    int lastBaseRaw() const { return lastBaseRaw_; }
     int lastOutDeltaRaw() const { return lastOutDeltaRaw_; }
+    int lastTorqueRaw() const { return lastTorqueRaw_; }
+    int lastTorqueNmX100() const { return lastTorqueRaw_; }
+    uint8_t profileIndex() const { return torqueIndex_; }
     const char *blockedReason() const { return blockedReason_; }
     uint8_t lastHosBefore() const { return lastHosBefore_; }
     uint8_t lastHosAfter() const { return lastHosAfter_; }
+    uint8_t lastApState() const { return lastApState_; }
+
     unsigned long cooldownRemainMs(unsigned long nowMs) const
     {
         if (mode_ != HumanReplayMode::COOLDOWN) return 0;
         unsigned long elapsed = nowMs - cooldownStartMs_;
-        return (elapsed >= kCooldownMs) ? 0 : (kCooldownMs - elapsed);
+        return (elapsed >= cooldownDurationMs_) ? 0 : (cooldownDurationMs_ - elapsed);
     }
-    unsigned long nextProactiveInMs(unsigned long nowMs) const { return cooldownRemainMs(nowMs); }
+
+    unsigned long phaseRemainMs(unsigned long nowMs) const
+    {
+        if (mode_ == HumanReplayMode::BURST_ON)
+        {
+            unsigned long elapsed = nowMs - phaseStartMs_;
+            return (elapsed >= kBurstOnMs) ? 0 : (kBurstOnMs - elapsed);
+        }
+        if (mode_ == HumanReplayMode::BURST_OFF)
+        {
+            unsigned long elapsed = nowMs - phaseStartMs_;
+            return (elapsed >= kBurstOffMs) ? 0 : (kBurstOffMs - elapsed);
+        }
+        return cooldownRemainMs(nowMs);
+    }
+
+    unsigned long nextProactiveInMs(unsigned long nowMs) const { return phaseRemainMs(nowMs); }
 
     static int clampInt(int value, int lo, int hi)
     {
@@ -230,6 +271,24 @@ struct DashReactiveNagBurst
         if (value > hi) return hi;
         return value;
     }
+
+    static bool reasonEquals(const char *lhs, const char *rhs)
+    {
+        if (!lhs || !rhs) return lhs == rhs;
+        while (*lhs && *rhs)
+        {
+            if (*lhs != *rhs) return false;
+            ++lhs;
+            ++rhs;
+        }
+        return *lhs == *rhs;
+    }
+
+    static bool isAbortState(uint8_t apState) { return apState == 8 || apState == 9; }
+
+    bool cooldownActive(unsigned long nowMs) const { return mode_ == HumanReplayMode::COOLDOWN && cooldownRemainMs(nowMs) > 0; }
+    bool txFailCooldownActive(unsigned long nowMs) const { return cooldownActive(nowMs) && reasonEquals(blockedReason_, "txFail"); }
+    bool abortCooldownActive(unsigned long nowMs) const { return cooldownActive(nowMs) && reasonEquals(blockedReason_, "abort"); }
 
     static int decodeSignedTorque(uint8_t data2Lo, uint8_t data3)
     {
@@ -243,175 +302,132 @@ struct DashReactiveNagBurst
         return (uint16_t)(bounded & 0x0FFF);
     }
 
-    void applyDeltaToFrame(uint8_t &data2Lo, uint8_t &data3, int deltaRaw)
+    static void setSignedTorqueInFrame(uint8_t &data2Lo, uint8_t &data3, int signedRaw)
     {
-        int delta = clampInt(deltaRaw, -kMaxDeltaRaw, kMaxDeltaRaw);
-        int out = clampInt(decodeSignedTorque(data2Lo, data3) + delta, -kMaxSignedOutRaw, kMaxSignedOutRaw);
+        int out = clampInt(signedRaw, -kMaxSignedOutRaw, kMaxSignedOutRaw);
         uint16_t encoded = encodeSignedTorque(out);
-        data2Lo = (uint8_t)((encoded >> 8) & 0x0F);
-        data3 = (uint8_t)(encoded & 0xFF);
+        data2Lo = static_cast<uint8_t>((encoded >> 8) & 0x0F);
+        data3 = static_cast<uint8_t>(encoded & 0xFF);
     }
 
-    const int16_t *currentProfile() const
+    void applyToFrame(uint8_t &data2Lo, uint8_t &data3, int signedRaw)
     {
-        switch (lastProfileId_)
-        {
-        case DashHumanReplayProfileId::POS_MED:
-            return POS_MED;
-        case DashHumanReplayProfileId::NEG_MED:
-            return NEG_MED;
-        case DashHumanReplayProfileId::POS_STRONG:
-            return POS_STRONG;
-        case DashHumanReplayProfileId::NEG_STRONG:
-            return NEG_STRONG;
-        case DashHumanReplayProfileId::NONE:
-        default:
-            return POS_MED;
-        }
+        setSignedTorqueInFrame(data2Lo, data3, signedRaw);
     }
 
-    static int peakAbs(const int16_t *profile)
+    // Legacy compatibility shim: despite the old "Delta" name, v4 writes an
+    // absolute signed torque target through the hard-capped ±180 raw path.
+    void applyDeltaToFrame(uint8_t &data2Lo, uint8_t &data3, int signedRaw)
     {
-        int peak = 0;
-        for (uint8_t i = 0; i < kProfileLen; ++i)
-        {
-            int v = profile[i] < 0 ? -profile[i] : profile[i];
-            if (v > peak) peak = v;
-        }
-        return peak;
+        applyToFrame(data2Lo, data3, signedRaw);
     }
 
     void cancel(const char *reason)
     {
         mode_ = HumanReplayMode::IDLE;
         injecting = false;
-        profileIndex_ = kProfileLen;
-        observeSamples_ = 0;
-        attemptEchoSent_ = 0;
-        successRecordedForAttempt_ = false;
-        clearSeenDuringTxFailCooldown_ = false;
-        cooldownReason_ = "";
         blockedReason_ = reason ? reason : "";
+        if (reason && reason[0]) gateBlocks_++;
     }
 
-    void startReplay(unsigned long nowMs)
+    void enterBurstOn(unsigned long nowMs)
     {
-        if (episodeAttempts_ >= kMaxAttempts)
-        {
-            enterCooldown(nowMs);
-            return;
-        }
-
-        const uint8_t nextAttempt = static_cast<uint8_t>(episodeAttempts_ + 1);
-        const bool strong = nextAttempt >= kMaxAttempts;
-        bool positive = preferPositive_;
-        if (nextAttempt == 2) positive = !preferPositive_;
-
-        if (strong)
-            lastProfileId_ = positive ? DashHumanReplayProfileId::POS_STRONG : DashHumanReplayProfileId::NEG_STRONG;
-        else
-            lastProfileId_ = positive ? DashHumanReplayProfileId::POS_MED : DashHumanReplayProfileId::NEG_MED;
-
-        lastProfileDir_ = positive ? 1 : -1;
-        lastPeakRaw_ = peakAbs(currentProfile());
-        lastOutDeltaRaw_ = 0;
-        profileIndex_ = 0;
-        observeSamples_ = 0;
-        attemptEchoSent_ = 0;
-        successRecordedForAttempt_ = false;
-        clearSeenDuringTxFailCooldown_ = false;
-        episodeAttempts_ = nextAttempt;
-        replayAttempts_++;
-        mode_ = HumanReplayMode::REPLAYING;
+        mode_ = HumanReplayMode::BURST_ON;
         injecting = true;
-        cooldownReason_ = "";
+        phaseStartMs_ = nowMs;
+        torqueIndex_ = 0;
         blockedReason_ = "";
+        burstSessions_++;
+        burstOnEntries_++;
     }
 
-    void enterCooldown(unsigned long nowMs, const char *reason = "maxAttempts")
+    void enterBurstOff(unsigned long nowMs)
+    {
+        mode_ = HumanReplayMode::BURST_OFF;
+        injecting = false;
+        phaseStartMs_ = nowMs;
+        burstOffEntries_++;
+        burstCyclesCompleted_++;
+    }
+
+    void enterCooldown(unsigned long nowMs, const char *reason, unsigned long durationMs)
     {
         mode_ = HumanReplayMode::COOLDOWN;
         injecting = false;
-        profileIndex_ = kProfileLen;
         cooldownStartMs_ = nowMs;
-        cooldownReason_ = reason ? reason : "maxAttempts";
-        blockedReason_ = cooldownReason_;
-        replayFailures_++;
+        cooldownDurationMs_ = durationMs;
+        blockedReason_ = reason ? reason : "cooldown";
+    }
+
+    void enterAbortCooldown(unsigned long nowMs)
+    {
+        abortBlocks_++;
+        enterCooldown(nowMs, "abort", kAbortCooldownMs);
     }
 
     void failReplayTx(unsigned long nowMs)
     {
-        enterCooldown(nowMs, "txFail");
-        observeSamples_ = 0;
+        txFailures_++;
+        enterCooldown(nowMs, "txFail", kTxFailCooldownMs);
     }
 
-    int peekReplayDelta(unsigned long /*nowMs*/) const
+    int peekReplayDelta(unsigned long nowMs) const
     {
-        if (!shouldEcho(0)) return 0;
-        return currentProfile()[profileIndex_];
+        if (!shouldEcho(nowMs)) return 0;
+        return TSL6P_TORQUE_RAW[torqueIndex_ % kTorqueSequenceLen];
     }
 
-    void commitReplayDelta(int deltaRaw)
+    void commitReplayDelta(int signedRaw)
     {
-        if (!shouldEcho(0)) return;
-        lastOutDeltaRaw_ = deltaRaw;
-        profileIndex_++;
-        if (profileIndex_ >= kProfileLen)
-        {
-            mode_ = HumanReplayMode::OBSERVING;
-            injecting = false;
-            observeSamples_ = 0;
-        }
+        if (mode_ != HumanReplayMode::BURST_ON) return;
+        lastTorqueRaw_ = clampInt(signedRaw, -kMaxSignedOutRaw, kMaxSignedOutRaw);
+        lastOutDeltaRaw_ = lastTorqueRaw_;
+        torqueIndex_ = static_cast<uint8_t>((torqueIndex_ + 1) % kTorqueSequenceLen);
     }
 
     int nextReplayDelta(unsigned long nowMs)
     {
-        int delta = peekReplayDelta(nowMs);
-        commitReplayDelta(delta);
-        return delta;
+        if (!shouldEcho(nowMs)) return 0;
+        int target = peekReplayDelta(nowMs);
+        commitReplayDelta(target);
+        return target;
     }
 
     // Backward-compatible name used by LegacyHandler's 0x370 echo path.
     int computeHold(unsigned long nowMs) { return nextReplayDelta(nowMs); }
 
-    // Backward-compatible wrapper: v3 treats the argument as the replay delta.
-    void applyToFrame(uint8_t &data2Lo, uint8_t &data3, int pert) { applyDeltaToFrame(data2Lo, data3, pert); }
+    void recordHosClear(uint8_t hos)
+    {
+        if (mode_ == HumanReplayMode::BURST_ON)
+            hosClearDuringOn_++;
+        else if (mode_ == HumanReplayMode::BURST_OFF)
+            hosClearDuringOff_++;
+        else
+            return;
+        hosClearEvents_++;
+        lastHosAfter_ = hos;
+    }
 
     // Called per 0x399. hos = (0x399 data[5]>>2)&0x0F. active = toggle ON && APActive.
-    void onNagSample(uint8_t hos, unsigned long nowMs, bool active)
+    void onNagSample(uint8_t hos, unsigned long nowMs, bool active, uint8_t apState)
     {
         lastHandsOnState = hos;
+        lastApState_ = apState;
 
         if (hos <= 2)
         {
             nagActive_ = false;
-            if (mode_ == HumanReplayMode::COOLDOWN && cooldownReason_ && cooldownReason_[0] == 't')
+            if (txFailCooldownActive(nowMs) || abortCooldownActive(nowMs))
             {
-                unsigned long elapsed = nowMs - cooldownStartMs_;
-                if (elapsed < kCooldownMs)
-                {
-                    clearSeenDuringTxFailCooldown_ = true;
-                    recordAttemptSuccess(hos);
-                    blockedReason_ = cooldownReason_;
-                    return;
-                }
+                lastHosAfter_ = hos;
+                return;
             }
-            if (mode_ == HumanReplayMode::REPLAYING || mode_ == HumanReplayMode::OBSERVING)
-                recordAttemptSuccess(hos);
+            recordHosClear(hos);
             mode_ = HumanReplayMode::IDLE;
             injecting = false;
-            profileIndex_ = kProfileLen;
-            episodeAttempts_ = 0;
-            observeSamples_ = 0;
-            attemptEchoSent_ = 0;
-            successRecordedForAttempt_ = false;
-            clearSeenDuringTxFailCooldown_ = false;
-            cooldownReason_ = "";
             blockedReason_ = "";
             return;
         }
-
-        if (hos < 3) return;
 
         nagActive_ = true;
         nagSamples_++;
@@ -419,22 +435,21 @@ struct DashReactiveNagBurst
 
         if (mode_ == HumanReplayMode::COOLDOWN)
         {
-            unsigned long elapsed = nowMs - cooldownStartMs_;
-            const bool txFailCooldown = cooldownReason_ && cooldownReason_[0] == 't';
-            if (elapsed < kCooldownMs)
+            if (cooldownRemainMs(nowMs) > 0)
             {
-                blockedReason_ = cooldownReason_;
+                if (isAbortState(apState) && !abortCooldownActive(nowMs))
+                    enterAbortCooldown(nowMs);
                 return;
             }
             mode_ = HumanReplayMode::IDLE;
             injecting = false;
-            profileIndex_ = kProfileLen;
-            if (!txFailCooldown || clearSeenDuringTxFailCooldown_)
-                episodeAttempts_ = 0;
-            observeSamples_ = 0;
-            clearSeenDuringTxFailCooldown_ = false;
-            cooldownReason_ = "";
             blockedReason_ = "";
+        }
+
+        if (isAbortState(apState))
+        {
+            enterAbortCooldown(nowMs);
+            return;
         }
 
         if (!active)
@@ -443,20 +458,33 @@ struct DashReactiveNagBurst
             return;
         }
 
-        if (mode_ == HumanReplayMode::REPLAYING) return;
-
-        if (mode_ == HumanReplayMode::OBSERVING)
+        if (mode_ == HumanReplayMode::IDLE)
         {
-            observeSamples_++;
-            if (observeSamples_ < 2) return;
-            if (episodeAttempts_ >= kMaxAttempts)
-            {
-                enterCooldown(nowMs);
-                return;
-            }
+            enterBurstOn(nowMs);
+            return;
         }
 
-        startReplay(nowMs);
+        if (mode_ == HumanReplayMode::BURST_ON)
+        {
+            if ((nowMs - phaseStartMs_) >= kBurstOnMs)
+                enterBurstOff(nowMs);
+            return;
+        }
+
+        if (mode_ == HumanReplayMode::BURST_OFF)
+        {
+            if ((nowMs - phaseStartMs_) >= kBurstOffMs)
+                enterBurstOn(nowMs);
+            return;
+        }
+    }
+
+    // Legacy/no-AP-state-diagnostics compatibility overload. Callers that have
+    // the real 0x399 AP state must use the 4-argument overload so abort states
+    // 8/9 are visible to the state machine; do not infer abort from active=false.
+    void onNagSample(uint8_t hos, unsigned long nowMs, bool active)
+    {
+        onNagSample(hos, nowMs, active, 6);
     }
 
     DashReactiveDiag diag(unsigned long nowMs) const
@@ -465,25 +493,40 @@ struct DashReactiveNagBurst
         d.mode = mode_;
         d.injecting = injecting;
         d.lastHandsOnState = lastHandsOnState;
-        d.currentAmp = currentAmp();
+        d.currentAmp = currentAmp(nowMs);
         d.nagSamples = nagSamples_;
-        d.reactiveBursts = replayAttempts_;
-        d.proactiveWiggles = replaySuccesses_;
-        d.echoSent = echoSent_;
+        d.reactiveBursts = reactiveBursts();
+        d.proactiveWiggles = proactiveWiggles();
+        d.echoSent = echoSent();
         d.nextProactiveInMs = nextProactiveInMs(nowMs);
-        d.replayAttempts = replayAttempts_;
-        d.replaySuccesses = replaySuccesses_;
-        d.replayFailures = replayFailures_;
-        d.lastProfileId = lastProfileId_;
-        d.lastProfileDir = lastProfileDir_;
-        d.lastPeakRaw = lastPeakRaw_;
+        d.replayAttempts = replayAttempts();
+        d.replaySuccesses = replaySuccesses();
+        d.replayFailures = replayFailures();
+        d.lastProfileId = lastProfileId();
+        d.lastProfileDir = lastProfileDir();
+        d.lastPeakRaw = lastPeakRaw();
         d.lastBaseRaw = lastBaseRaw_;
         d.lastOutDeltaRaw = lastOutDeltaRaw_;
-        d.profileIndex = profileIndex_;
+        d.profileIndex = torqueIndex_;
         d.lastHosBefore = lastHosBefore_;
         d.lastHosAfter = lastHosAfter_;
         d.cooldownRemainMs = cooldownRemainMs(nowMs);
         d.blockedReason = blockedReason_;
+        d.burstSessions = burstSessions_;
+        d.burstOnEntries = burstOnEntries_;
+        d.burstOffEntries = burstOffEntries_;
+        d.burstFramesSent = burstFramesSent_;
+        d.burstCyclesCompleted = burstCyclesCompleted_;
+        d.hosClearEvents = hosClearEvents_;
+        d.hosClearDuringOn = hosClearDuringOn_;
+        d.hosClearDuringOff = hosClearDuringOff_;
+        d.abortBlocks = abortBlocks_;
+        d.gateBlocks = gateBlocks_;
+        d.txFailures = txFailures_;
+        d.lastApState = lastApState_;
+        d.phaseRemainMs = phaseRemainMs(nowMs);
+        d.lastTorqueRaw = lastTorqueRaw_;
+        d.lastTorqueNmX100 = lastTorqueNmX100();
         return d;
     }
 };
