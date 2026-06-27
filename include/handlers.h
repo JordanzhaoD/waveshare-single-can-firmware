@@ -380,6 +380,10 @@ struct LegacyHandler : public CarManagerBase
                     framesSent++;
                     nag.notifyEchoSent();
                 }
+                else
+                {
+                    nag.failReplayTx(nowMs);
+                }
             }
         }
         // STW_ACTN_RQ (0x045 = 69): Follow-Distance-Stalk as Source for Profile Mapping

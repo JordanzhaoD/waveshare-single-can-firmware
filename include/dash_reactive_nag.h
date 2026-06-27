@@ -313,6 +313,18 @@ struct DashReactiveNagBurst
         replayFailures_++;
     }
 
+    void failReplayTx(unsigned long nowMs)
+    {
+        mode_ = HumanReplayMode::COOLDOWN;
+        injecting = false;
+        profileIndex_ = kProfileLen;
+        cooldownStartMs_ = nowMs;
+        blockedReason_ = "txFail";
+        observeSamples_ = 0;
+        attemptEchoSent_ = 0;
+        replayFailures_++;
+    }
+
     int peekReplayDelta(unsigned long /*nowMs*/) const
     {
         if (!shouldEcho(0)) return 0;

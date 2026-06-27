@@ -165,5 +165,6 @@ class HumanTorqueReplayV3Contract(unittest.TestCase):
         self.assertIn("nag.shouldEcho", block)
         self.assertIn("nag.peekReplayDelta", block)
         self.assertIn("nag.commitReplayDelta", block)
+        self.assertIn("nag.failReplayTx", block)
         self.assertIn("nag.cancel", block)
         self.assertIn("(frame.data[4] & 0x3F) | 0x40", block)

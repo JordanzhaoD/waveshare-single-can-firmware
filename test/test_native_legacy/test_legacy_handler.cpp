@@ -870,7 +870,7 @@ void test_legacy_replay_gate_loss_cancels_not_pauses_profile()
     TEST_ASSERT_FALSE(handler.nag.shouldEcho(0));
 }
 
-void test_legacy_replay_failed_send_does_not_count_sent_diagnostics()
+void test_legacy_replay_failed_send_enters_bounded_cooldown_without_sent_diagnostics()
 {
     handler.bionicSteering = true;
     mock.sendOk = false;
@@ -883,16 +883,17 @@ void test_legacy_replay_failed_send_does_not_count_sent_diagnostics()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)handler.framesSent);
     TEST_ASSERT_EQUAL_UINT32(0, handler.reactiveDiag().echoSent);
-    TEST_ASSERT_EQUAL_UINT8(0, handler.reactiveDiag().profileIndex);
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, handler.reactiveDiag().mode);
+    TEST_ASSERT_FALSE(handler.nag.shouldEcho(0));
+    TEST_ASSERT_EQUAL_UINT32(1, handler.reactiveDiag().replayFailures);
+    TEST_ASSERT_EQUAL_STRING("txFail", handler.reactiveDiag().blockedReason);
 
     mock.sendOk = true;
     CanFrame retry = makeEpasFrame(0, 0.10, 0x0D);
     handler.handleMessage(retry, mock);
-    TEST_ASSERT_EQUAL(2, mock.sent.size());
-    int32_t out = decodeEchoTorqueRaw(mock.sent.back()) - 0x800;
-    TEST_ASSERT_EQUAL_INT(52, out);
-    TEST_ASSERT_EQUAL_UINT32(1, (uint32_t)handler.framesSent);
-    TEST_ASSERT_EQUAL_UINT32(1, handler.reactiveDiag().echoSent);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)handler.framesSent);
+    TEST_ASSERT_EQUAL_UINT32(0, handler.reactiveDiag().echoSent);
 }
 
 int main()
@@ -955,7 +956,7 @@ int main()
     RUN_TEST(test_legacy_replay_retry_can_emit_negative_profile);
     RUN_TEST(test_legacy_replay_checkad_blocks);
     RUN_TEST(test_legacy_replay_gate_loss_cancels_not_pauses_profile);
-    RUN_TEST(test_legacy_replay_failed_send_does_not_count_sent_diagnostics);
+    RUN_TEST(test_legacy_replay_failed_send_enters_bounded_cooldown_without_sent_diagnostics);
 
     return UNITY_END();
 }
