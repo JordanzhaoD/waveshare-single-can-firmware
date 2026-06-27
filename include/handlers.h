@@ -294,6 +294,7 @@ struct CarManagerBase
     virtual void resetReactiveCounters() {}
     virtual void setReactiveCounters(uint32_t /*ns*/, uint32_t /*rb*/, uint32_t /*pw*/,
                                      uint32_t /*es*/) {}
+    virtual void bumpReactiveCounters() {}
     virtual ~CarManagerBase() = default;
 };
 
@@ -318,6 +319,7 @@ struct LegacyHandler : public CarManagerBase
     {
         nag.setCounters(ns, rb, pw, es);
     }
+    void bumpReactiveCounters() override { nag.bumpCounters(); }
 
     const uint32_t *filterIds() const override
     {
@@ -336,26 +338,30 @@ struct LegacyHandler : public CarManagerBase
         updateHwDetectedFrom920(frame);
         if (frame.id == 880 && frame.dlc >= 8)
         {
-            // Reactive NAG-suppression v2 (opt-in via bionicSteering; default OFF).
+            // Human Torque Replay v3 (opt-in via bionicSteering; default OFF): bounded replay delta.
             unsigned long nowMs = dashDiagNowMs();
             bool active = (bool)bionicSteering && APActive;
-            bool useReactive = active && nag.shouldEcho(nowMs);
+            bool useReplay = active && nag.shouldEcho(nowMs);
             if (checkAD && !checkAD())
-                useReactive = false;
-            if (useReactive)
+                useReplay = false;
+            if (useReplay)
             {
-                int pert = nag.computeHold(nowMs);
                 CanFrame echo;
                 echo.id = 880;
                 echo.dlc = 8;
                 echo.data[0] = frame.data[0];
                 echo.data[1] = frame.data[1];
-                uint8_t d2lo = frame.data[2] & 0x0F; // Legacy 扭矩字段 base（高 nibble 保）
+
+                uint8_t d2lo = frame.data[2] & 0x0F;
                 uint8_t d3 = frame.data[3];
-                nag.applyToFrame(d2lo, d3, pert); // 写回 base + human_weight + wave
+                int signedBase = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
+                nag.noteBaseTorqueRaw(signedBase);
+                int delta = nag.nextReplayDelta(nowMs);
+                nag.applyDeltaToFrame(d2lo, d3, delta);
                 echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) | d2lo);
                 echo.data[3] = d3;
-                echo.data[4] = static_cast<uint8_t>((frame.data[4] & 0x3F) | 0x40); // C: handsOnLevel=1
+
+                echo.data[4] = static_cast<uint8_t>((frame.data[4] & 0x3F) | 0x40);
                 echo.data[5] = frame.data[5];
                 uint8_t cnt = static_cast<uint8_t>(frame.data[6] & 0x0F);
                 cnt = static_cast<uint8_t>((cnt + 1) & 0x0F);
@@ -445,6 +451,8 @@ struct LegacyHandler : public CarManagerBase
             {
                 uint8_t hos = static_cast<uint8_t>((frame.data[5] >> 2) & 0x0F);
                 bool active = (bool)bionicSteering && APActive;
+                if (checkAD && !checkAD())
+                    active = false;
                 nag.onNagSample(hos, dashDiagNowMs(), active);
             }
             return;
