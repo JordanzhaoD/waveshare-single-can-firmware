@@ -343,8 +343,10 @@ struct LegacyHandler : public CarManagerBase
             bool active = (bool)bionicSteering && APActive;
             bool replayPending = nag.shouldEcho(nowMs);
             bool checkAdAllowed = !(checkAD && !checkAD());
-            if (replayPending && !active)
+            if (replayPending && !(bool)bionicSteering)
                 nag.cancel("toggle");
+            else if (replayPending && !APActive)
+                nag.cancel("apInactive");
             else if (replayPending && !checkAdAllowed)
                 nag.cancel("checkAD");
             bool useReplay = replayPending && active && checkAdAllowed;
@@ -360,8 +362,8 @@ struct LegacyHandler : public CarManagerBase
                 uint8_t d3 = frame.data[3];
                 int signedBase = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
                 nag.noteBaseTorqueRaw(signedBase);
-                int delta = nag.peekReplayDelta(nowMs);
-                nag.applyDeltaToFrame(d2lo, d3, delta);
+                int target = nag.peekReplayDelta(nowMs);
+                nag.applyToFrame(d2lo, d3, target);
                 echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) | d2lo);
                 echo.data[3] = d3;
 
@@ -376,7 +378,7 @@ struct LegacyHandler : public CarManagerBase
                 bool ok = driver.send(echo);
                 if (ok)
                 {
-                    nag.commitReplayDelta(delta);
+                    nag.commitReplayDelta(target);
                     framesSent++;
                     nag.notifyEchoSent();
                 }
@@ -456,7 +458,8 @@ struct LegacyHandler : public CarManagerBase
         {
             if (frame.dlc < 1)
                 return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            uint8_t apState = readDASAutopilotStatus(frame);
+            APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
             if (frame.dlc >= 6)
@@ -465,7 +468,7 @@ struct LegacyHandler : public CarManagerBase
                 bool active = (bool)bionicSteering && APActive;
                 if (checkAD && !checkAD())
                     active = false;
-                nag.onNagSample(hos, dashDiagNowMs(), active);
+                nag.onNagSample(hos, dashDiagNowMs(), active, apState);
             }
             return;
         }
