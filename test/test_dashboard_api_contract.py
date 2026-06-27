@@ -1494,12 +1494,16 @@ class DashboardApiContractTests(unittest.TestCase):
         """handlers.h must include dash_reactive_nag.h (reactive NAG suppression)."""
         self.assertIn('#include "dash_reactive_nag.h"', self.handlers)
 
-    def test_reactive_nag_v3_status_exposes_replay_diagnostics(self) -> None:
-        """Human Torque Replay v3 must expose attempt/profile/HOS diagnostics."""
+    def test_reactive_nag_v4_status_exposes_tsl6p_burst_diagnostics(self) -> None:
+        """TSL6P Burst NAG v4 must expose phase/timing/clear diagnostics."""
         status = re.search(r'j \+= ",\\"reactiveNag\\":\{";.*?j \+= "\}";', self.dash, re.S)
         self.assertIsNotNone(status)
         body = status.group(0)
         required = [
+            '"nagSamples"',
+            '"reactiveBursts"',
+            '"proactiveWiggles"',
+            '"echoSent"',
             '"replayAttempts"',
             '"replaySuccesses"',
             '"replayFailures"',
@@ -1512,6 +1516,21 @@ class DashboardApiContractTests(unittest.TestCase):
             '"lastHosBefore"',
             '"lastHosAfter"',
             '"cooldownRemainMs"',
+            '"burstSessions"',
+            '"burstOnEntries"',
+            '"burstOffEntries"',
+            '"burstFramesSent"',
+            '"burstCyclesCompleted"',
+            '"hosClearEvents"',
+            '"hosClearDuringOn"',
+            '"hosClearDuringOff"',
+            '"abortBlocks"',
+            '"gateBlocks"',
+            '"txFailures"',
+            '"lastApState"',
+            '"phaseRemainMs"',
+            '"lastTorqueRaw"',
+            '"lastTorqueNmX100"',
             '"blockedReason"',
         ]
         for token in required:
@@ -1523,12 +1542,14 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("reactive->reactiveDiag()", body)
         self.assertNotIn("dashHandler->reactiveDiag()", body)
 
-    def test_reactive_nag_serial_command_prints_v3_replay_fields(self) -> None:
-        """Serial reactive_nag output should be enough for post-drive diagnosis."""
+    def test_reactive_nag_serial_command_prints_v4_burst_fields(self) -> None:
+        """Serial reactive_nag output should distinguish ON/OFF clears and aborts."""
         serial = re.search(r'else if \(strcmp\(start, "reactive_nag"\) == 0\).*?else if \(strcmp\(start, "reactive_nag_reset"\)', self.dash, re.S)
         self.assertIsNotNone(serial)
         body = serial.group(0)
         required = [
+            "=== TSL6P Burst NAG v4 ===",
+            "0=IDLE 1=BURST_ON 2=BURST_OFF 3=COOLDOWN",
             "replayAttempts=",
             "replaySuccesses=",
             "replayFailures=",
@@ -1541,11 +1562,25 @@ class DashboardApiContractTests(unittest.TestCase):
             "hosBefore=",
             "hosAfter=",
             "cooldownRemainMs=",
+            "burstSessions=",
+            "burstOnEntries=",
+            "burstOffEntries=",
+            "burstFramesSent=",
+            "burstCyclesCompleted=",
+            "hosClearEvents=",
+            "hosClearDuringOn=",
+            "hosClearDuringOff=",
+            "abortBlocks=",
+            "gateBlocks=",
+            "txFailures=",
+            "lastApState=",
+            "phaseRemainMs=",
+            "lastTorqueRaw=",
+            "lastTorqueNmX100=",
             "blockedReason=",
         ]
         for token in required:
             self.assertIn(token, body)
-        self.assertIn("0=IDLE 1=REPLAYING 2=OBSERVING 3=COOLDOWN", body)
         self.assertIn("d.blockedReason && d.blockedReason[0]", body)
         self.assertIn('"none"', body)
 

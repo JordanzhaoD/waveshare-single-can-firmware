@@ -2443,13 +2443,13 @@ static void handleStatus()
         j += String(d.lastHandsOnState);
         j += ",\"nextProactiveInMs\":";
         j += String(d.nextProactiveInMs);
-        j += ",\"nagSamples\":";
+        j += R"(,"nagSamples":)";
         j += String(d.nagSamples);
-        j += ",\"reactiveBursts\":";
+        j += R"(,"reactiveBursts":)";
         j += String(d.reactiveBursts);
-        j += ",\"proactiveWiggles\":";
+        j += R"(,"proactiveWiggles":)";
         j += String(d.proactiveWiggles);
-        j += ",\"echoSent\":";
+        j += R"(,"echoSent":)";
         j += String(d.echoSent);
         j += R"(,"replayAttempts":)";
         j += String(d.replayAttempts);
@@ -2457,6 +2457,21 @@ static void handleStatus()
         j += String(d.replaySuccesses);
         j += R"(,"replayFailures":)";
         j += String(d.replayFailures);
+        j += R"(,"burstSessions":)" + String(d.burstSessions);
+        j += R"(,"burstOnEntries":)" + String(d.burstOnEntries);
+        j += R"(,"burstOffEntries":)" + String(d.burstOffEntries);
+        j += R"(,"burstFramesSent":)" + String(d.burstFramesSent);
+        j += R"(,"burstCyclesCompleted":)" + String(d.burstCyclesCompleted);
+        j += R"(,"hosClearEvents":)" + String(d.hosClearEvents);
+        j += R"(,"hosClearDuringOn":)" + String(d.hosClearDuringOn);
+        j += R"(,"hosClearDuringOff":)" + String(d.hosClearDuringOff);
+        j += R"(,"abortBlocks":)" + String(d.abortBlocks);
+        j += R"(,"gateBlocks":)" + String(d.gateBlocks);
+        j += R"(,"txFailures":)" + String(d.txFailures);
+        j += R"(,"lastApState":)" + String(d.lastApState);
+        j += R"(,"phaseRemainMs":)" + String(d.phaseRemainMs);
+        j += R"(,"lastTorqueRaw":)" + String(d.lastTorqueRaw);
+        j += R"(,"lastTorqueNmX100":)" + String(d.lastTorqueNmX100);
         j += R"(,"lastProfileId":)";
         j += String((int)d.lastProfileId);
         j += R"(,"lastProfileDir":)";
@@ -5475,21 +5490,31 @@ static void dashSerialRunCommand(char *cmd)
         if (reactive)
         {
             DashReactiveDiag d = reactive->reactiveDiag();
-            Serial.println("=== Human Torque Replay NAG v3 ===");
-            Serial.printf("enabled=%d mode=%d injecting=%d amp=%d handsOn=%d nextProactiveMs=%lu\n",
+            Serial.println("=== TSL6P Burst NAG v4 ===");
+            Serial.printf("enabled=%d mode=%d injecting=%d amp=%d handsOn=%d nextPhaseMs=%lu\n",
                           (int)d.enabled, (int)d.mode, (int)d.injecting, d.currentAmp,
                           d.lastHandsOnState, (unsigned long)d.nextProactiveInMs);
-            Serial.println("mode: 0=IDLE 1=REPLAYING 2=OBSERVING 3=COOLDOWN");
+            Serial.println("mode: 0=IDLE 1=BURST_ON 2=BURST_OFF 3=COOLDOWN");
             Serial.printf("nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu\n",
                           (unsigned long)d.nagSamples, (unsigned long)d.reactiveBursts,
                           (unsigned long)d.proactiveWiggles, (unsigned long)d.echoSent);
+            Serial.printf("burstSessions=%lu burstOnEntries=%lu burstOffEntries=%lu burstFramesSent=%lu burstCyclesCompleted=%lu\n",
+                          (unsigned long)d.burstSessions, (unsigned long)d.burstOnEntries,
+                          (unsigned long)d.burstOffEntries, (unsigned long)d.burstFramesSent,
+                          (unsigned long)d.burstCyclesCompleted);
+            Serial.printf("hosClearEvents=%lu hosClearDuringOn=%lu hosClearDuringOff=%lu abortBlocks=%lu gateBlocks=%lu txFailures=%lu\n",
+                          (unsigned long)d.hosClearEvents, (unsigned long)d.hosClearDuringOn,
+                          (unsigned long)d.hosClearDuringOff, (unsigned long)d.abortBlocks,
+                          (unsigned long)d.gateBlocks, (unsigned long)d.txFailures);
             Serial.printf("replayAttempts=%lu replaySuccesses=%lu replayFailures=%lu lastProfileId=%d lastProfileDir=%d\n",
                           (unsigned long)d.replayAttempts, (unsigned long)d.replaySuccesses,
                           (unsigned long)d.replayFailures, (int)d.lastProfileId, d.lastProfileDir);
-            Serial.printf("lastPeakRaw=%d lastBaseRaw=%d lastOutDeltaRaw=%d profileIndex=%u hosBefore=%u hosAfter=%u cooldownRemainMs=%lu blockedReason=%s\n",
+            Serial.printf("lastPeakRaw=%d lastBaseRaw=%d lastOutDeltaRaw=%d profileIndex=%u hosBefore=%u hosAfter=%u lastApState=%u phaseRemainMs=%lu cooldownRemainMs=%lu lastTorqueRaw=%d lastTorqueNmX100=%d blockedReason=%s\n",
                           d.lastPeakRaw, d.lastBaseRaw, d.lastOutDeltaRaw, (unsigned)d.profileIndex,
-                          (unsigned)d.lastHosBefore, (unsigned)d.lastHosAfter,
-                          (unsigned long)d.cooldownRemainMs, d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
+                          (unsigned)d.lastHosBefore, (unsigned)d.lastHosAfter, (unsigned)d.lastApState,
+                          (unsigned long)d.phaseRemainMs, (unsigned long)d.cooldownRemainMs,
+                          d.lastTorqueRaw, d.lastTorqueNmX100,
+                          d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
             // Raw NVS read (diagnose putUInt vs load bug). rn_* should match RAM after a flush.
             Preferences p;
             if (p.begin(PREFS_NS, true))
