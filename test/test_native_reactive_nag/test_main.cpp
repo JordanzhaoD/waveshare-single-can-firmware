@@ -4,356 +4,258 @@
 void setUp() {}
 void tearDown() {}
 
-static void feedFrames(DashReactiveNagBurst &n, int count, unsigned long startMs = 1000)
+static void startActiveNag(DashReactiveNagBurst &n, unsigned long nowMs = 100)
 {
-    for (int i = 0; i < count; ++i)
-    {
-        TEST_ASSERT_TRUE(n.shouldEcho(startMs + i * 40));
-        (void)n.nextReplayDelta(startMs + i * 40);
-    }
+    n.init(12345);
+    n.onNagSample(3, nowMs, true, 6);
 }
 
-void test_inactive_hos_does_not_start_replay()
+void test_hos_clear_does_not_start_burst()
 {
     DashReactiveNagBurst n;
     n.init(12345);
-    n.onNagSample(3, 100, false);
+
+    n.onNagSample(2, 100, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(100));
+    TEST_ASSERT_EQUAL_UINT32(0, n.nagSamples());
+    TEST_ASSERT_EQUAL_UINT32(0, n.burstSessions());
+}
+
+void test_inactive_gate_records_toggle_and_stays_idle()
+{
+    DashReactiveNagBurst n;
+    n.init(12345);
+
+    n.onNagSample(3, 100, false, 6);
+
     TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
     TEST_ASSERT_FALSE(n.shouldEcho(100));
     TEST_ASSERT_EQUAL_UINT32(1, n.nagSamples());
-    TEST_ASSERT_EQUAL_UINT32(0, n.replayAttempts());
+    TEST_ASSERT_EQUAL_UINT32(0, n.burstSessions());
     TEST_ASSERT_EQUAL_STRING("toggle", n.blockedReason());
 }
 
-void test_hos3_active_starts_first_attempt_with_medium_profile()
+void test_hos3_active_enters_burst_on_for_1000ms()
 {
     DashReactiveNagBurst n;
-    n.init(2);
-    n.noteBaseTorqueRaw(12);
-    n.onNagSample(3, 100, true);
+    startActiveNag(n, 100);
 
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, n.mode());
     TEST_ASSERT_TRUE(n.shouldEcho(100));
-    TEST_ASSERT_EQUAL_UINT32(1, n.replayAttempts());
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::POS_MED, n.lastProfileId());
-    TEST_ASSERT_EQUAL_INT(1, n.lastProfileDir());
-    TEST_ASSERT_EQUAL_INT(145, n.lastPeakRaw());
+    TEST_ASSERT_TRUE(n.shouldEcho(1099));
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstSessions());
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstOnEntries());
+    TEST_ASSERT_EQUAL_UINT32(0, n.burstOffEntries());
+    TEST_ASSERT_EQUAL_UINT32(1, n.phaseRemainMs(1099));
 }
 
-void test_profile_outputs_exact_positive_medium_sequence()
+void test_burst_on_transitions_to_burst_off_after_1000ms()
 {
     DashReactiveNagBurst n;
-    n.init(2);
-    n.noteBaseTorqueRaw(10);
-    n.onNagSample(3, 100, true);
+    startActiveNag(n, 100);
 
-    const int expected[] = {40, 80, 110, 130, 145, 145, 130, 105, 75, 40};
+    n.onNagSample(3, 1100, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_OFF, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(1100));
+    TEST_ASSERT_FALSE(n.shouldEcho(2599));
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstOffEntries());
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstCyclesCompleted());
+}
+
+void test_burst_off_returns_to_burst_on_after_1500ms_if_nag_persists()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+    n.onNagSample(3, 1100, true, 6);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_OFF, n.mode());
+
+    n.onNagSample(3, 2600, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, n.mode());
+    TEST_ASSERT_TRUE(n.shouldEcho(2600));
+    TEST_ASSERT_EQUAL_UINT32(2, n.burstSessions());
+    TEST_ASSERT_EQUAL_UINT32(2, n.burstOnEntries());
+}
+
+void test_tsl6p_torque_sequence_cycles_during_burst_on()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    const int expected[] = {180, 150, -150, -180, 180, 150};
     for (unsigned i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i)
     {
         TEST_ASSERT_TRUE(n.shouldEcho(100 + i * 40));
-        TEST_ASSERT_EQUAL_INT(expected[i], n.nextReplayDelta(100 + i * 40));
+        int target = n.peekReplayDelta(100 + i * 40);
+        TEST_ASSERT_EQUAL_INT(expected[i], target);
+        n.commitReplayDelta(target);
+        n.notifyEchoSent();
     }
-    TEST_ASSERT_FALSE(n.shouldEcho(100 + 10 * 40));
-    TEST_ASSERT_EQUAL(HumanReplayMode::OBSERVING, n.mode());
+
+    TEST_ASSERT_EQUAL_UINT32(6, n.echoSent());
+    TEST_ASSERT_EQUAL_INT(150, n.lastOutDeltaRaw());
 }
 
-void test_failed_attempt_retries_opposite_direction()
+void test_burst_off_sends_no_echo_even_with_persistent_nag()
 {
     DashReactiveNagBurst n;
-    n.init(2);
-    n.noteBaseTorqueRaw(15);
-    n.onNagSample(3, 100, true);
-    feedFrames(n, 10, 100);
+    startActiveNag(n, 100);
+    n.onNagSample(3, 1100, true, 6);
 
-    n.onNagSample(3, 600, true); // first observation sample, still NAG
-    TEST_ASSERT_EQUAL(HumanReplayMode::OBSERVING, n.mode());
-    n.onNagSample(3, 1100, true); // second observation sample -> attempt 2
-
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(2, n.replayAttempts());
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::NEG_MED, n.lastProfileId());
-    TEST_ASSERT_EQUAL_INT(-1, n.lastProfileDir());
-
-    const int expected[] = {-40, -80, -110, -130, -145, -145, -130, -105, -75, -40};
-    for (unsigned i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i)
-    {
-        TEST_ASSERT_TRUE(n.shouldEcho(1100 + i * 40));
-        TEST_ASSERT_EQUAL_INT(expected[i], n.nextReplayDelta(1100 + i * 40));
-    }
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_OFF, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(1200));
+    TEST_ASSERT_EQUAL_INT(0, n.peekReplayDelta(1200));
 }
 
-void test_third_attempt_uses_strong_profile_then_cooldown()
+void test_hos_clear_during_burst_on_counts_on_clear_and_stops()
 {
     DashReactiveNagBurst n;
-    n.init(4);
-    n.noteBaseTorqueRaw(0);
-    n.onNagSample(3, 100, true);
-    feedFrames(n, 10, 100);
-    n.onNagSample(3, 600, true);
-    n.onNagSample(3, 1100, true);
-    feedFrames(n, 10, 1100);
-    n.onNagSample(3, 1600, true);
-    n.onNagSample(3, 2100, true);
-
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(3, n.replayAttempts());
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::POS_STRONG, n.lastProfileId());
-    TEST_ASSERT_EQUAL_INT(175, n.lastPeakRaw());
-
-    feedFrames(n, 10, 2100);
-    n.onNagSample(3, 2600, true);
-    n.onNagSample(3, 3100, true);
-    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
-    TEST_ASSERT_FALSE(n.shouldEcho(3100));
-    TEST_ASSERT_TRUE(n.cooldownRemainMs(3100) > 0);
-    TEST_ASSERT_EQUAL_STRING("maxAttempts", n.blockedReason());
-
-    n.onNagSample(3, 6101, true);
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
-    TEST_ASSERT_TRUE(n.shouldEcho(6101));
-    TEST_ASSERT_EQUAL_UINT32(4, n.replayAttempts());
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::POS_MED, n.lastProfileId());
-}
-
-void test_active_false_preserves_attempt_budget_during_continuous_nag()
-{
-    DashReactiveNagBurst n;
-    n.init(2);
-    n.noteBaseTorqueRaw(0);
-    n.onNagSample(3, 100, true);
-    feedFrames(n, 10, 100);
-
-    n.onNagSample(3, 600, false);
-    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
-    TEST_ASSERT_FALSE(n.shouldEcho(600));
-    TEST_ASSERT_EQUAL_STRING("toggle", n.blockedReason());
-
-    n.onNagSample(3, 1100, true);
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(2, n.replayAttempts());
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::NEG_MED, n.lastProfileId());
-}
-
-void test_cooldown_clear_does_not_count_success()
-{
-    DashReactiveNagBurst n;
-    n.init(4);
-    n.noteBaseTorqueRaw(0);
-    n.onNagSample(3, 100, true);
-    feedFrames(n, 10, 100);
-    n.onNagSample(3, 600, true);
-    n.onNagSample(3, 1100, true);
-    feedFrames(n, 10, 1100);
-    n.onNagSample(3, 1600, true);
-    n.onNagSample(3, 2100, true);
-    feedFrames(n, 10, 2100);
-    n.onNagSample(3, 2600, true);
-    n.onNagSample(3, 3100, true);
-    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(0, n.replaySuccesses());
-
-    n.onNagSample(2, 3200, true);
-    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(0, n.replaySuccesses());
-    TEST_ASSERT_EQUAL_UINT32(1, n.replayFailures());
-}
-
-void test_hos_clear_before_emitted_echo_does_not_count_success()
-{
-    DashReactiveNagBurst n;
-    n.init(2);
-    n.noteBaseTorqueRaw(0);
-    n.onNagSample(3, 100, true);
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
-    TEST_ASSERT_TRUE(n.shouldEcho(100));
-
-    n.onNagSample(2, 180, true);
-    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
-    TEST_ASSERT_FALSE(n.shouldEcho(180));
-    TEST_ASSERT_EQUAL_UINT32(0, n.replaySuccesses());
-}
-
-void test_hos_clear_after_emitted_echo_counts_success_and_stops_replay()
-{
-    DashReactiveNagBurst n;
-    n.init(2);
-    n.noteBaseTorqueRaw(0);
-    n.onNagSample(3, 100, true);
-    TEST_ASSERT_TRUE(n.shouldEcho(100));
-    TEST_ASSERT_EQUAL_INT(40, n.nextReplayDelta(100));
+    startActiveNag(n, 100);
+    TEST_ASSERT_TRUE(n.shouldEcho(140));
+    int target = n.peekReplayDelta(140);
+    n.commitReplayDelta(target);
     n.notifyEchoSent();
 
-    n.onNagSample(2, 180, true);
+    n.onNagSample(2, 200, true, 6);
+
     TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
-    TEST_ASSERT_FALSE(n.shouldEcho(180));
-    TEST_ASSERT_EQUAL_UINT32(1, n.replaySuccesses());
+    TEST_ASSERT_FALSE(n.shouldEcho(200));
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearEvents());
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearDuringOn());
+    TEST_ASSERT_EQUAL_UINT32(0, n.hosClearDuringOff());
     TEST_ASSERT_EQUAL_UINT8(3, n.lastHosBefore());
     TEST_ASSERT_EQUAL_UINT8(2, n.lastHosAfter());
 }
 
-void test_txfail_cooldown_preserves_reason_across_nag_samples()
+void test_hos_clear_during_burst_off_counts_off_clear_and_stops()
 {
     DashReactiveNagBurst n;
-    n.init(2);
-    n.onNagSample(3, 100, true);
-    n.failReplayTx(140);
-
-    n.onNagSample(3, 200, true);
-
-    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
-    TEST_ASSERT_EQUAL_STRING("txFail", n.blockedReason());
-    TEST_ASSERT_TRUE(n.cooldownRemainMs(200) > 0);
-}
-
-void test_hos_clear_during_txfail_cooldown_does_not_bypass_cooldown()
-{
-    DashReactiveNagBurst n;
-    n.init(2);
-    n.onNagSample(3, 100, true);
-    n.failReplayTx(140);
-
-    n.onNagSample(2, 200, true);
-
-    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
-    TEST_ASSERT_EQUAL_STRING("txFail", n.blockedReason());
-    TEST_ASSERT_TRUE(n.cooldownRemainMs(200) > 0);
-}
-
-void test_txfail_cooldown_clear_without_echo_still_starts_next_episode_fresh()
-{
-    DashReactiveNagBurst n;
-    n.init(2);
-    n.onNagSample(3, 100, true);
-    TEST_ASSERT_TRUE(n.shouldEcho(100));
-    n.failReplayTx(140);
-
-    n.onNagSample(2, 200, true);
-
-    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(0, n.replaySuccesses());
-    TEST_ASSERT_EQUAL_STRING("txFail", n.blockedReason());
-
-    n.onNagSample(3, 3141, true);
-
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(2, n.replayAttempts());
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::POS_MED, n.lastProfileId());
-}
-
-void test_txfail_cooldown_clear_records_success_once_then_next_episode_starts_fresh()
-{
-    DashReactiveNagBurst n;
-    n.init(2);
-    n.onNagSample(3, 100, true);
-    TEST_ASSERT_TRUE(n.shouldEcho(100));
-    n.commitReplayDelta(n.peekReplayDelta(100));
+    startActiveNag(n, 100);
+    n.commitReplayDelta(n.peekReplayDelta(140));
     n.notifyEchoSent();
-    n.failReplayTx(140);
+    n.onNagSample(3, 1100, true, 6);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_OFF, n.mode());
 
-    n.onNagSample(2, 200, true);
-    n.onNagSample(2, 240, true);
+    n.onNagSample(2, 1500, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearEvents());
+    TEST_ASSERT_EQUAL_UINT32(0, n.hosClearDuringOn());
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearDuringOff());
+}
+
+void test_gate_loss_cancels_burst_with_reason()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    n.onNagSample(3, 200, false, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(200));
+    TEST_ASSERT_EQUAL_STRING("toggle", n.blockedReason());
+    TEST_ASSERT_EQUAL_UINT32(1, n.gateBlocks());
+}
+
+void test_abort_state_enters_cooldown_and_blocks_echo()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    n.onNagSample(3, 200, true, 8);
 
     TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(1, n.replaySuccesses());
+    TEST_ASSERT_FALSE(n.shouldEcho(200));
+    TEST_ASSERT_EQUAL_STRING("abort", n.blockedReason());
+    TEST_ASSERT_EQUAL_UINT32(1, n.abortBlocks());
+    TEST_ASSERT_TRUE(n.cooldownRemainMs(200) > 0);
+}
+
+void test_abort_cooldown_expires_to_new_burst_if_nag_persists()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+    n.onNagSample(3, 200, true, 9);
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+
+    n.onNagSample(3, 3201, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, n.mode());
+    TEST_ASSERT_TRUE(n.shouldEcho(3201));
+    TEST_ASSERT_EQUAL_UINT32(2, n.burstSessions());
+}
+
+void test_txfail_enters_cooldown_and_records_failure()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    n.failReplayTx(160);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
     TEST_ASSERT_EQUAL_STRING("txFail", n.blockedReason());
-
-    n.onNagSample(3, 3141, true);
-
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(2, n.replayAttempts());
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::POS_MED, n.lastProfileId());
+    TEST_ASSERT_EQUAL_UINT32(1, n.txFailures());
+    TEST_ASSERT_EQUAL_UINT32(1, n.replayFailures());
 }
 
-void test_txfail_cooldown_expiry_preserves_attempt_budget()
+void test_set_signed_torque_in_frame_targets_absolute_torque_and_clamps()
 {
-    DashReactiveNagBurst n;
-    n.init(2);
-    n.onNagSample(3, 100, true);
-    n.failReplayTx(140);
-
-    n.onNagSample(3, 3141, true);
-
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
-    TEST_ASSERT_EQUAL_UINT32(2, n.replayAttempts());
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::NEG_MED, n.lastProfileId());
-}
-
-void test_apply_delta_to_legacy_torque_supports_negative_and_clamps()
-{
-    DashReactiveNagBurst n;
-    n.init(6);
-
     uint8_t d2lo = 0x08;
-    uint8_t d3 = 0x00; // signed 0
-    n.applyDeltaToFrame(d2lo, d3, -175);
-    int signedOut = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
-    TEST_ASSERT_EQUAL_INT(-175, signedOut);
+    uint8_t d3 = 0x14; // incoming +20 signed raw
 
-    d2lo = 0x08;
-    d3 = 0x00;
-    n.applyDeltaToFrame(d2lo, d3, 999);
-    signedOut = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
-    TEST_ASSERT_EQUAL_INT(180, signedOut);
+    DashReactiveNagBurst::setSignedTorqueInFrame(d2lo, d3, 180);
+    TEST_ASSERT_EQUAL_INT(180, DashReactiveNagBurst::decodeSignedTorque(d2lo, d3));
 
-    d2lo = 0x08;
-    d3 = 0x00;
-    n.applyDeltaToFrame(d2lo, d3, -999);
-    signedOut = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
-    TEST_ASSERT_EQUAL_INT(-180, signedOut);
+    DashReactiveNagBurst::setSignedTorqueInFrame(d2lo, d3, 999);
+    TEST_ASSERT_EQUAL_INT(180, DashReactiveNagBurst::decodeSignedTorque(d2lo, d3));
 
-    d2lo = 0x08;
-    d3 = 0x80; // signed +128
-    n.applyDeltaToFrame(d2lo, d3, 180);
-    signedOut = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
-    TEST_ASSERT_EQUAL_INT(220, signedOut);
-
-    d2lo = 0x07;
-    d3 = 0x80; // signed -128
-    n.applyDeltaToFrame(d2lo, d3, -180);
-    signedOut = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
-    TEST_ASSERT_EQUAL_INT(-220, signedOut);
+    DashReactiveNagBurst::setSignedTorqueInFrame(d2lo, d3, -999);
+    TEST_ASSERT_EQUAL_INT(-180, DashReactiveNagBurst::decodeSignedTorque(d2lo, d3));
 }
 
-void test_diag_reports_v3_fields()
+void test_diag_reports_v4_burst_fields()
 {
     DashReactiveNagBurst n;
-    n.init(2);
-    n.noteBaseTorqueRaw(12);
-    n.onNagSample(3, 100, true);
-    (void)n.nextReplayDelta(100);
+    startActiveNag(n, 100);
+    int target = n.peekReplayDelta(140);
+    n.commitReplayDelta(target);
     n.notifyEchoSent();
 
     DashReactiveDiag d = n.diag(140);
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, d.mode);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, d.mode);
     TEST_ASSERT_TRUE(d.injecting);
-    TEST_ASSERT_EQUAL_UINT8(3, d.lastHandsOnState);
     TEST_ASSERT_EQUAL_UINT32(1, d.nagSamples);
-    TEST_ASSERT_EQUAL_UINT32(1, d.replayAttempts);
-    TEST_ASSERT_EQUAL_UINT32(0, d.replaySuccesses);
-    TEST_ASSERT_EQUAL_INT(40, d.lastOutDeltaRaw);
-    TEST_ASSERT_EQUAL_INT(145, d.lastPeakRaw);
-    TEST_ASSERT_EQUAL_INT(12, d.lastBaseRaw);
-    TEST_ASSERT_EQUAL_UINT32(1, d.echoSent);
+    TEST_ASSERT_EQUAL_UINT32(1, d.burstSessions);
+    TEST_ASSERT_EQUAL_UINT32(1, d.burstOnEntries);
+    TEST_ASSERT_EQUAL_UINT32(0, d.burstOffEntries);
+    TEST_ASSERT_EQUAL_UINT32(1, d.burstFramesSent);
+    TEST_ASSERT_EQUAL_UINT32(0, d.hosClearEvents);
+    TEST_ASSERT_EQUAL_UINT8(3, d.lastHosBefore);
+    TEST_ASSERT_EQUAL_UINT8(6, d.lastApState);
+    TEST_ASSERT_EQUAL_INT(180, d.lastTorqueRaw);
+    TEST_ASSERT_EQUAL_INT(180, d.lastTorqueNmX100);
 }
 
 int main()
 {
     UNITY_BEGIN();
-    RUN_TEST(test_inactive_hos_does_not_start_replay);
-    RUN_TEST(test_hos3_active_starts_first_attempt_with_medium_profile);
-    RUN_TEST(test_profile_outputs_exact_positive_medium_sequence);
-    RUN_TEST(test_failed_attempt_retries_opposite_direction);
-    RUN_TEST(test_third_attempt_uses_strong_profile_then_cooldown);
-    RUN_TEST(test_active_false_preserves_attempt_budget_during_continuous_nag);
-    RUN_TEST(test_cooldown_clear_does_not_count_success);
-    RUN_TEST(test_hos_clear_before_emitted_echo_does_not_count_success);
-    RUN_TEST(test_hos_clear_after_emitted_echo_counts_success_and_stops_replay);
-    RUN_TEST(test_txfail_cooldown_preserves_reason_across_nag_samples);
-    RUN_TEST(test_hos_clear_during_txfail_cooldown_does_not_bypass_cooldown);
-    RUN_TEST(test_txfail_cooldown_clear_without_echo_still_starts_next_episode_fresh);
-    RUN_TEST(test_txfail_cooldown_clear_records_success_once_then_next_episode_starts_fresh);
-    RUN_TEST(test_txfail_cooldown_expiry_preserves_attempt_budget);
-    RUN_TEST(test_apply_delta_to_legacy_torque_supports_negative_and_clamps);
-    RUN_TEST(test_diag_reports_v3_fields);
+    RUN_TEST(test_hos_clear_does_not_start_burst);
+    RUN_TEST(test_inactive_gate_records_toggle_and_stays_idle);
+    RUN_TEST(test_hos3_active_enters_burst_on_for_1000ms);
+    RUN_TEST(test_burst_on_transitions_to_burst_off_after_1000ms);
+    RUN_TEST(test_burst_off_returns_to_burst_on_after_1500ms_if_nag_persists);
+    RUN_TEST(test_tsl6p_torque_sequence_cycles_during_burst_on);
+    RUN_TEST(test_burst_off_sends_no_echo_even_with_persistent_nag);
+    RUN_TEST(test_hos_clear_during_burst_on_counts_on_clear_and_stops);
+    RUN_TEST(test_hos_clear_during_burst_off_counts_off_clear_and_stops);
+    RUN_TEST(test_gate_loss_cancels_burst_with_reason);
+    RUN_TEST(test_abort_state_enters_cooldown_and_blocks_echo);
+    RUN_TEST(test_abort_cooldown_expires_to_new_burst_if_nag_persists);
+    RUN_TEST(test_txfail_enters_cooldown_and_records_failure);
+    RUN_TEST(test_set_signed_torque_in_frame_targets_absolute_torque_and_clamps);
+    RUN_TEST(test_diag_reports_v4_burst_fields);
     return UNITY_END();
 }
