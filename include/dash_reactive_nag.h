@@ -109,8 +109,10 @@ struct DashReactiveNagBurst
     uint8_t lastHosAfter_{0};
     unsigned long cooldownStartMs_{0};
     const char *blockedReason_{""};
+    const char *cooldownReason_{""};
     uint8_t observeSamples_{0};
     uint8_t attemptEchoSent_{0};
+    bool successRecordedForAttempt_{false};
 
     void init(uint32_t seed)
     {
@@ -135,8 +137,10 @@ struct DashReactiveNagBurst
         lastHosAfter_ = 0;
         cooldownStartMs_ = 0;
         blockedReason_ = "";
+        cooldownReason_ = "";
         observeSamples_ = 0;
         attemptEchoSent_ = 0;
+        successRecordedForAttempt_ = false;
     }
 
     void resetCounters()
@@ -148,6 +152,7 @@ struct DashReactiveNagBurst
         echoSent_ = 0;
         episodeAttempts_ = 0;
         attemptEchoSent_ = 0;
+        successRecordedForAttempt_ = false;
     }
 
     // Diagnostic test hook: add distinct magic amounts so persistence across
@@ -170,6 +175,7 @@ struct DashReactiveNagBurst
         echoSent_ = es;
         replayFailures_ = 0;
         episodeAttempts_ = 0;
+        successRecordedForAttempt_ = false;
     }
 
     void notifyEchoSent()
@@ -177,6 +183,15 @@ struct DashReactiveNagBurst
         echoSent_++;
         if (attemptEchoSent_ < 0xFF) attemptEchoSent_++;
     }
+
+    void recordAttemptSuccess(uint8_t hos)
+    {
+        if (attemptEchoSent_ == 0 || successRecordedForAttempt_) return;
+        replaySuccesses_++;
+        lastHosAfter_ = hos;
+        successRecordedForAttempt_ = true;
+    }
+
     void noteBaseTorqueRaw(int raw) { lastBaseRaw_ = raw; }
 
     bool isNagActive() const { return nagActive_; }
@@ -269,6 +284,8 @@ struct DashReactiveNagBurst
         profileIndex_ = kProfileLen;
         observeSamples_ = 0;
         attemptEchoSent_ = 0;
+        successRecordedForAttempt_ = false;
+        cooldownReason_ = "";
         blockedReason_ = reason ? reason : "";
     }
 
@@ -296,33 +313,30 @@ struct DashReactiveNagBurst
         profileIndex_ = 0;
         observeSamples_ = 0;
         attemptEchoSent_ = 0;
+        successRecordedForAttempt_ = false;
         episodeAttempts_ = nextAttempt;
         replayAttempts_++;
         mode_ = HumanReplayMode::REPLAYING;
         injecting = true;
+        cooldownReason_ = "";
         blockedReason_ = "";
     }
 
-    void enterCooldown(unsigned long nowMs)
+    void enterCooldown(unsigned long nowMs, const char *reason = "maxAttempts")
     {
         mode_ = HumanReplayMode::COOLDOWN;
         injecting = false;
         profileIndex_ = kProfileLen;
         cooldownStartMs_ = nowMs;
-        blockedReason_ = "maxAttempts";
+        cooldownReason_ = reason ? reason : "maxAttempts";
+        blockedReason_ = cooldownReason_;
         replayFailures_++;
     }
 
     void failReplayTx(unsigned long nowMs)
     {
-        mode_ = HumanReplayMode::COOLDOWN;
-        injecting = false;
-        profileIndex_ = kProfileLen;
-        cooldownStartMs_ = nowMs;
-        blockedReason_ = "txFail";
+        enterCooldown(nowMs, "txFail");
         observeSamples_ = 0;
-        attemptEchoSent_ = 0;
-        replayFailures_++;
     }
 
     int peekReplayDelta(unsigned long /*nowMs*/) const
@@ -365,17 +379,26 @@ struct DashReactiveNagBurst
         if (hos <= 2)
         {
             nagActive_ = false;
-            if ((mode_ == HumanReplayMode::REPLAYING || mode_ == HumanReplayMode::OBSERVING) && attemptEchoSent_ > 0)
+            if (mode_ == HumanReplayMode::COOLDOWN && cooldownReason_ && cooldownReason_[0] == 't')
             {
-                replaySuccesses_++;
-                lastHosAfter_ = hos;
+                unsigned long elapsed = nowMs - cooldownStartMs_;
+                if (elapsed < kCooldownMs)
+                {
+                    recordAttemptSuccess(hos);
+                    blockedReason_ = cooldownReason_;
+                    return;
+                }
             }
+            if (mode_ == HumanReplayMode::REPLAYING || mode_ == HumanReplayMode::OBSERVING)
+                recordAttemptSuccess(hos);
             mode_ = HumanReplayMode::IDLE;
             injecting = false;
             profileIndex_ = kProfileLen;
             episodeAttempts_ = 0;
             observeSamples_ = 0;
             attemptEchoSent_ = 0;
+            successRecordedForAttempt_ = false;
+            cooldownReason_ = "";
             blockedReason_ = "";
             return;
         }
@@ -389,16 +412,19 @@ struct DashReactiveNagBurst
         if (mode_ == HumanReplayMode::COOLDOWN)
         {
             unsigned long elapsed = nowMs - cooldownStartMs_;
+            const bool txFailCooldown = cooldownReason_ && cooldownReason_[0] == 't';
             if (elapsed < kCooldownMs)
             {
-                blockedReason_ = "maxAttempts";
+                blockedReason_ = cooldownReason_;
                 return;
             }
             mode_ = HumanReplayMode::IDLE;
             injecting = false;
             profileIndex_ = kProfileLen;
-            episodeAttempts_ = 0;
+            if (!txFailCooldown)
+                episodeAttempts_ = 0;
             observeSamples_ = 0;
+            cooldownReason_ = "";
             blockedReason_ = "";
         }
 

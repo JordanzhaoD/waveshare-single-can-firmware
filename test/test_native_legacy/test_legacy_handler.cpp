@@ -870,6 +870,13 @@ void test_legacy_replay_gate_loss_cancels_not_pauses_profile()
     TEST_ASSERT_FALSE(handler.nag.shouldEcho(0));
 }
 
+static void advanceLegacyReplayCooldown()
+{
+    CanFrame das = makeDasFrame(3);
+    for (int i = 0; i < 3100; ++i)
+        handler.handleMessage(das, mock);
+}
+
 void test_legacy_replay_failed_send_enters_bounded_cooldown_without_sent_diagnostics()
 {
     handler.bionicSteering = true;
@@ -894,6 +901,39 @@ void test_legacy_replay_failed_send_enters_bounded_cooldown_without_sent_diagnos
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)handler.framesSent);
     TEST_ASSERT_EQUAL_UINT32(0, handler.reactiveDiag().echoSent);
+}
+
+void test_legacy_persistent_txfail_preserves_attempt_budget_until_max_attempts()
+{
+    handler.bionicSteering = true;
+    mock.sendOk = false;
+    CanFrame das = makeDasFrame(3);
+
+    handler.handleMessage(das, mock);
+    CanFrame fail1 = makeEpasFrame(0, 0.10, 0x01);
+    handler.handleMessage(fail1, mock);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.reactiveDiag().replayAttempts);
+    TEST_ASSERT_EQUAL_STRING("txFail", handler.reactiveDiag().blockedReason);
+
+    advanceLegacyReplayCooldown();
+    CanFrame fail2 = makeEpasFrame(0, 0.10, 0x02);
+    handler.handleMessage(fail2, mock);
+    TEST_ASSERT_EQUAL_UINT32(2, handler.reactiveDiag().replayAttempts);
+    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::NEG_MED, handler.reactiveDiag().lastProfileId);
+    TEST_ASSERT_EQUAL_STRING("txFail", handler.reactiveDiag().blockedReason);
+
+    advanceLegacyReplayCooldown();
+    CanFrame fail3 = makeEpasFrame(0, 0.10, 0x03);
+    handler.handleMessage(fail3, mock);
+    TEST_ASSERT_EQUAL_UINT32(3, handler.reactiveDiag().replayAttempts);
+    TEST_ASSERT_TRUE(handler.reactiveDiag().lastProfileId == DashHumanReplayProfileId::POS_STRONG ||
+                     handler.reactiveDiag().lastProfileId == DashHumanReplayProfileId::NEG_STRONG);
+    TEST_ASSERT_EQUAL_STRING("txFail", handler.reactiveDiag().blockedReason);
+
+    advanceLegacyReplayCooldown();
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, handler.reactiveDiag().mode);
+    TEST_ASSERT_EQUAL_UINT32(3, handler.reactiveDiag().replayAttempts);
+    TEST_ASSERT_EQUAL_STRING("maxAttempts", handler.reactiveDiag().blockedReason);
 }
 
 int main()
@@ -957,6 +997,7 @@ int main()
     RUN_TEST(test_legacy_replay_checkad_blocks);
     RUN_TEST(test_legacy_replay_gate_loss_cancels_not_pauses_profile);
     RUN_TEST(test_legacy_replay_failed_send_enters_bounded_cooldown_without_sent_diagnostics);
+    RUN_TEST(test_legacy_persistent_txfail_preserves_attempt_budget_until_max_attempts);
 
     return UNITY_END();
 }
