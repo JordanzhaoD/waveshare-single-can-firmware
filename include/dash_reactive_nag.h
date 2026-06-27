@@ -390,7 +390,7 @@ struct DashReactiveNagBurst
                 unsigned long elapsed = nowMs - cooldownStartMs_;
                 if (elapsed < kCooldownMs)
                 {
-                    if (attemptEchoSent_ > 0) clearSeenDuringTxFailCooldown_ = true;
+                    clearSeenDuringTxFailCooldown_ = true;
                     recordAttemptSuccess(hos);
                     blockedReason_ = cooldownReason_;
                     return;

@@ -219,6 +219,27 @@ void test_hos_clear_during_txfail_cooldown_does_not_bypass_cooldown()
     TEST_ASSERT_TRUE(n.cooldownRemainMs(200) > 0);
 }
 
+void test_txfail_cooldown_clear_without_echo_still_starts_next_episode_fresh()
+{
+    DashReactiveNagBurst n;
+    n.init(2);
+    n.onNagSample(3, 100, true);
+    TEST_ASSERT_TRUE(n.shouldEcho(100));
+    n.failReplayTx(140);
+
+    n.onNagSample(2, 200, true);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+    TEST_ASSERT_EQUAL_UINT32(0, n.replaySuccesses());
+    TEST_ASSERT_EQUAL_STRING("txFail", n.blockedReason());
+
+    n.onNagSample(3, 3141, true);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
+    TEST_ASSERT_EQUAL_UINT32(2, n.replayAttempts());
+    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::POS_MED, n.lastProfileId());
+}
+
 void test_txfail_cooldown_clear_records_success_once_then_next_episode_starts_fresh()
 {
     DashReactiveNagBurst n;
@@ -329,6 +350,7 @@ int main()
     RUN_TEST(test_hos_clear_after_emitted_echo_counts_success_and_stops_replay);
     RUN_TEST(test_txfail_cooldown_preserves_reason_across_nag_samples);
     RUN_TEST(test_hos_clear_during_txfail_cooldown_does_not_bypass_cooldown);
+    RUN_TEST(test_txfail_cooldown_clear_without_echo_still_starts_next_episode_fresh);
     RUN_TEST(test_txfail_cooldown_clear_records_success_once_then_next_episode_starts_fresh);
     RUN_TEST(test_txfail_cooldown_expiry_preserves_attempt_budget);
     RUN_TEST(test_apply_delta_to_legacy_torque_supports_negative_and_clamps);
