@@ -43,6 +43,38 @@ static int32_t decodeEchoTorqueRaw(const CanFrame &f)
     return static_cast<int32_t>(((f.data[2] & 0x0F) << 8) | f.data[3]);
 }
 
+static int32_t decodeEchoTorqueSigned(const CanFrame &f)
+{
+    return decodeEchoTorqueRaw(f) - 0x800;
+}
+
+static uint8_t decodeEchoHandsOnLevel(const CanFrame &f)
+{
+    return static_cast<uint8_t>((f.data[4] >> 6) & 0x03);
+}
+
+static bool checksumValid370(const CanFrame &f)
+{
+    uint16_t sum = 0;
+    for (int i = 0; i < 7; ++i)
+        sum += f.data[i];
+    return static_cast<uint8_t>((sum + 0x73) & 0xFF) == f.data[7];
+}
+
+static uint8_t counterLowNibble(const CanFrame &f)
+{
+    return static_cast<uint8_t>(f.data[6] & 0x0F);
+}
+
+static CanFrame makeDasFrame(uint8_t handsOnState);
+
+static CanFrame makeDasFrameWithState(uint8_t handsOnState, uint8_t apState)
+{
+    CanFrame f = makeDasFrame(handsOnState);
+    f.data[0] = static_cast<uint8_t>(apState & 0x0F);
+    return f;
+}
+
 // Helper: build 0x399 (921 DAS_status) frame. handsOnState → data[5] bits[5:2].
 static CanFrame makeDasFrame(uint8_t handsOnState)
 {
@@ -730,210 +762,137 @@ void test_legacy_health_gate_blocked_when_last_blocked()
 }
 
 // ============================================================
-// Human Torque Replay NAG suppression v3 — opt-in via bionicSteering, LegacyHandler only.
+// TSL6P Mode B v4 — opt-in 0x370 echo burst, LegacyHandler only.
 // ============================================================
 
-void test_legacy_replay_off_no_echo()
+void test_legacy_tsl6p_off_no_echo()
 {
     handler.bionicSteering = false;
-    CanFrame das = makeDasFrame(3);
-    CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);
+    CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
+
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
     handler.handleMessage(epas, mock);
+
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
-void test_legacy_replay_hos3_sends_positive_profile_frame()
+void test_legacy_tsl6p_hos3_sends_first_sequence_frame()
 {
     handler.bionicSteering = true;
-    CanFrame das = makeDasFrame(3);
-    CanFrame epas = makeEpasFrame(0, 0.10, 0x0C); // signed base around +10 raw
-
+    CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
+
+    CanFrame epas = makeEpasFrame(0, 0.20f, 2);
     handler.handleMessage(epas, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    CanFrame e = mock.sent[0];
-    TEST_ASSERT_EQUAL_UINT32(880, e.id);
-    TEST_ASSERT_EQUAL_UINT8(8, e.dlc);
-    int32_t out = decodeEchoTorqueRaw(e) - 0x800;
-    TEST_ASSERT_EQUAL_INT(52, out);
-    DashReactiveDiag d = handler.reactiveDiag();
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::POS_MED, d.lastProfileId);
-    TEST_ASSERT_EQUAL_INT(40, d.lastOutDeltaRaw);
-    TEST_ASSERT_TRUE((e.data[4] & 0xC0) == 0x40);
-    TEST_ASSERT_EQUAL_UINT8(((0x0C + 1) & 0x0F), (e.data[6] & 0x0F));
-    uint16_t sum = 0;
-    for (int i = 0; i < 7; ++i)
-        sum += e.data[i];
-    TEST_ASSERT_EQUAL_UINT8((sum + 0x73) & 0xFF, e.data[7]);
+    TEST_ASSERT_EQUAL_UINT32(880, mock.sent[0].id);
+    TEST_ASSERT_EQUAL_INT(180, decodeEchoTorqueSigned(mock.sent[0]));
+    TEST_ASSERT_EQUAL_UINT8(1, decodeEchoHandsOnLevel(mock.sent[0]));
+    TEST_ASSERT_EQUAL_UINT8(3, counterLowNibble(mock.sent[0]));
+    TEST_ASSERT_TRUE(checksumValid370(mock.sent[0]));
 }
 
-void test_legacy_replay_profile_stops_after_ten_frames_until_observation()
+void test_legacy_tsl6p_sequence_cycles_absolute_torque_targets()
 {
     handler.bionicSteering = true;
-    CanFrame das = makeDasFrame(3);
+    CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
-    for (int i = 0; i < 12; ++i)
-    {
-        CanFrame epas = makeEpasFrame(0, 0.10, (uint8_t)(i & 0x0F));
-        handler.handleMessage(epas, mock);
-    }
 
-    TEST_ASSERT_EQUAL(10, mock.sent.size());
-    DashReactiveDiag d = handler.reactiveDiag();
-    TEST_ASSERT_EQUAL(HumanReplayMode::OBSERVING, d.mode);
+    const int expected[] = {180, 150, -150, -180, 180};
+    for (unsigned i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i)
+    {
+        CanFrame epas = makeEpasFrame(0, 0.20f, static_cast<uint8_t>(i));
+        handler.handleMessage(epas, mock);
+        TEST_ASSERT_EQUAL_INT(expected[i], decodeEchoTorqueSigned(mock.sent[i]));
+        TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((i + 1) & 0x0F), counterLowNibble(mock.sent[i]));
+        TEST_ASSERT_TRUE(checksumValid370(mock.sent[i]));
+    }
 }
 
-void test_legacy_replay_hos_clear_stops_future_echo()
+void test_legacy_tsl6p_burst_off_suppresses_echo()
 {
     handler.bionicSteering = true;
-    CanFrame dasNag = makeDasFrame(3);
-    CanFrame epasNag = makeEpasFrame(0, 0.10, 0x01);
-    handler.handleMessage(dasNag, mock);
-    handler.handleMessage(epasNag, mock);
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(epas, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 
-    CanFrame dasClear = makeDasFrame(2);
-    CanFrame epasClear = makeEpasFrame(0, 0.10, 0x02);
+    handler.nag.onNagSample(3, 1100, true, 6);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_OFF, handler.nag.mode());
+
+    CanFrame epasNext = makeEpasFrame(0, 0.10f, 3);
+    handler.handleMessage(epasNext, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_legacy_tsl6p_hos_clear_stops_future_echo()
+{
+    handler.bionicSteering = true;
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(epas, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+
+    CanFrame dasClear = makeDasFrameWithState(2, 6);
     handler.handleMessage(dasClear, mock);
-    handler.handleMessage(epasClear, mock);
+    CanFrame epasNext = makeEpasFrame(0, 0.10f, 3);
+    handler.handleMessage(epasNext, mock);
+
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT32(1, handler.reactiveDiag().replaySuccesses);
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, handler.nag.mode());
 }
 
-void test_legacy_replay_retry_can_emit_negative_profile()
-{
-    handler.bionicSteering = true;
-    CanFrame dasInitial = makeDasFrame(3);
-    handler.handleMessage(dasInitial, mock);
-    for (int i = 0; i < 10; ++i)
-    {
-        CanFrame epas = makeEpasFrame(0, 0.10, (uint8_t)(i & 0x0F));
-        handler.handleMessage(epas, mock);
-    }
-    CanFrame dasRetry1 = makeDasFrame(3);
-    CanFrame dasRetry2 = makeDasFrame(3);
-    handler.handleMessage(dasRetry1, mock);
-    handler.handleMessage(dasRetry2, mock);
-
-    size_t before = mock.sent.size();
-    CanFrame epasRetry = makeEpasFrame(0, 0.10, 0x0B);
-    handler.handleMessage(epasRetry, mock);
-    TEST_ASSERT_EQUAL(before + 1, mock.sent.size());
-    CanFrame e = mock.sent.back();
-    int32_t out = decodeEchoTorqueRaw(e) - 0x800;
-    TEST_ASSERT_TRUE(out < 0);
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, handler.reactiveDiag().mode);
-}
-
-void test_legacy_replay_checkad_blocks()
+void test_legacy_tsl6p_checkad_blocks_and_cancels()
 {
     handler.bionicSteering = true;
     handler.checkAD = denyAD;
-    CanFrame das = makeDasFrame(3);
-    CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);
-    handler.handleMessage(das, mock);
-    handler.handleMessage(epas, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-
-    handler.checkAD = nullptr;
-    CanFrame epasAfterDeny = makeEpasFrame(0, 0.10, 0x0D);
-    handler.handleMessage(epasAfterDeny, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-    TEST_ASSERT_NOT_EQUAL(HumanReplayMode::REPLAYING, handler.reactiveDiag().mode);
-}
-
-void test_legacy_replay_gate_loss_cancels_not_pauses_profile()
-{
-    handler.bionicSteering = true;
-    CanFrame das = makeDasFrame(3);
+    CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
 
-    CanFrame first = makeEpasFrame(0, 0.10, 0x01);
-    handler.handleMessage(first, mock);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, handler.reactiveDiag().mode);
-
-    handler.checkAD = denyAD;
-    CanFrame blocked = makeEpasFrame(0, 0.10, 0x02);
-    handler.handleMessage(blocked, mock);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_NOT_EQUAL(HumanReplayMode::REPLAYING, handler.reactiveDiag().mode);
-    TEST_ASSERT_FALSE(handler.nag.shouldEcho(0));
-    TEST_ASSERT_EQUAL_STRING("checkAD", handler.reactiveDiag().blockedReason);
-
-    handler.checkAD = nullptr;
-    CanFrame restored = makeEpasFrame(0, 0.10, 0x03);
-    handler.handleMessage(restored, mock);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_FALSE(handler.nag.shouldEcho(0));
-}
-
-static void advanceLegacyReplayCooldown()
-{
-    CanFrame das = makeDasFrame(3);
-    for (int i = 0; i < 3100; ++i)
-        handler.handleMessage(das, mock);
-}
-
-void test_legacy_replay_failed_send_enters_bounded_cooldown_without_sent_diagnostics()
-{
-    handler.bionicSteering = true;
-    mock.sendOk = false;
-    CanFrame das = makeDasFrame(3);
-    CanFrame epas = makeEpasFrame(0, 0.10, 0x0C);
-
-    handler.handleMessage(das, mock);
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
     handler.handleMessage(epas, mock);
 
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)handler.framesSent);
-    TEST_ASSERT_EQUAL_UINT32(0, handler.reactiveDiag().echoSent);
-    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, handler.reactiveDiag().mode);
-    TEST_ASSERT_FALSE(handler.nag.shouldEcho(0));
-    TEST_ASSERT_EQUAL_UINT32(1, handler.reactiveDiag().replayFailures);
-    TEST_ASSERT_EQUAL_STRING("txFail", handler.reactiveDiag().blockedReason);
-
-    mock.sendOk = true;
-    CanFrame retry = makeEpasFrame(0, 0.10, 0x0D);
-    handler.handleMessage(retry, mock);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)handler.framesSent);
-    TEST_ASSERT_EQUAL_UINT32(0, handler.reactiveDiag().echoSent);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, handler.nag.mode());
+    TEST_ASSERT_EQUAL_STRING("toggle", handler.nag.blockedReason());
 }
 
-void test_legacy_persistent_txfail_preserves_attempt_budget_until_max_attempts()
+void test_legacy_tsl6p_ap_inactive_cancels()
 {
     handler.bionicSteering = true;
-    mock.sendOk = false;
-    CanFrame das = makeDasFrame(3);
-
+    CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
-    CanFrame fail1 = makeEpasFrame(0, 0.10, 0x01);
-    handler.handleMessage(fail1, mock);
-    TEST_ASSERT_EQUAL_UINT32(1, handler.reactiveDiag().replayAttempts);
-    TEST_ASSERT_EQUAL_STRING("txFail", handler.reactiveDiag().blockedReason);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
 
-    advanceLegacyReplayCooldown();
-    CanFrame fail2 = makeEpasFrame(0, 0.10, 0x02);
-    handler.handleMessage(fail2, mock);
-    TEST_ASSERT_EQUAL_UINT32(2, handler.reactiveDiag().replayAttempts);
-    TEST_ASSERT_EQUAL(DashHumanReplayProfileId::NEG_MED, handler.reactiveDiag().lastProfileId);
-    TEST_ASSERT_EQUAL_STRING("txFail", handler.reactiveDiag().blockedReason);
+    CanFrame dasInactive = makeDasFrameWithState(3, 2);
+    handler.handleMessage(dasInactive, mock);
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(epas, mock);
 
-    advanceLegacyReplayCooldown();
-    CanFrame fail3 = makeEpasFrame(0, 0.10, 0x03);
-    handler.handleMessage(fail3, mock);
-    TEST_ASSERT_EQUAL_UINT32(3, handler.reactiveDiag().replayAttempts);
-    TEST_ASSERT_TRUE(handler.reactiveDiag().lastProfileId == DashHumanReplayProfileId::POS_STRONG ||
-                     handler.reactiveDiag().lastProfileId == DashHumanReplayProfileId::NEG_STRONG);
-    TEST_ASSERT_EQUAL_STRING("txFail", handler.reactiveDiag().blockedReason);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, handler.nag.mode());
+}
 
-    advanceLegacyReplayCooldown();
-    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, handler.reactiveDiag().mode);
-    TEST_ASSERT_EQUAL_UINT32(3, handler.reactiveDiag().replayAttempts);
-    TEST_ASSERT_EQUAL_STRING("maxAttempts", handler.reactiveDiag().blockedReason);
+void test_legacy_tsl6p_abort_state_blocks_subsequent_echo()
+{
+    handler.bionicSteering = true;
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
+
+    CanFrame dasAbort = makeDasFrameWithState(3, 8);
+    handler.handleMessage(dasAbort, mock);
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(epas, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, handler.nag.mode());
+    TEST_ASSERT_EQUAL_STRING("abort", handler.nag.blockedReason());
 }
 
 int main()
@@ -989,15 +948,14 @@ int main()
 
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
 
-    RUN_TEST(test_legacy_replay_off_no_echo);
-    RUN_TEST(test_legacy_replay_hos3_sends_positive_profile_frame);
-    RUN_TEST(test_legacy_replay_profile_stops_after_ten_frames_until_observation);
-    RUN_TEST(test_legacy_replay_hos_clear_stops_future_echo);
-    RUN_TEST(test_legacy_replay_retry_can_emit_negative_profile);
-    RUN_TEST(test_legacy_replay_checkad_blocks);
-    RUN_TEST(test_legacy_replay_gate_loss_cancels_not_pauses_profile);
-    RUN_TEST(test_legacy_replay_failed_send_enters_bounded_cooldown_without_sent_diagnostics);
-    RUN_TEST(test_legacy_persistent_txfail_preserves_attempt_budget_until_max_attempts);
+    RUN_TEST(test_legacy_tsl6p_off_no_echo);
+    RUN_TEST(test_legacy_tsl6p_hos3_sends_first_sequence_frame);
+    RUN_TEST(test_legacy_tsl6p_sequence_cycles_absolute_torque_targets);
+    RUN_TEST(test_legacy_tsl6p_burst_off_suppresses_echo);
+    RUN_TEST(test_legacy_tsl6p_hos_clear_stops_future_echo);
+    RUN_TEST(test_legacy_tsl6p_checkad_blocks_and_cancels);
+    RUN_TEST(test_legacy_tsl6p_ap_inactive_cancels);
+    RUN_TEST(test_legacy_tsl6p_abort_state_blocks_subsequent_echo);
 
     return UNITY_END();
 }
