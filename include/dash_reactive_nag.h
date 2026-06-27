@@ -113,6 +113,7 @@ struct DashReactiveNagBurst
     uint8_t observeSamples_{0};
     uint8_t attemptEchoSent_{0};
     bool successRecordedForAttempt_{false};
+    bool clearSeenDuringTxFailCooldown_{false};
 
     void init(uint32_t seed)
     {
@@ -141,6 +142,7 @@ struct DashReactiveNagBurst
         observeSamples_ = 0;
         attemptEchoSent_ = 0;
         successRecordedForAttempt_ = false;
+        clearSeenDuringTxFailCooldown_ = false;
     }
 
     void resetCounters()
@@ -153,6 +155,7 @@ struct DashReactiveNagBurst
         episodeAttempts_ = 0;
         attemptEchoSent_ = 0;
         successRecordedForAttempt_ = false;
+        clearSeenDuringTxFailCooldown_ = false;
     }
 
     // Diagnostic test hook: add distinct magic amounts so persistence across
@@ -176,6 +179,7 @@ struct DashReactiveNagBurst
         replayFailures_ = 0;
         episodeAttempts_ = 0;
         successRecordedForAttempt_ = false;
+        clearSeenDuringTxFailCooldown_ = false;
     }
 
     void notifyEchoSent()
@@ -285,6 +289,7 @@ struct DashReactiveNagBurst
         observeSamples_ = 0;
         attemptEchoSent_ = 0;
         successRecordedForAttempt_ = false;
+        clearSeenDuringTxFailCooldown_ = false;
         cooldownReason_ = "";
         blockedReason_ = reason ? reason : "";
     }
@@ -314,6 +319,7 @@ struct DashReactiveNagBurst
         observeSamples_ = 0;
         attemptEchoSent_ = 0;
         successRecordedForAttempt_ = false;
+        clearSeenDuringTxFailCooldown_ = false;
         episodeAttempts_ = nextAttempt;
         replayAttempts_++;
         mode_ = HumanReplayMode::REPLAYING;
@@ -384,6 +390,7 @@ struct DashReactiveNagBurst
                 unsigned long elapsed = nowMs - cooldownStartMs_;
                 if (elapsed < kCooldownMs)
                 {
+                    if (attemptEchoSent_ > 0) clearSeenDuringTxFailCooldown_ = true;
                     recordAttemptSuccess(hos);
                     blockedReason_ = cooldownReason_;
                     return;
@@ -398,6 +405,7 @@ struct DashReactiveNagBurst
             observeSamples_ = 0;
             attemptEchoSent_ = 0;
             successRecordedForAttempt_ = false;
+            clearSeenDuringTxFailCooldown_ = false;
             cooldownReason_ = "";
             blockedReason_ = "";
             return;
@@ -421,9 +429,10 @@ struct DashReactiveNagBurst
             mode_ = HumanReplayMode::IDLE;
             injecting = false;
             profileIndex_ = kProfileLen;
-            if (!txFailCooldown)
+            if (!txFailCooldown || clearSeenDuringTxFailCooldown_)
                 episodeAttempts_ = 0;
             observeSamples_ = 0;
+            clearSeenDuringTxFailCooldown_ = false;
             cooldownReason_ = "";
             blockedReason_ = "";
         }
