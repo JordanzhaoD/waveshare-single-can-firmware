@@ -341,9 +341,13 @@ struct LegacyHandler : public CarManagerBase
             // Human Torque Replay v3 (opt-in via bionicSteering; default OFF): bounded replay delta.
             unsigned long nowMs = dashDiagNowMs();
             bool active = (bool)bionicSteering && APActive;
-            bool useReplay = active && nag.shouldEcho(nowMs);
-            if (checkAD && !checkAD())
-                useReplay = false;
+            bool replayPending = nag.shouldEcho(nowMs);
+            bool checkAdAllowed = !(checkAD && !checkAD());
+            if (replayPending && !active)
+                nag.cancel("toggle");
+            else if (replayPending && !checkAdAllowed)
+                nag.cancel("checkAD");
+            bool useReplay = replayPending && active && checkAdAllowed;
             if (useReplay)
             {
                 CanFrame echo;
@@ -356,7 +360,7 @@ struct LegacyHandler : public CarManagerBase
                 uint8_t d3 = frame.data[3];
                 int signedBase = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
                 nag.noteBaseTorqueRaw(signedBase);
-                int delta = nag.nextReplayDelta(nowMs);
+                int delta = nag.peekReplayDelta(nowMs);
                 nag.applyDeltaToFrame(d2lo, d3, delta);
                 echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) | d2lo);
                 echo.data[3] = d3;
@@ -369,9 +373,13 @@ struct LegacyHandler : public CarManagerBase
                 uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] +
                                echo.data[4] + echo.data[5] + echo.data[6];
                 echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
-                framesSent++;
-                driver.send(echo);
-                nag.notifyEchoSent();
+                bool ok = driver.send(echo);
+                if (ok)
+                {
+                    nag.commitReplayDelta(delta);
+                    framesSent++;
+                    nag.notifyEchoSent();
+                }
             }
         }
         // STW_ACTN_RQ (0x045 = 69): Follow-Distance-Stalk as Source for Profile Mapping

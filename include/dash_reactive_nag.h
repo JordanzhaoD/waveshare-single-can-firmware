@@ -110,6 +110,7 @@ struct DashReactiveNagBurst
     unsigned long cooldownStartMs_{0};
     const char *blockedReason_{""};
     uint8_t observeSamples_{0};
+    uint8_t attemptEchoSent_{0};
 
     void init(uint32_t seed)
     {
@@ -135,6 +136,7 @@ struct DashReactiveNagBurst
         cooldownStartMs_ = 0;
         blockedReason_ = "";
         observeSamples_ = 0;
+        attemptEchoSent_ = 0;
     }
 
     void resetCounters()
@@ -145,6 +147,7 @@ struct DashReactiveNagBurst
         replayFailures_ = 0;
         echoSent_ = 0;
         episodeAttempts_ = 0;
+        attemptEchoSent_ = 0;
     }
 
     // Diagnostic test hook: add distinct magic amounts so persistence across
@@ -169,7 +172,11 @@ struct DashReactiveNagBurst
         episodeAttempts_ = 0;
     }
 
-    void notifyEchoSent() { echoSent_++; }
+    void notifyEchoSent()
+    {
+        echoSent_++;
+        if (attemptEchoSent_ < 0xFF) attemptEchoSent_++;
+    }
     void noteBaseTorqueRaw(int raw) { lastBaseRaw_ = raw; }
 
     bool isNagActive() const { return nagActive_; }
@@ -255,6 +262,16 @@ struct DashReactiveNagBurst
         return peak;
     }
 
+    void cancel(const char *reason)
+    {
+        mode_ = HumanReplayMode::IDLE;
+        injecting = false;
+        profileIndex_ = kProfileLen;
+        observeSamples_ = 0;
+        attemptEchoSent_ = 0;
+        blockedReason_ = reason ? reason : "";
+    }
+
     void startReplay(unsigned long nowMs)
     {
         if (episodeAttempts_ >= kMaxAttempts)
@@ -278,6 +295,7 @@ struct DashReactiveNagBurst
         lastOutDeltaRaw_ = 0;
         profileIndex_ = 0;
         observeSamples_ = 0;
+        attemptEchoSent_ = 0;
         episodeAttempts_ = nextAttempt;
         replayAttempts_++;
         mode_ = HumanReplayMode::REPLAYING;
@@ -295,18 +313,29 @@ struct DashReactiveNagBurst
         replayFailures_++;
     }
 
-    int nextReplayDelta(unsigned long /*nowMs*/)
+    int peekReplayDelta(unsigned long /*nowMs*/) const
     {
         if (!shouldEcho(0)) return 0;
-        const int16_t *profile = currentProfile();
-        int delta = profile[profileIndex_++];
-        lastOutDeltaRaw_ = delta;
+        return currentProfile()[profileIndex_];
+    }
+
+    void commitReplayDelta(int deltaRaw)
+    {
+        if (!shouldEcho(0)) return;
+        lastOutDeltaRaw_ = deltaRaw;
+        profileIndex_++;
         if (profileIndex_ >= kProfileLen)
         {
             mode_ = HumanReplayMode::OBSERVING;
             injecting = false;
             observeSamples_ = 0;
         }
+    }
+
+    int nextReplayDelta(unsigned long nowMs)
+    {
+        int delta = peekReplayDelta(nowMs);
+        commitReplayDelta(delta);
         return delta;
     }
 
@@ -324,7 +353,7 @@ struct DashReactiveNagBurst
         if (hos <= 2)
         {
             nagActive_ = false;
-            if (mode_ == HumanReplayMode::REPLAYING || mode_ == HumanReplayMode::OBSERVING)
+            if ((mode_ == HumanReplayMode::REPLAYING || mode_ == HumanReplayMode::OBSERVING) && attemptEchoSent_ > 0)
             {
                 replaySuccesses_++;
                 lastHosAfter_ = hos;
@@ -334,6 +363,7 @@ struct DashReactiveNagBurst
             profileIndex_ = kProfileLen;
             episodeAttempts_ = 0;
             observeSamples_ = 0;
+            attemptEchoSent_ = 0;
             blockedReason_ = "";
             return;
         }
@@ -362,11 +392,7 @@ struct DashReactiveNagBurst
 
         if (!active)
         {
-            mode_ = HumanReplayMode::IDLE;
-            injecting = false;
-            profileIndex_ = kProfileLen;
-            observeSamples_ = 0;
-            blockedReason_ = "toggle";
+            cancel("toggle");
             return;
         }
 

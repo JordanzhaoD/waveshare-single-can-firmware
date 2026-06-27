@@ -158,7 +158,22 @@ void test_cooldown_clear_does_not_count_success()
     TEST_ASSERT_EQUAL_UINT32(1, n.replayFailures());
 }
 
-void test_hos_clear_records_success_and_stops_replay()
+void test_hos_clear_before_emitted_echo_does_not_count_success()
+{
+    DashReactiveNagBurst n;
+    n.init(2);
+    n.noteBaseTorqueRaw(0);
+    n.onNagSample(3, 100, true);
+    TEST_ASSERT_EQUAL(HumanReplayMode::REPLAYING, n.mode());
+    TEST_ASSERT_TRUE(n.shouldEcho(100));
+
+    n.onNagSample(2, 180, true);
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(180));
+    TEST_ASSERT_EQUAL_UINT32(0, n.replaySuccesses());
+}
+
+void test_hos_clear_after_emitted_echo_counts_success_and_stops_replay()
 {
     DashReactiveNagBurst n;
     n.init(2);
@@ -166,6 +181,7 @@ void test_hos_clear_records_success_and_stops_replay()
     n.onNagSample(3, 100, true);
     TEST_ASSERT_TRUE(n.shouldEcho(100));
     TEST_ASSERT_EQUAL_INT(40, n.nextReplayDelta(100));
+    n.notifyEchoSent();
 
     n.onNagSample(2, 180, true);
     TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
@@ -243,7 +259,8 @@ int main()
     RUN_TEST(test_third_attempt_uses_strong_profile_then_cooldown);
     RUN_TEST(test_active_false_preserves_attempt_budget_during_continuous_nag);
     RUN_TEST(test_cooldown_clear_does_not_count_success);
-    RUN_TEST(test_hos_clear_records_success_and_stops_replay);
+    RUN_TEST(test_hos_clear_before_emitted_echo_does_not_count_success);
+    RUN_TEST(test_hos_clear_after_emitted_echo_counts_success_and_stops_replay);
     RUN_TEST(test_apply_delta_to_legacy_torque_supports_negative_and_clamps);
     RUN_TEST(test_diag_reports_v3_fields);
     return UNITY_END();

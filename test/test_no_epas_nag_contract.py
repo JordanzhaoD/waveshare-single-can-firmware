@@ -87,11 +87,18 @@ class NoEpasNagContract(unittest.TestCase):
             "reactive echo must be gated on bionicSteering + APActive",
         )
         self.assertIn(
-            "bool useReplay = active && nag.shouldEcho(nowMs)",
+            "bool replayPending = nag.shouldEcho(nowMs)",
             self.handlers,
-            "reactive echo must be gated on active + shouldEcho",
+            "reactive echo must first detect pending replay",
         )
-        self.assertIn("if (checkAD && !checkAD())", self.handlers, "reactive echo must be gated on checkAD")
+        self.assertIn(
+            "bool useReplay = replayPending && active && checkAdAllowed",
+            self.handlers,
+            "reactive echo must be gated on pending replay + active + checkAD",
+        )
+        self.assertIn("bool checkAdAllowed = !(checkAD && !checkAD())", self.handlers, "reactive echo must be gated on checkAD")
+        self.assertIn("nag.cancel(\"toggle\")", self.handlers, "active/toggle gate loss must cancel replay")
+        self.assertIn("nag.cancel(\"checkAD\")", self.handlers, "checkAD gate loss must cancel replay")
 
         # LegacyHandler 0x399 NAG detection reads byte5 bits[5:2] and does not transmit/mutate 0x399.
         block_start = self.legacy.index("if (frame.id == 921)")
@@ -156,5 +163,7 @@ class HumanTorqueReplayV3Contract(unittest.TestCase):
         self.assertIn("APActive", block)
         self.assertIn("checkAD", block)
         self.assertIn("nag.shouldEcho", block)
-        self.assertIn("nag.nextReplayDelta", block)
+        self.assertIn("nag.peekReplayDelta", block)
+        self.assertIn("nag.commitReplayDelta", block)
+        self.assertIn("nag.cancel", block)
         self.assertIn("(frame.data[4] & 0x3F) | 0x40", block)
