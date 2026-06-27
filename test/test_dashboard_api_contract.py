@@ -1115,7 +1115,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(can921)
         body = can921.group(0)
         self.assertIn('fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);', body)
-        self.assertIn('APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));', body)
+        self.assertIn('uint8_t apState = readDASAutopilotStatus(frame);', body)
+        self.assertIn('APActive = isDASAutopilotActive(apState);', body)
+        self.assertIn('nag.onNagSample(hos, dashDiagNowMs(), active, apState);', body)
 
     def test_legacy_simple_offset_helper_reuses_three_mode_state(self) -> None:
         """Legacy simple offset should reuse the speed page algorithm and clamp to byte5 wire range."""
