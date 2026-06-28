@@ -350,6 +350,21 @@ void test_expired_abort_cooldown_then_inactive_gate_reports_current_reason()
     TEST_ASSERT_FALSE(n.shouldEcho(3201));
 }
 
+void test_expired_cooldown_then_inactive_370_advance_reports_current_reason()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+    n.failReplayTx(200);
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+
+    n.advance(3201, false, "checkAD");
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_EQUAL_STRING("checkAD", n.blockedReason());
+    TEST_ASSERT_EQUAL_UINT32(0, n.cooldownRemainMs(3201));
+    TEST_ASSERT_FALSE(n.shouldEcho(3201));
+}
+
 void test_abort_state_with_hos_clear_still_enters_cooldown_and_blocks_restart()
 {
     DashReactiveNagBurst n;
@@ -475,6 +490,7 @@ int main()
     RUN_TEST(test_tx_fail_cooldown_survives_later_checkad_gate_loss);
     RUN_TEST(test_expired_tx_fail_cooldown_then_inactive_gate_reports_current_reason);
     RUN_TEST(test_expired_abort_cooldown_then_inactive_gate_reports_current_reason);
+    RUN_TEST(test_expired_cooldown_then_inactive_370_advance_reports_current_reason);
     RUN_TEST(test_abort_state_with_hos_clear_still_enters_cooldown_and_blocks_restart);
     RUN_TEST(test_delayed_sample_advances_to_scheduled_burst_off_boundary);
     RUN_TEST(test_delayed_sample_advances_through_off_to_next_on_boundary);

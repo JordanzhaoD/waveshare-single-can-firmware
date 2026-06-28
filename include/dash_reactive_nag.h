@@ -217,6 +217,7 @@ struct DashReactiveNagBurst
 
     void advance(unsigned long nowMs, bool gatesActive = true, const char *gateReason = "toggle")
     {
+        retireExpiredCooldown(nowMs);
         if (!gatesActive)
         {
             if (nagActive_ || mode_ == HumanReplayMode::BURST_ON || mode_ == HumanReplayMode::BURST_OFF)
