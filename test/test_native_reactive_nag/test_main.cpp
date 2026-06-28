@@ -37,6 +37,39 @@ void test_inactive_gate_records_toggle_and_stays_idle()
     TEST_ASSERT_EQUAL_STRING("toggle", n.blockedReason());
 }
 
+void test_idle_hos_clear_is_diagnosed_separately_from_on_off_clear()
+{
+    DashReactiveNagBurst n;
+    n.init(12345);
+
+    n.onNagSample(2, 100, true, 6);
+
+    DashReactiveDiag d = n.diag(100);
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, d.mode);
+    TEST_ASSERT_EQUAL_UINT32(0, d.hosClearEvents);
+    TEST_ASSERT_EQUAL_UINT32(0, d.hosClearDuringOn);
+    TEST_ASSERT_EQUAL_UINT32(0, d.hosClearDuringOff);
+    TEST_ASSERT_EQUAL_UINT32(1, d.hosClearWhileIdle);
+    TEST_ASSERT_EQUAL_UINT32(0, d.hosClearWhileCooldown);
+}
+
+void test_active_cooldown_hos_clear_is_diagnosed_separately_from_on_off_clear()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+    n.failReplayTx(200);
+
+    n.onNagSample(2, 500, true, 6);
+
+    DashReactiveDiag d = n.diag(500);
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, d.mode);
+    TEST_ASSERT_EQUAL_UINT32(0, d.hosClearEvents);
+    TEST_ASSERT_EQUAL_UINT32(0, d.hosClearDuringOn);
+    TEST_ASSERT_EQUAL_UINT32(0, d.hosClearDuringOff);
+    TEST_ASSERT_EQUAL_UINT32(0, d.hosClearWhileIdle);
+    TEST_ASSERT_EQUAL_UINT32(1, d.hosClearWhileCooldown);
+}
+
 void test_hos3_active_enters_burst_on_for_1000ms()
 {
     DashReactiveNagBurst n;
@@ -161,6 +194,38 @@ void test_delayed_hos_clear_advances_phase_before_classifying_clear()
     TEST_ASSERT_EQUAL_UINT32(1, n.hosClearDuringOff());
 }
 
+void test_delayed_hos_clear_at_next_on_boundary_counts_prior_off_clear()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    n.onNagSample(2, 2600, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(2600));
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearEvents());
+    TEST_ASSERT_EQUAL_UINT32(0, n.hosClearDuringOn());
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearDuringOff());
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstSessions());
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstOnEntries());
+}
+
+void test_delayed_hos_clear_after_next_on_boundary_counts_prior_off_clear()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    n.onNagSample(2, 2601, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(2601));
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearEvents());
+    TEST_ASSERT_EQUAL_UINT32(0, n.hosClearDuringOn());
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearDuringOff());
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstSessions());
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstOnEntries());
+}
+
 void test_gate_loss_cancels_burst_with_reason()
 {
     DashReactiveNagBurst n;
@@ -253,6 +318,36 @@ void test_tx_fail_cooldown_survives_later_checkad_gate_loss()
     TEST_ASSERT_EQUAL_STRING("txFail", n.blockedReason());
     TEST_ASSERT_FALSE(n.shouldEcho(500));
     TEST_ASSERT_TRUE(n.cooldownRemainMs(500) > 0);
+}
+
+void test_expired_tx_fail_cooldown_then_inactive_gate_reports_current_reason()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+    n.failReplayTx(200);
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+
+    n.onNagSample(3, 3201, false, 6, "checkAD");
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_EQUAL_STRING("checkAD", n.blockedReason());
+    TEST_ASSERT_EQUAL_UINT32(0, n.cooldownRemainMs(3201));
+    TEST_ASSERT_FALSE(n.shouldEcho(3201));
+}
+
+void test_expired_abort_cooldown_then_inactive_gate_reports_current_reason()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+    n.onNagSample(3, 200, true, 8);
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+
+    n.onNagSample(3, 3201, false, 6, "checkAD");
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_EQUAL_STRING("checkAD", n.blockedReason());
+    TEST_ASSERT_EQUAL_UINT32(0, n.cooldownRemainMs(3201));
+    TEST_ASSERT_FALSE(n.shouldEcho(3201));
 }
 
 void test_abort_state_with_hos_clear_still_enters_cooldown_and_blocks_restart()
@@ -360,6 +455,8 @@ int main()
     UNITY_BEGIN();
     RUN_TEST(test_hos_clear_does_not_start_burst);
     RUN_TEST(test_inactive_gate_records_toggle_and_stays_idle);
+    RUN_TEST(test_idle_hos_clear_is_diagnosed_separately_from_on_off_clear);
+    RUN_TEST(test_active_cooldown_hos_clear_is_diagnosed_separately_from_on_off_clear);
     RUN_TEST(test_hos3_active_enters_burst_on_for_1000ms);
     RUN_TEST(test_burst_on_transitions_to_burst_off_after_1000ms);
     RUN_TEST(test_burst_off_returns_to_burst_on_after_1500ms_if_nag_persists);
@@ -368,12 +465,16 @@ int main()
     RUN_TEST(test_hos_clear_during_burst_on_counts_on_clear_and_stops);
     RUN_TEST(test_hos_clear_during_burst_off_counts_off_clear_and_stops);
     RUN_TEST(test_delayed_hos_clear_advances_phase_before_classifying_clear);
+    RUN_TEST(test_delayed_hos_clear_at_next_on_boundary_counts_prior_off_clear);
+    RUN_TEST(test_delayed_hos_clear_after_next_on_boundary_counts_prior_off_clear);
     RUN_TEST(test_gate_loss_cancels_burst_with_reason);
     RUN_TEST(test_repeated_gate_loss_after_cancel_counts_once_and_does_not_restart);
     RUN_TEST(test_abort_state_enters_cooldown_and_blocks_echo);
     RUN_TEST(test_abort_cooldown_expires_to_new_burst_if_nag_persists);
     RUN_TEST(test_abort_cooldown_survives_later_checkad_gate_loss);
     RUN_TEST(test_tx_fail_cooldown_survives_later_checkad_gate_loss);
+    RUN_TEST(test_expired_tx_fail_cooldown_then_inactive_gate_reports_current_reason);
+    RUN_TEST(test_expired_abort_cooldown_then_inactive_gate_reports_current_reason);
     RUN_TEST(test_abort_state_with_hos_clear_still_enters_cooldown_and_blocks_restart);
     RUN_TEST(test_delayed_sample_advances_to_scheduled_burst_off_boundary);
     RUN_TEST(test_delayed_sample_advances_through_off_to_next_on_boundary);

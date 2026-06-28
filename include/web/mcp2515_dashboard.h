@@ -2465,6 +2465,8 @@ static void handleStatus()
         j += R"(,"hosClearEvents":)" + String(d.hosClearEvents);
         j += R"(,"hosClearDuringOn":)" + String(d.hosClearDuringOn);
         j += R"(,"hosClearDuringOff":)" + String(d.hosClearDuringOff);
+        j += R"(,"hosClearWhileIdle":)" + String(d.hosClearWhileIdle);
+        j += R"(,"hosClearWhileCooldown":)" + String(d.hosClearWhileCooldown);
         j += R"(,"abortBlocks":)" + String(d.abortBlocks);
         j += R"(,"gateBlocks":)" + String(d.gateBlocks);
         j += R"(,"txFailures":)" + String(d.txFailures);
@@ -5502,9 +5504,10 @@ static void dashSerialRunCommand(char *cmd)
                           (unsigned long)d.burstSessions, (unsigned long)d.burstOnEntries,
                           (unsigned long)d.burstOffEntries, (unsigned long)d.burstFramesSent,
                           (unsigned long)d.burstCyclesCompleted);
-            Serial.printf("hosClearEvents=%lu hosClearDuringOn=%lu hosClearDuringOff=%lu abortBlocks=%lu gateBlocks=%lu txFailures=%lu\n",
+            Serial.printf("hosClearEvents=%lu hosClearDuringOn=%lu hosClearDuringOff=%lu hosClearWhileIdle=%lu hosClearWhileCooldown=%lu abortBlocks=%lu gateBlocks=%lu txFailures=%lu\n",
                           (unsigned long)d.hosClearEvents, (unsigned long)d.hosClearDuringOn,
-                          (unsigned long)d.hosClearDuringOff, (unsigned long)d.abortBlocks,
+                          (unsigned long)d.hosClearDuringOff, (unsigned long)d.hosClearWhileIdle,
+                          (unsigned long)d.hosClearWhileCooldown, (unsigned long)d.abortBlocks,
                           (unsigned long)d.gateBlocks, (unsigned long)d.txFailures);
             Serial.printf("replayAttempts=%lu replaySuccesses=%lu replayFailures=%lu lastProfileId=%d lastProfileDir=%d\n",
                           (unsigned long)d.replayAttempts, (unsigned long)d.replaySuccesses,

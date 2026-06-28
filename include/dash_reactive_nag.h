@@ -78,6 +78,8 @@ struct DashReactiveDiag
     uint32_t hosClearEvents{0};
     uint32_t hosClearDuringOn{0};
     uint32_t hosClearDuringOff{0};
+    uint32_t hosClearWhileIdle{0};
+    uint32_t hosClearWhileCooldown{0};
     uint32_t abortBlocks{0};
     uint32_t gateBlocks{0};
     uint32_t txFailures{0};
@@ -114,6 +116,8 @@ struct DashReactiveNagBurst
     uint32_t hosClearEvents_{0};
     uint32_t hosClearDuringOn_{0};
     uint32_t hosClearDuringOff_{0};
+    uint32_t hosClearWhileIdle_{0};
+    uint32_t hosClearWhileCooldown_{0};
     uint32_t abortBlocks_{0};
     uint32_t gateBlocks_{0};
     uint32_t txFailures_{0};
@@ -162,6 +166,8 @@ struct DashReactiveNagBurst
         hosClearEvents_ = 0;
         hosClearDuringOn_ = 0;
         hosClearDuringOff_ = 0;
+        hosClearWhileIdle_ = 0;
+        hosClearWhileCooldown_ = 0;
         abortBlocks_ = 0;
         gateBlocks_ = 0;
         txFailures_ = 0;
@@ -188,6 +194,8 @@ struct DashReactiveNagBurst
         burstCyclesCompleted_ = 0;
         hosClearDuringOn_ = 0;
         hosClearDuringOff_ = 0;
+        hosClearWhileIdle_ = 0;
+        hosClearWhileCooldown_ = 0;
         abortBlocks_ = 0;
         gateBlocks_ = 0;
         txFailures_ = 0;
@@ -246,7 +254,7 @@ struct DashReactiveNagBurst
         }
     }
 
-    void advanceForHosClear(unsigned long nowMs)
+    HumanReplayMode classifyHosClearPhase(unsigned long nowMs)
     {
         if (mode_ == HumanReplayMode::BURST_ON)
         {
@@ -256,13 +264,21 @@ struct DashReactiveNagBurst
         }
         if (mode_ == HumanReplayMode::BURST_OFF)
         {
-            unsigned long boundary = phaseStartMs_ + kBurstOffMs;
-            if ((nowMs - boundary) < 0x80000000UL)
-            {
-                mode_ = HumanReplayMode::IDLE;
-                injecting = false;
-                blockedReason_ = "";
-            }
+            // HOS<=2 at or just after the OFF boundary is conservatively
+            // attributed to the prior rest window. Do not start a new ON phase
+            // unless a later HOS>2 sample proves the nag persisted.
+            return HumanReplayMode::BURST_OFF;
+        }
+        return mode_;
+    }
+
+    void retireExpiredCooldown(unsigned long nowMs)
+    {
+        if (mode_ == HumanReplayMode::COOLDOWN && cooldownRemainMs(nowMs) == 0)
+        {
+            mode_ = HumanReplayMode::IDLE;
+            injecting = false;
+            blockedReason_ = "";
         }
     }
     int amplitudeCap() const { return kMaxSignedOutRaw; }
@@ -277,6 +293,8 @@ struct DashReactiveNagBurst
     uint32_t hosClearEvents() const { return hosClearEvents_; }
     uint32_t hosClearDuringOn() const { return hosClearDuringOn_; }
     uint32_t hosClearDuringOff() const { return hosClearDuringOff_; }
+    uint32_t hosClearWhileIdle() const { return hosClearWhileIdle_; }
+    uint32_t hosClearWhileCooldown() const { return hosClearWhileCooldown_; }
     uint32_t abortBlocks() const { return abortBlocks_; }
     uint32_t gateBlocks() const { return gateBlocks_; }
     uint32_t txFailures() const { return txFailures_; }
@@ -459,12 +477,24 @@ struct DashReactiveNagBurst
     // Backward-compatible name used by LegacyHandler's 0x370 echo path.
     int computeHold(unsigned long nowMs) { return nextReplayDelta(nowMs); }
 
-    void recordHosClear(uint8_t hos)
+    void recordHosClear(uint8_t hos, HumanReplayMode clearPhase)
     {
-        if (mode_ == HumanReplayMode::BURST_ON)
+        if (clearPhase == HumanReplayMode::BURST_ON)
             hosClearDuringOn_++;
-        else if (mode_ == HumanReplayMode::BURST_OFF)
+        else if (clearPhase == HumanReplayMode::BURST_OFF)
             hosClearDuringOff_++;
+        else if (clearPhase == HumanReplayMode::COOLDOWN)
+        {
+            hosClearWhileCooldown_++;
+            lastHosAfter_ = hos;
+            return;
+        }
+        else if (clearPhase == HumanReplayMode::IDLE)
+        {
+            hosClearWhileIdle_++;
+            lastHosAfter_ = hos;
+            return;
+        }
         else
             return;
         hosClearEvents_++;
@@ -493,17 +523,19 @@ struct DashReactiveNagBurst
             return;
         }
 
+        retireExpiredCooldown(nowMs);
+
         if (hos <= 2)
         {
             if (txFailCooldownActive(nowMs) || abortCooldownActive(nowMs))
             {
                 nagActive_ = false;
-                lastHosAfter_ = hos;
+                recordHosClear(hos, HumanReplayMode::COOLDOWN);
                 return;
             }
-            advanceForHosClear(nowMs);
+            HumanReplayMode clearPhase = classifyHosClearPhase(nowMs);
             nagActive_ = false;
-            recordHosClear(hos);
+            recordHosClear(hos, clearPhase);
             mode_ = HumanReplayMode::IDLE;
             injecting = false;
             blockedReason_ = "";
@@ -590,6 +622,8 @@ struct DashReactiveNagBurst
         d.hosClearEvents = hosClearEvents_;
         d.hosClearDuringOn = hosClearDuringOn_;
         d.hosClearDuringOff = hosClearDuringOff_;
+        d.hosClearWhileIdle = hosClearWhileIdle_;
+        d.hosClearWhileCooldown = hosClearWhileCooldown_;
         d.abortBlocks = abortBlocks_;
         d.gateBlocks = gateBlocks_;
         d.txFailures = txFailures_;
