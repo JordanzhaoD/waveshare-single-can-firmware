@@ -3,6 +3,7 @@
 // dash_epas_late_echo.h — pure EPAS-faithful 0x370 late echo core.
 // Header-only and native-testable: no hardware I/O, no immediate sends.
 
+#include <climits>
 #include <cstdint>
 #include <cstring>
 
@@ -72,8 +73,13 @@ public:
 
             if (jitterMs_ > kMaxJitterMs)
                 markUnstable("cadenceUnstable");
-            else if (cleanFrames_ < 255)
-                cleanFrames_++;
+            else
+            {
+                if (cleanFrames_ < 255)
+                    cleanFrames_++;
+                if (cleanFrames_ >= 8)
+                    reason_ = "";
+            }
         }
 
         lastCounter_ = counter;
@@ -101,7 +107,11 @@ private:
     void markUnstable(const char *reason)
     {
         reason_ = reason;
-        cleanFrames_ = 0;
+        cleanFrames_ = 1;
+        haveStep_ = false;
+        intervals_ = 0;
+        periodMs_ = 0;
+        jitterMs_ = 0;
     }
 
     bool haveLast_{false};
@@ -226,6 +236,13 @@ public:
             return;
         }
 
+        if (mode_ == LateEchoModeState::COOLDOWN)
+        {
+            pendingEcho_ = false;
+            builtPending_ = false;
+            return;
+        }
+
         if (hos <= 2)
         {
             cancel("hosClear");
@@ -256,35 +273,42 @@ public:
         retireCooldown(nowMs);
         advanceBurst(nowMs);
 
+        if (!enabled_ || !gatesActive)
+        {
+            cadence_.onRx370(frame, nowMs);
+            cancel(!enabled_ ? "disabled" : "gate");
+            return;
+        }
+
+        if (mode_ != LateEchoModeState::BURST_ON)
+        {
+            cadence_.onRx370(frame, nowMs);
+            if (pendingEcho_)
+                cancel(mode_ == LateEchoModeState::COOLDOWN ? blockedReason_ : "inactive");
+            return;
+        }
+
         if (pendingEcho_)
         {
-            if (nowMs < pendingSendAtMs_)
+            if (timeBefore(nowMs, pendingSendAtMs_))
             {
                 pendingEcho_ = false;
+                builtPending_ = false;
                 lateWindowMissed_++;
                 blockedReason_ = "lateWindowMissed";
                 cadence_.onRx370(frame, nowMs);
                 return;
             }
-            if (nowMs > pendingSendAtMs_ + kMaxLatenessMs)
+            if (!inDueWindow(nowMs))
             {
                 pendingEcho_ = false;
+                builtPending_ = false;
                 droppedLateEchoes_++;
                 blockedReason_ = "lateWindowMissed";
             }
         }
 
         cadence_.onRx370(frame, nowMs);
-
-        if (!enabled_ || !gatesActive)
-        {
-            if (!gatesActive)
-                blockedReason_ = "gate";
-            return;
-        }
-
-        if (mode_ != LateEchoModeState::BURST_ON)
-            return;
 
         if (!cadence_.lateEchoEligible(nowMs))
         {
@@ -293,30 +317,37 @@ public:
         }
 
         pendingEcho_ = true;
+        builtPending_ = false;
         pendingSendAtMs_ = cadence_.predictedNextRxMs() - kLateEchoLeadMs;
         blockedReason_ = "";
     }
 
     bool due(unsigned long nowMs) const
     {
-        return pendingEcho_ && nowMs >= pendingSendAtMs_ && nowMs <= pendingSendAtMs_ + kMaxLatenessMs;
+        return pendingEcho_ && !builtPending_ && inDueWindow(nowMs);
     }
 
     bool buildDueFrame(unsigned long nowMs, CanFrame &out)
     {
         if (!due(nowMs))
             return false;
-        return DashEpasFaithfulEncoder::build(cadence_.lastSource(), cadence_.expectedNextCounter(), DashEpasFaithfulEncoder::kMaxTorqueRaw, out);
+        if (!DashEpasFaithfulEncoder::build(cadence_.lastSource(), cadence_.expectedNextCounter(), DashEpasFaithfulEncoder::kMaxTorqueRaw, out))
+            return false;
+        builtPending_ = true;
+        return true;
     }
 
     void notifyTxResult(bool ok, unsigned long nowMs)
     {
         if (ok)
         {
-            sentLateEchoes_++;
-            if (nowMs >= cadence_.lastRxMs())
+            if (pendingEcho_ && builtPending_)
+            {
+                sentLateEchoes_++;
                 lastRxToTxMs_ = static_cast<int>(nowMs - cadence_.lastRxMs());
+            }
             pendingEcho_ = false;
+            builtPending_ = false;
             blockedReason_ = "";
             return;
         }
@@ -332,7 +363,7 @@ public:
         d.mode = mode_;
         d.pendingEcho = pendingEcho_;
         d.pendingSendAtMs = pendingSendAtMs_;
-        d.cooldownRemainMs = (mode_ == LateEchoModeState::COOLDOWN && cooldownUntilMs_ > nowMs) ? (cooldownUntilMs_ - nowMs) : 0;
+        d.cooldownRemainMs = cooldownRemain(nowMs);
         d.phaseRemainMs = phaseRemain(nowMs);
         d.blockedReason = blockedReason_;
         d.cadenceStable = cadence_.stable();
@@ -357,6 +388,7 @@ private:
     void cancel(const char *reason)
     {
         pendingEcho_ = false;
+        builtPending_ = false;
         blockedReason_ = reason ? reason : "";
     }
 
@@ -370,6 +402,7 @@ private:
     void enterBurstOff(unsigned long nowMs)
     {
         pendingEcho_ = false;
+        builtPending_ = false;
         mode_ = LateEchoModeState::BURST_OFF;
         phaseStartMs_ = nowMs;
     }
@@ -377,27 +410,52 @@ private:
     void enterCooldown(unsigned long nowMs, unsigned long durationMs, const char *reason)
     {
         pendingEcho_ = false;
+        builtPending_ = false;
         mode_ = LateEchoModeState::COOLDOWN;
-        cooldownUntilMs_ = nowMs + durationMs;
+        cooldownStartMs_ = nowMs;
+        cooldownDurationMs_ = durationMs;
         blockedReason_ = reason ? reason : "";
     }
 
     void retireCooldown(unsigned long nowMs)
     {
-        if (mode_ == LateEchoModeState::COOLDOWN && nowMs >= cooldownUntilMs_)
+        if (mode_ == LateEchoModeState::COOLDOWN && elapsedSince(cooldownStartMs_, nowMs) >= cooldownDurationMs_)
         {
             mode_ = LateEchoModeState::IDLE;
-            cooldownUntilMs_ = 0;
+            cooldownDurationMs_ = 0;
             if (blockedReason_ && (std::strcmp(blockedReason_, "abort") == 0 || std::strcmp(blockedReason_, "txFail") == 0))
                 blockedReason_ = "";
         }
     }
 
+    static unsigned long elapsedSince(unsigned long startMs, unsigned long nowMs)
+    {
+        return nowMs - startMs;
+    }
+
+    static bool timeBefore(unsigned long candidateMs, unsigned long referenceMs)
+    {
+        return candidateMs != referenceMs && (referenceMs - candidateMs) < (ULONG_MAX / 2UL + 1UL);
+    }
+
+    bool inDueWindow(unsigned long nowMs) const
+    {
+        return elapsedSince(pendingSendAtMs_, nowMs) <= kMaxLatenessMs;
+    }
+
+    unsigned long cooldownRemain(unsigned long nowMs) const
+    {
+        if (mode_ != LateEchoModeState::COOLDOWN)
+            return 0;
+        const unsigned long elapsed = elapsedSince(cooldownStartMs_, nowMs);
+        return elapsed < cooldownDurationMs_ ? (cooldownDurationMs_ - elapsed) : 0;
+    }
+
     void advanceBurst(unsigned long nowMs)
     {
-        if (mode_ == LateEchoModeState::BURST_ON && nowMs - phaseStartMs_ >= kBurstOnMs)
+        if (mode_ == LateEchoModeState::BURST_ON && elapsedSince(phaseStartMs_, nowMs) >= kBurstOnMs)
             enterBurstOff(phaseStartMs_ + kBurstOnMs);
-        if (mode_ == LateEchoModeState::BURST_OFF && nowMs - phaseStartMs_ >= kBurstOffMs)
+        if (mode_ == LateEchoModeState::BURST_OFF && elapsedSince(phaseStartMs_, nowMs) >= kBurstOffMs)
             enterBurstOn(phaseStartMs_ + kBurstOffMs);
     }
 
@@ -420,9 +478,11 @@ private:
     LateEchoModeState mode_{LateEchoModeState::IDLE};
     DashEpasCadenceTracker cadence_{};
     bool pendingEcho_{false};
+    bool builtPending_{false};
     unsigned long pendingSendAtMs_{0};
     unsigned long phaseStartMs_{0};
-    unsigned long cooldownUntilMs_{0};
+    unsigned long cooldownStartMs_{0};
+    unsigned long cooldownDurationMs_{0};
     const char *blockedReason_{""};
     uint32_t sentLateEchoes_{0};
     uint32_t lateWindowMissed_{0};

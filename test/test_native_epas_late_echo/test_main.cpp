@@ -1,3 +1,4 @@
+#include <climits>
 #include <unity.h>
 #include "dash_epas_late_echo.h"
 
@@ -226,6 +227,124 @@ void test_abort_state_cancels_pending_and_enters_cooldown()
     TEST_ASSERT_EQUAL_STRING("abort", d.blockedReason);
 }
 
+void test_hos_clear_during_abort_cooldown_preserves_cooldown()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(8, 3, 1000, true, nullptr);
+
+    n.onDasStatus(6, 2, 1100, true, nullptr);
+
+    DashEpasLateEchoDiag d = n.diag(1100);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, d.mode);
+    TEST_ASSERT_EQUAL_STRING("abort", d.blockedReason);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, d.cooldownRemainMs);
+}
+
+void test_gate_loss_during_tx_fail_cooldown_preserves_cooldown()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.notifyTxResult(false, 2000);
+
+    n.onDasStatus(6, 3, 2100, false, "gateLost");
+
+    DashEpasLateEchoDiag d = n.diag(2100);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, d.mode);
+    TEST_ASSERT_EQUAL_STRING("txFail", d.blockedReason);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, d.cooldownRemainMs);
+}
+
+void test_gate_loss_on_epas_rx_cancels_pending_echo()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+    DashEpasLateEchoDiag before = n.diag(1280);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+
+    n.onEpasFrame(makeEpasFrame(8), before.pendingSendAtMs - 1, false);
+
+    CanFrame out = {};
+    DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_EQUAL_STRING("gate", after.blockedReason);
+    TEST_ASSERT_FALSE(n.buildDueFrame(before.pendingSendAtMs, out));
+}
+
+void test_due_window_handles_unsigned_long_rollover()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    const unsigned long lastRx = ULONG_MAX - 37UL;
+    const unsigned long firstRx = lastRx - 7UL * 40UL;
+    n.onDasStatus(6, 3, firstRx - 100UL, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), firstRx + i * 40UL, true);
+
+    const unsigned long dueAt = ULONG_MAX;
+    DashEpasLateEchoDiag d = n.diag(lastRx);
+    TEST_ASSERT_TRUE(d.pendingEcho);
+    TEST_ASSERT_EQUAL_UINT64(dueAt, d.pendingSendAtMs);
+    TEST_ASSERT_FALSE(n.due(dueAt - 1UL));
+    TEST_ASSERT_TRUE(n.due(dueAt));
+    TEST_ASSERT_TRUE(n.due(0UL));
+    TEST_ASSERT_TRUE(n.due(1UL));
+    TEST_ASSERT_FALSE(n.due(2UL));
+}
+
+void test_cooldown_expiry_handles_unsigned_long_rollover()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    const unsigned long start = ULONG_MAX - 1000UL;
+    n.onDasStatus(8, 3, start, true, nullptr);
+
+    n.onDasStatus(6, 3, start + 100UL, true, nullptr);
+    DashEpasLateEchoDiag during = n.diag(start + 100UL);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, during.mode);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, during.cooldownRemainMs);
+
+    n.onDasStatus(6, 3, start + DashEpasLateEcho::kAbortCooldownMs, true, nullptr);
+    DashEpasLateEchoDiag after = n.diag(start + DashEpasLateEcho::kAbortCooldownMs);
+    TEST_ASSERT_NOT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
+}
+
+void test_cadence_tracker_recovers_after_transient_instability()
+{
+    DashEpasCadenceTracker t;
+    const unsigned long badTimes[] = {1000, 1040, 1080, 1120, 1160, 1200, 1248, 1280};
+    for (uint8_t i = 0; i < 8; ++i)
+        t.onRx370(makeEpasFrame(i), badTimes[i]);
+    TEST_ASSERT_FALSE(t.stable());
+    TEST_ASSERT_EQUAL_STRING("cadenceUnstable", t.blockedReason());
+
+    for (uint8_t i = 0; i < 8; ++i)
+        t.onRx370(makeEpasFrame(8 + i), 1320 + i * 40);
+
+    TEST_ASSERT_TRUE(t.stable());
+    TEST_ASSERT_TRUE(t.lateEchoEligible(1320 + 7 * 40));
+    TEST_ASSERT_EQUAL_STRING("", t.blockedReason());
+}
+
+void test_build_due_frame_is_single_use_until_tx_result()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag before = n.diag(1280);
+    CanFrame out = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(before.pendingSendAtMs, out));
+    TEST_ASSERT_FALSE(n.buildDueFrame(before.pendingSendAtMs, out));
+    n.notifyTxResult(true, before.pendingSendAtMs);
+    TEST_ASSERT_EQUAL_UINT32(1, n.diag(before.pendingSendAtMs).sentLateEchoes);
+}
+
 int main(int argc, char **argv)
 {
     UNITY_BEGIN();
@@ -240,5 +359,12 @@ int main(int argc, char **argv)
     RUN_TEST(test_due_frame_builds_only_in_late_window_and_preserves_byte4);
     RUN_TEST(test_hos_clear_cancels_pending_echo);
     RUN_TEST(test_abort_state_cancels_pending_and_enters_cooldown);
+    RUN_TEST(test_hos_clear_during_abort_cooldown_preserves_cooldown);
+    RUN_TEST(test_gate_loss_during_tx_fail_cooldown_preserves_cooldown);
+    RUN_TEST(test_gate_loss_on_epas_rx_cancels_pending_echo);
+    RUN_TEST(test_due_window_handles_unsigned_long_rollover);
+    RUN_TEST(test_cooldown_expiry_handles_unsigned_long_rollover);
+    RUN_TEST(test_cadence_tracker_recovers_after_transient_instability);
+    RUN_TEST(test_build_due_frame_is_single_use_until_tx_result);
     return UNITY_END();
 }
