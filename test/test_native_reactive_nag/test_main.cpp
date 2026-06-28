@@ -188,6 +188,56 @@ void test_abort_cooldown_expires_to_new_burst_if_nag_persists()
     TEST_ASSERT_EQUAL_UINT32(2, n.burstSessions());
 }
 
+
+void test_abort_state_with_hos_clear_still_enters_cooldown_and_blocks_restart()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, n.mode());
+
+    n.onNagSample(2, 200, true, 8);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(200));
+    TEST_ASSERT_EQUAL_STRING("abort", n.blockedReason());
+    TEST_ASSERT_EQUAL_UINT32(1, n.abortBlocks());
+
+    n.onNagSample(3, 2500, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(2500));
+    TEST_ASSERT_EQUAL_STRING("abort", n.blockedReason());
+    TEST_ASSERT_TRUE(n.cooldownRemainMs(2500) > 0);
+}
+
+void test_delayed_sample_advances_to_scheduled_burst_off_boundary()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    n.onNagSample(3, 2000, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_OFF, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(2000));
+    TEST_ASSERT_EQUAL_UINT32(600, n.phaseRemainMs(2000));
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstOffEntries());
+}
+
+void test_delayed_sample_advances_through_off_to_next_on_boundary()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    n.onNagSample(3, 2600, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, n.mode());
+    TEST_ASSERT_TRUE(n.shouldEcho(2600));
+    TEST_ASSERT_EQUAL_UINT32(1000, n.phaseRemainMs(2600));
+    TEST_ASSERT_EQUAL_UINT32(2, n.burstSessions());
+    TEST_ASSERT_EQUAL_UINT32(2, n.burstOnEntries());
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstOffEntries());
+}
+
 void test_txfail_enters_cooldown_and_records_failure()
 {
     DashReactiveNagBurst n;
@@ -254,6 +304,9 @@ int main()
     RUN_TEST(test_gate_loss_cancels_burst_with_reason);
     RUN_TEST(test_abort_state_enters_cooldown_and_blocks_echo);
     RUN_TEST(test_abort_cooldown_expires_to_new_burst_if_nag_persists);
+    RUN_TEST(test_abort_state_with_hos_clear_still_enters_cooldown_and_blocks_restart);
+    RUN_TEST(test_delayed_sample_advances_to_scheduled_burst_off_boundary);
+    RUN_TEST(test_delayed_sample_advances_through_off_to_next_on_boundary);
     RUN_TEST(test_txfail_enters_cooldown_and_records_failure);
     RUN_TEST(test_set_signed_torque_in_frame_targets_absolute_torque_and_clamps);
     RUN_TEST(test_diag_reports_v4_burst_fields);

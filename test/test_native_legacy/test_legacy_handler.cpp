@@ -829,6 +829,32 @@ void test_legacy_tsl6p_burst_off_suppresses_echo()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
+
+void test_legacy_tsl6p_370_path_advances_cycle_without_fresh_399()
+{
+    handler.bionicSteering = true;
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
+
+    for (int i = 0; i < 1200; ++i)
+    {
+        CanFrame epas = makeEpasFrame(0, 0.10f, static_cast<uint8_t>(i));
+        handler.handleMessage(epas, mock);
+    }
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_OFF, handler.nag.mode());
+    size_t sentBeforeOffExpires = mock.sent.size();
+
+    for (int i = 0; i < 1700; ++i)
+    {
+        CanFrame epas = makeEpasFrame(0, 0.10f, static_cast<uint8_t>(i));
+        handler.handleMessage(epas, mock);
+    }
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
+    TEST_ASSERT_TRUE(mock.sent.size() > sentBeforeOffExpires);
+}
+
 void test_legacy_tsl6p_hos_clear_stops_future_echo()
 {
     handler.bionicSteering = true;
@@ -850,16 +876,17 @@ void test_legacy_tsl6p_hos_clear_stops_future_echo()
 void test_legacy_tsl6p_checkad_blocks_and_cancels()
 {
     handler.bionicSteering = true;
-    handler.checkAD = denyAD;
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
 
+    handler.checkAD = denyAD;
     CanFrame epas = makeEpasFrame(0, 0.10f, 2);
     handler.handleMessage(epas, mock);
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, handler.nag.mode());
-    TEST_ASSERT_EQUAL_STRING("toggle", handler.nag.blockedReason());
+    TEST_ASSERT_EQUAL_STRING("checkAD", handler.nag.blockedReason());
 }
 
 void test_legacy_tsl6p_ap_inactive_cancels()
@@ -952,6 +979,7 @@ int main()
     RUN_TEST(test_legacy_tsl6p_hos3_sends_first_sequence_frame);
     RUN_TEST(test_legacy_tsl6p_sequence_cycles_absolute_torque_targets);
     RUN_TEST(test_legacy_tsl6p_burst_off_suppresses_echo);
+    RUN_TEST(test_legacy_tsl6p_370_path_advances_cycle_without_fresh_399);
     RUN_TEST(test_legacy_tsl6p_hos_clear_stops_future_echo);
     RUN_TEST(test_legacy_tsl6p_checkad_blocks_and_cancels);
     RUN_TEST(test_legacy_tsl6p_ap_inactive_cancels);

@@ -206,6 +206,39 @@ struct DashReactiveNagBurst
     {
         return mode_ == HumanReplayMode::BURST_ON && (nowMs - phaseStartMs_) < kBurstOnMs;
     }
+
+    void advance(unsigned long nowMs, bool gatesActive = true)
+    {
+        if (!gatesActive || !nagActive_) return;
+
+        // Advance against scheduled boundaries, not the arrival time of the next
+        // 0x399 sample. This keeps the 1000ms ON / 1500ms OFF cadence stable
+        // even when samples are delayed and lets 0x370 diagnostics observe the
+        // correct phase without stretching OFF.
+        while (true)
+        {
+            if (mode_ == HumanReplayMode::BURST_ON)
+            {
+                unsigned long boundary = phaseStartMs_ + kBurstOnMs;
+                if ((nowMs - boundary) < 0x80000000UL)
+                    enterBurstOff(boundary);
+                else
+                    return;
+            }
+            else if (mode_ == HumanReplayMode::BURST_OFF)
+            {
+                unsigned long boundary = phaseStartMs_ + kBurstOffMs;
+                if ((nowMs - boundary) < 0x80000000UL)
+                    enterBurstOn(boundary);
+                else
+                    return;
+            }
+            else
+            {
+                return;
+            }
+        }
+    }
     int amplitudeCap() const { return kMaxSignedOutRaw; }
     int currentAmp(unsigned long nowMs) const { return shouldEcho(nowMs) ? (lastTorqueRaw_ < 0 ? -lastTorqueRaw_ : lastTorqueRaw_) : 0; }
     int currentAmp() const { return currentAmp(phaseStartMs_); }
@@ -414,6 +447,22 @@ struct DashReactiveNagBurst
         lastHandsOnState = hos;
         lastApState_ = apState;
 
+        if (isAbortState(apState))
+        {
+            nagActive_ = hos > 2;
+            if (hos > 2)
+            {
+                nagSamples_++;
+                lastHosBefore_ = hos;
+            }
+            else
+            {
+                lastHosAfter_ = hos;
+            }
+            enterAbortCooldown(nowMs);
+            return;
+        }
+
         if (hos <= 2)
         {
             nagActive_ = false;
@@ -436,20 +485,10 @@ struct DashReactiveNagBurst
         if (mode_ == HumanReplayMode::COOLDOWN)
         {
             if (cooldownRemainMs(nowMs) > 0)
-            {
-                if (isAbortState(apState) && !abortCooldownActive(nowMs))
-                    enterAbortCooldown(nowMs);
                 return;
-            }
             mode_ = HumanReplayMode::IDLE;
             injecting = false;
             blockedReason_ = "";
-        }
-
-        if (isAbortState(apState))
-        {
-            enterAbortCooldown(nowMs);
-            return;
         }
 
         if (!active)
@@ -464,19 +503,7 @@ struct DashReactiveNagBurst
             return;
         }
 
-        if (mode_ == HumanReplayMode::BURST_ON)
-        {
-            if ((nowMs - phaseStartMs_) >= kBurstOnMs)
-                enterBurstOff(nowMs);
-            return;
-        }
-
-        if (mode_ == HumanReplayMode::BURST_OFF)
-        {
-            if ((nowMs - phaseStartMs_) >= kBurstOffMs)
-                enterBurstOn(nowMs);
-            return;
-        }
+        advance(nowMs, active);
     }
 
     // Legacy/no-AP-state-diagnostics compatibility overload. Callers that have

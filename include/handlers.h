@@ -338,11 +338,12 @@ struct LegacyHandler : public CarManagerBase
         updateHwDetectedFrom920(frame);
         if (frame.id == 880 && frame.dlc >= 8)
         {
-            // Human Torque Replay v3 (opt-in via bionicSteering; default OFF): bounded replay delta.
+            // TSL6P Burst NAG v4 (opt-in via bionicSteering; default OFF): bounded 0x370 echo burst.
             unsigned long nowMs = dashDiagNowMs();
             bool active = (bool)bionicSteering && APActive;
-            bool replayPending = nag.shouldEcho(nowMs);
             bool checkAdAllowed = !(checkAD && !checkAD());
+            nag.advance(nowMs, active && checkAdAllowed);
+            bool replayPending = nag.shouldEcho(nowMs);
             if (replayPending && !(bool)bionicSteering)
                 nag.cancel("toggle");
             else if (replayPending && !APActive)
@@ -466,9 +467,10 @@ struct LegacyHandler : public CarManagerBase
             {
                 uint8_t hos = static_cast<uint8_t>((frame.data[5] >> 2) & 0x0F);
                 bool active = (bool)bionicSteering && APActive;
-                if (checkAD && !checkAD())
-                    active = false;
+                bool checkAdAllowed = !(checkAD && !checkAD());
                 nag.onNagSample(hos, dashDiagNowMs(), active, apState);
+                if (hos > 2 && !DashReactiveNagBurst::isAbortState(apState) && active && !checkAdAllowed)
+                    nag.cancel("checkAD");
             }
             return;
         }
