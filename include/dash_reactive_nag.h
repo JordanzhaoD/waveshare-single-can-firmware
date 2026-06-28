@@ -207,9 +207,15 @@ struct DashReactiveNagBurst
         return mode_ == HumanReplayMode::BURST_ON && (nowMs - phaseStartMs_) < kBurstOnMs;
     }
 
-    void advance(unsigned long nowMs, bool gatesActive = true)
+    void advance(unsigned long nowMs, bool gatesActive = true, const char *gateReason = "toggle")
     {
-        if (!gatesActive || !nagActive_) return;
+        if (!gatesActive)
+        {
+            if (nagActive_ || mode_ == HumanReplayMode::BURST_ON || mode_ == HumanReplayMode::BURST_OFF)
+                cancel(gateReason);
+            return;
+        }
+        if (!nagActive_) return;
 
         // Advance against scheduled boundaries, not the arrival time of the next
         // 0x399 sample. This keeps the 1000ms ON / 1500ms OFF cadence stable
@@ -357,6 +363,9 @@ struct DashReactiveNagBurst
 
     void cancel(const char *reason)
     {
+        if (mode_ == HumanReplayMode::COOLDOWN &&
+            (reasonEquals(blockedReason_, "abort") || reasonEquals(blockedReason_, "txFail")))
+            return;
         mode_ = HumanReplayMode::IDLE;
         injecting = false;
         blockedReason_ = reason ? reason : "";
@@ -441,8 +450,8 @@ struct DashReactiveNagBurst
         lastHosAfter_ = hos;
     }
 
-    // Called per 0x399. hos = (0x399 data[5]>>2)&0x0F. active = toggle ON && APActive.
-    void onNagSample(uint8_t hos, unsigned long nowMs, bool active, uint8_t apState)
+    // Called per 0x399. hos = (0x399 data[5]>>2)&0x0F. active = all opt-in/AP/checkAD gates pass.
+    void onNagSample(uint8_t hos, unsigned long nowMs, bool active, uint8_t apState, const char *gateReason)
     {
         lastHandsOnState = hos;
         lastApState_ = apState;
@@ -493,7 +502,7 @@ struct DashReactiveNagBurst
 
         if (!active)
         {
-            cancel("toggle");
+            cancel(gateReason ? gateReason : "toggle");
             return;
         }
 
@@ -506,12 +515,17 @@ struct DashReactiveNagBurst
         advance(nowMs, active);
     }
 
+    void onNagSample(uint8_t hos, unsigned long nowMs, bool active, uint8_t apState)
+    {
+        onNagSample(hos, nowMs, active, apState, active ? nullptr : "toggle");
+    }
+
     // Legacy/no-AP-state-diagnostics compatibility overload. Callers that have
     // the real 0x399 AP state must use the 4-argument overload so abort states
     // 8/9 are visible to the state machine; do not infer abort from active=false.
     void onNagSample(uint8_t hos, unsigned long nowMs, bool active)
     {
-        onNagSample(hos, nowMs, active, 6);
+        onNagSample(hos, nowMs, active, 6, active ? nullptr : "toggle");
     }
 
     DashReactiveDiag diag(unsigned long nowMs) const

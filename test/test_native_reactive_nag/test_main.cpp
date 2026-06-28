@@ -188,6 +188,37 @@ void test_abort_cooldown_expires_to_new_burst_if_nag_persists()
     TEST_ASSERT_EQUAL_UINT32(2, n.burstSessions());
 }
 
+void test_abort_cooldown_survives_later_checkad_gate_loss()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+    n.onNagSample(3, 200, true, 8);
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+    TEST_ASSERT_EQUAL_STRING("abort", n.blockedReason());
+
+    n.onNagSample(3, 500, false, 6, "checkAD");
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+    TEST_ASSERT_EQUAL_STRING("abort", n.blockedReason());
+    TEST_ASSERT_FALSE(n.shouldEcho(500));
+    TEST_ASSERT_TRUE(n.cooldownRemainMs(500) > 0);
+}
+
+void test_tx_fail_cooldown_survives_later_checkad_gate_loss()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+    n.failReplayTx(200);
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+    TEST_ASSERT_EQUAL_STRING("txFail", n.blockedReason());
+
+    n.onNagSample(3, 500, false, 6, "checkAD");
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, n.mode());
+    TEST_ASSERT_EQUAL_STRING("txFail", n.blockedReason());
+    TEST_ASSERT_FALSE(n.shouldEcho(500));
+    TEST_ASSERT_TRUE(n.cooldownRemainMs(500) > 0);
+}
 
 void test_abort_state_with_hos_clear_still_enters_cooldown_and_blocks_restart()
 {
@@ -304,6 +335,8 @@ int main()
     RUN_TEST(test_gate_loss_cancels_burst_with_reason);
     RUN_TEST(test_abort_state_enters_cooldown_and_blocks_echo);
     RUN_TEST(test_abort_cooldown_expires_to_new_burst_if_nag_persists);
+    RUN_TEST(test_abort_cooldown_survives_later_checkad_gate_loss);
+    RUN_TEST(test_tx_fail_cooldown_survives_later_checkad_gate_loss);
     RUN_TEST(test_abort_state_with_hos_clear_still_enters_cooldown_and_blocks_restart);
     RUN_TEST(test_delayed_sample_advances_to_scheduled_burst_off_boundary);
     RUN_TEST(test_delayed_sample_advances_through_off_to_next_on_boundary);

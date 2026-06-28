@@ -340,17 +340,18 @@ struct LegacyHandler : public CarManagerBase
         {
             // TSL6P Burst NAG v4 (opt-in via bionicSteering; default OFF): bounded 0x370 echo burst.
             unsigned long nowMs = dashDiagNowMs();
-            bool active = (bool)bionicSteering && APActive;
             bool checkAdAllowed = !(checkAD && !checkAD());
-            nag.advance(nowMs, active && checkAdAllowed);
+            const char *gateReason = nullptr;
+            if (!(bool)bionicSteering)
+                gateReason = "toggle";
+            else if (!APActive)
+                gateReason = "apInactive";
+            else if (!checkAdAllowed)
+                gateReason = "checkAD";
+            bool active = gateReason == nullptr;
+            nag.advance(nowMs, active, gateReason);
             bool replayPending = nag.shouldEcho(nowMs);
-            if (replayPending && !(bool)bionicSteering)
-                nag.cancel("toggle");
-            else if (replayPending && !APActive)
-                nag.cancel("apInactive");
-            else if (replayPending && !checkAdAllowed)
-                nag.cancel("checkAD");
-            bool useReplay = replayPending && active && checkAdAllowed;
+            bool useReplay = replayPending && active;
             if (useReplay)
             {
                 CanFrame echo;
@@ -466,11 +467,16 @@ struct LegacyHandler : public CarManagerBase
             if (frame.dlc >= 6)
             {
                 uint8_t hos = static_cast<uint8_t>((frame.data[5] >> 2) & 0x0F);
-                bool active = (bool)bionicSteering && APActive;
                 bool checkAdAllowed = !(checkAD && !checkAD());
-                nag.onNagSample(hos, dashDiagNowMs(), active, apState);
-                if (hos > 2 && !DashReactiveNagBurst::isAbortState(apState) && active && !checkAdAllowed)
-                    nag.cancel("checkAD");
+                const char *gateReason = nullptr;
+                if (!(bool)bionicSteering)
+                    gateReason = "toggle";
+                else if (!APActive)
+                    gateReason = "apInactive";
+                else if (!checkAdAllowed)
+                    gateReason = "checkAD";
+                bool active = gateReason == nullptr;
+                nag.onNagSample(hos, dashDiagNowMs(), active, apState, gateReason);
             }
             return;
         }

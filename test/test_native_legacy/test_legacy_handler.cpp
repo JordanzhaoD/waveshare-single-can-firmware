@@ -889,6 +889,35 @@ void test_legacy_tsl6p_checkad_blocks_and_cancels()
     TEST_ASSERT_EQUAL_STRING("checkAD", handler.nag.blockedReason());
 }
 
+void test_legacy_tsl6p_checkad_false_from_idle_does_not_start_burst_session()
+{
+    handler.bionicSteering = true;
+    handler.checkAD = denyAD;
+
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, handler.nag.mode());
+    TEST_ASSERT_EQUAL_UINT32(0, handler.nag.burstSessions());
+    TEST_ASSERT_EQUAL_STRING("checkAD", handler.nag.blockedReason());
+}
+
+void test_legacy_tsl6p_burst_off_gate_loss_cancels_with_reason()
+{
+    handler.bionicSteering = true;
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    handler.nag.onNagSample(3, 5000, true, 6);
+    TEST_ASSERT_EQUAL(HumanReplayMode::BURST_OFF, handler.nag.mode());
+
+    handler.bionicSteering = false;
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(epas, mock);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, handler.nag.mode());
+    TEST_ASSERT_EQUAL_STRING("toggle", handler.nag.blockedReason());
+}
+
 void test_legacy_tsl6p_ap_inactive_cancels()
 {
     handler.bionicSteering = true;
@@ -903,6 +932,7 @@ void test_legacy_tsl6p_ap_inactive_cancels()
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, handler.nag.mode());
+    TEST_ASSERT_EQUAL_STRING("apInactive", handler.nag.blockedReason());
 }
 
 void test_legacy_tsl6p_abort_state_blocks_subsequent_echo()
@@ -982,6 +1012,8 @@ int main()
     RUN_TEST(test_legacy_tsl6p_370_path_advances_cycle_without_fresh_399);
     RUN_TEST(test_legacy_tsl6p_hos_clear_stops_future_echo);
     RUN_TEST(test_legacy_tsl6p_checkad_blocks_and_cancels);
+    RUN_TEST(test_legacy_tsl6p_checkad_false_from_idle_does_not_start_burst_session);
+    RUN_TEST(test_legacy_tsl6p_burst_off_gate_loss_cancels_with_reason);
     RUN_TEST(test_legacy_tsl6p_ap_inactive_cancels);
     RUN_TEST(test_legacy_tsl6p_abort_state_blocks_subsequent_echo);
 

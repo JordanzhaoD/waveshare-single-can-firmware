@@ -81,24 +81,21 @@ class NoEpasNagContract(unittest.TestCase):
         )
 
         # LegacyHandler 0x370 replay echo gated on active + nag.shouldEcho.
-        self.assertIn(
-            "bool active = (bool)bionicSteering && APActive",
-            self.handlers,
-            "reactive echo must be gated on bionicSteering + APActive",
-        )
+        for token in ['gateReason = "toggle"', 'gateReason = "apInactive"', 'gateReason = "checkAD"']:
+            self.assertIn(token, self.handlers, "reactive echo must expose the honest gate-loss reason")
         self.assertIn(
             "bool replayPending = nag.shouldEcho(nowMs)",
             self.handlers,
             "reactive echo must first detect pending replay",
         )
         self.assertIn(
-            "bool useReplay = replayPending && active && checkAdAllowed",
+            "bool useReplay = replayPending && active",
             self.handlers,
-            "reactive echo must be gated on pending replay + active + checkAD",
+            "reactive echo must be gated on pending replay + combined opt-in/AP/checkAD active state",
         )
         self.assertIn("bool checkAdAllowed = !(checkAD && !checkAD())", self.handlers, "reactive echo must be gated on checkAD")
-        self.assertIn("nag.cancel(\"toggle\")", self.handlers, "active/toggle gate loss must cancel replay")
-        self.assertIn("nag.cancel(\"checkAD\")", self.handlers, "checkAD gate loss must cancel replay")
+        self.assertIn("nag.advance(nowMs, active, gateReason)", self.handlers, "0x370 gate loss must cancel via explicit reason")
+        self.assertIn("nag.onNagSample(hos, dashDiagNowMs(), active, apState, gateReason)", self.handlers, "0x399 gate loss must cancel via explicit reason")
 
         # LegacyHandler 0x399 NAG detection reads byte5 bits[5:2] and does not transmit/mutate 0x399.
         block_start = self.legacy.index("if (frame.id == 921)")
@@ -154,7 +151,7 @@ class Tsl6pBurstNagV4Contract(unittest.TestCase):
         self.assertIn("apState", block)
         self.assertRegex(
             block,
-            r"nag\.onNagSample\(\s*hos\s*,\s*dashDiagNowMs\(\)\s*,\s*active\s*,\s*apState\s*\)",
+            r"nag\.onNagSample\(\s*hos\s*,\s*dashDiagNowMs\(\)\s*,\s*active\s*,\s*apState\s*,\s*gateReason\s*\)",
         )
         self.assertNotIn("driver.send", block)
         self.assertIsNone(re.search(r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=(?!=)", block))
@@ -164,7 +161,7 @@ class Tsl6pBurstNagV4Contract(unittest.TestCase):
         block_start = self.legacy.index("if (frame.id == 880")
         block_end = self.legacy.index("// STW_ACTN_RQ", block_start)
         block = self.legacy[block_start:block_end]
-        for token in ["bionicSteering", "APActive", "checkAD", "nag.shouldEcho", "nag.peekReplayDelta", "nag.commitReplayDelta", "nag.failReplayTx", "nag.cancel"]:
+        for token in ["bionicSteering", "APActive", "checkAD", "gateReason", "nag.shouldEcho", "nag.peekReplayDelta", "nag.commitReplayDelta", "nag.failReplayTx", "nag.advance"]:
             self.assertIn(token, block)
         self.assertIn("nag.applyToFrame", block)
         self.assertIn("(frame.data[4] & 0x3F) | 0x40", block)
