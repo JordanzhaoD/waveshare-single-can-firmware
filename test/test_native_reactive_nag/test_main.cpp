@@ -147,6 +147,20 @@ void test_hos_clear_during_burst_off_counts_off_clear_and_stops()
     TEST_ASSERT_EQUAL_UINT32(1, n.hosClearDuringOff());
 }
 
+void test_delayed_hos_clear_advances_phase_before_classifying_clear()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    n.onNagSample(2, 1500, true, 6);
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(1500));
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearEvents());
+    TEST_ASSERT_EQUAL_UINT32(0, n.hosClearDuringOn());
+    TEST_ASSERT_EQUAL_UINT32(1, n.hosClearDuringOff());
+}
+
 void test_gate_loss_cancels_burst_with_reason()
 {
     DashReactiveNagBurst n;
@@ -158,6 +172,27 @@ void test_gate_loss_cancels_burst_with_reason()
     TEST_ASSERT_FALSE(n.shouldEcho(200));
     TEST_ASSERT_EQUAL_STRING("toggle", n.blockedReason());
     TEST_ASSERT_EQUAL_UINT32(1, n.gateBlocks());
+}
+
+void test_repeated_gate_loss_after_cancel_counts_once_and_does_not_restart()
+{
+    DashReactiveNagBurst n;
+    startActiveNag(n, 100);
+
+    n.onNagSample(3, 200, false, 6, "checkAD");
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_EQUAL_UINT32(1, n.gateBlocks());
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstSessions());
+
+    n.advance(240, false, "checkAD");
+    n.advance(280, false, "checkAD");
+    n.onNagSample(3, 320, false, 6, "checkAD");
+
+    TEST_ASSERT_EQUAL(HumanReplayMode::IDLE, n.mode());
+    TEST_ASSERT_FALSE(n.shouldEcho(320));
+    TEST_ASSERT_EQUAL_UINT32(1, n.gateBlocks());
+    TEST_ASSERT_EQUAL_UINT32(1, n.burstSessions());
+    TEST_ASSERT_EQUAL_UINT32(0, n.echoSent());
 }
 
 void test_abort_state_enters_cooldown_and_blocks_echo()
@@ -332,7 +367,9 @@ int main()
     RUN_TEST(test_burst_off_sends_no_echo_even_with_persistent_nag);
     RUN_TEST(test_hos_clear_during_burst_on_counts_on_clear_and_stops);
     RUN_TEST(test_hos_clear_during_burst_off_counts_off_clear_and_stops);
+    RUN_TEST(test_delayed_hos_clear_advances_phase_before_classifying_clear);
     RUN_TEST(test_gate_loss_cancels_burst_with_reason);
+    RUN_TEST(test_repeated_gate_loss_after_cancel_counts_once_and_does_not_restart);
     RUN_TEST(test_abort_state_enters_cooldown_and_blocks_echo);
     RUN_TEST(test_abort_cooldown_expires_to_new_burst_if_nag_persists);
     RUN_TEST(test_abort_cooldown_survives_later_checkad_gate_loss);

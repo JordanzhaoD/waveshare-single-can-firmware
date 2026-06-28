@@ -245,6 +245,26 @@ struct DashReactiveNagBurst
             }
         }
     }
+
+    void advanceForHosClear(unsigned long nowMs)
+    {
+        if (mode_ == HumanReplayMode::BURST_ON)
+        {
+            unsigned long boundary = phaseStartMs_ + kBurstOnMs;
+            if ((nowMs - boundary) < 0x80000000UL)
+                enterBurstOff(boundary);
+        }
+        if (mode_ == HumanReplayMode::BURST_OFF)
+        {
+            unsigned long boundary = phaseStartMs_ + kBurstOffMs;
+            if ((nowMs - boundary) < 0x80000000UL)
+            {
+                mode_ = HumanReplayMode::IDLE;
+                injecting = false;
+                blockedReason_ = "";
+            }
+        }
+    }
     int amplitudeCap() const { return kMaxSignedOutRaw; }
     int currentAmp(unsigned long nowMs) const { return shouldEcho(nowMs) ? (lastTorqueRaw_ < 0 ? -lastTorqueRaw_ : lastTorqueRaw_) : 0; }
     int currentAmp() const { return currentAmp(phaseStartMs_); }
@@ -368,6 +388,7 @@ struct DashReactiveNagBurst
             return;
         mode_ = HumanReplayMode::IDLE;
         injecting = false;
+        nagActive_ = false;
         blockedReason_ = reason ? reason : "";
         if (reason && reason[0]) gateBlocks_++;
     }
@@ -474,12 +495,14 @@ struct DashReactiveNagBurst
 
         if (hos <= 2)
         {
-            nagActive_ = false;
             if (txFailCooldownActive(nowMs) || abortCooldownActive(nowMs))
             {
+                nagActive_ = false;
                 lastHosAfter_ = hos;
                 return;
             }
+            advanceForHosClear(nowMs);
+            nagActive_ = false;
             recordHosClear(hos);
             mode_ = HumanReplayMode::IDLE;
             injecting = false;
@@ -487,9 +510,21 @@ struct DashReactiveNagBurst
             return;
         }
 
-        nagActive_ = true;
         nagSamples_++;
         lastHosBefore_ = hos;
+
+        if (!active)
+        {
+            if (mode_ == HumanReplayMode::IDLE && !nagActive_)
+            {
+                blockedReason_ = gateReason ? gateReason : "toggle";
+                return;
+            }
+            cancel(gateReason ? gateReason : "toggle");
+            return;
+        }
+
+        nagActive_ = true;
 
         if (mode_ == HumanReplayMode::COOLDOWN)
         {
@@ -498,12 +533,6 @@ struct DashReactiveNagBurst
             mode_ = HumanReplayMode::IDLE;
             injecting = false;
             blockedReason_ = "";
-        }
-
-        if (!active)
-        {
-            cancel(gateReason ? gateReason : "toggle");
-            return;
         }
 
         if (mode_ == HumanReplayMode::IDLE)
