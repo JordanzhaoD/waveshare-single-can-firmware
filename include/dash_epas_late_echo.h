@@ -237,8 +237,10 @@ public:
     static constexpr unsigned long kBurstOffMs = 1500;
     static constexpr unsigned long kAbortCooldownMs = 3000;
     static constexpr unsigned long kTxFailCooldownMs = 3000;
+    static constexpr unsigned long kTxResultTimeoutMs = 100;
     static constexpr unsigned long kLateEchoLeadMs = 3;
     static constexpr unsigned long kMaxLatenessMs = 2;
+    static constexpr unsigned long kMaxDasStaleMs = 500;
 
     void setEnabled(bool value)
     {
@@ -261,6 +263,8 @@ public:
     {
         lastApState_ = apState;
         lastHos_ = hos;
+        lastDasStatusMs_ = nowMs;
+        haveDasStatus_ = true;
         retireCooldown(nowMs);
         advanceBurst(nowMs);
 
@@ -319,6 +323,13 @@ public:
     {
         retireCooldown(nowMs);
         advanceBurst(nowMs);
+        expireInFlight(nowMs);
+
+        if (builtPending_)
+        {
+            blockedReason_ = "inFlight";
+            return;
+        }
 
         if (frame.id != DashEpasCadenceTracker::kEpasId || frame.dlc < 8)
         {
@@ -329,6 +340,18 @@ public:
             }
             else
                 cancel("invalidFrame");
+            return;
+        }
+
+        if (!checksumValid370(frame))
+        {
+            if (mode_ == LateEchoModeState::COOLDOWN)
+            {
+                pendingEcho_ = false;
+                builtPending_ = false;
+            }
+            else
+                cancel("checksumInvalid");
             return;
         }
 
@@ -426,6 +449,12 @@ public:
         lastHos_ = currentHos;
         retireCooldown(nowMs);
         advanceBurst(nowMs);
+        expireInFlight(nowMs);
+        if (builtPending_)
+        {
+            blockedReason_ = "inFlight";
+            return false;
+        }
         if (mode_ == LateEchoModeState::COOLDOWN)
         {
             pendingEcho_ = false;
@@ -474,6 +503,12 @@ public:
                 blockedReason_ = "burstOff";
             return false;
         }
+        if (!dasFresh(nowMs))
+        {
+            gateBlocks_++;
+            cancel("dasStale");
+            return false;
+        }
         if (!due(nowMs))
         {
             if (pendingEcho_ && !timeBefore(nowMs, pendingSendAtMs_) && !inDueWindow(nowMs))
@@ -493,6 +528,7 @@ public:
         if (!DashEpasFaithfulEncoder::build(cadence_.lastSource(), cadence_.expectedNextCounter(), pendingTorqueRaw_, out))
             return false;
         builtPending_ = true;
+        builtAtMs_ = nowMs;
         token.generation = pendingGeneration_;
         token.dueAtMs = pendingSendAtMs_;
         token.valid = true;
@@ -558,6 +594,28 @@ private:
     static const char *gateBlockReason(const char *)
     {
         return "gate";
+    }
+
+    static bool checksumValid370(const CanFrame &frame)
+    {
+        uint16_t sum = 0;
+        for (int i = 0; i < 7; ++i)
+            sum += frame.data[i];
+        return static_cast<uint8_t>((sum + 0x73) & 0xFF) == frame.data[7];
+    }
+
+    bool dasFresh(unsigned long nowMs) const
+    {
+        return haveDasStatus_ && elapsedSince(lastDasStatusMs_, nowMs) <= kMaxDasStaleMs;
+    }
+
+    void expireInFlight(unsigned long nowMs)
+    {
+        if (builtPending_ && elapsedSince(builtAtMs_, nowMs) > kTxResultTimeoutMs)
+        {
+            txFailures_++;
+            enterCooldown(nowMs, kTxFailCooldownMs, "txFail");
+        }
     }
 
     int targetTorqueRaw(unsigned long nowMs) const
@@ -664,11 +722,14 @@ private:
     bool pendingEcho_{false};
     bool builtPending_{false};
     bool apEligible_{false};
+    bool haveDasStatus_{false};
     int pendingTorqueRaw_{0};
     int8_t burstDirection_{1};
     int8_t nextBurstDirection_{1};
     unsigned long pendingSendAtMs_{0};
+    unsigned long builtAtMs_{0};
     unsigned long phaseStartMs_{0};
+    unsigned long lastDasStatusMs_{0};
     unsigned long cooldownStartMs_{0};
     unsigned long cooldownDurationMs_{0};
     const char *blockedReason_{""};
