@@ -839,6 +839,7 @@ void test_legacy_tsl6p_sequence_cycles_absolute_torque_targets()
     {
         CanFrame epas = makeEpasFrame(0, 0.20f, static_cast<uint8_t>(i));
         handler.handleMessage(epas, mock);
+        TEST_ASSERT_EQUAL(i + 1, mock.sent.size());
         TEST_ASSERT_EQUAL_INT(expected[i], decodeEchoTorqueSigned(mock.sent[i]));
         TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((i + 1) & 0x0F), counterLowNibble(mock.sent[i]));
         TEST_ASSERT_TRUE(checksumValid370(mock.sent[i]));
@@ -1025,6 +1026,8 @@ void test_epas_late_echo_tick_sends_due_frame_and_preserves_byte4()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(880, mock.sent[0].id);
     TEST_ASSERT_EQUAL_HEX8(0x20, mock.sent[0].data[4]);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(180, decodeEchoTorqueSigned(mock.sent[0]));
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(-180, decodeEchoTorqueSigned(mock.sent[0]));
     TEST_ASSERT_EQUAL_UINT8(8, counterLowNibble(mock.sent[0]));
     TEST_ASSERT_TRUE(checksumValid370(mock.sent[0]));
     auto after = handler.lateEchoDiag(before.pendingSendAtMs);
