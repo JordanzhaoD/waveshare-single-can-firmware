@@ -116,7 +116,7 @@ void test_encoder_preserves_source_fields_and_recomputes_checksum()
     refreshChecksum370(source);
     CanFrame out = {};
 
-    TEST_ASSERT_TRUE(DashEpasFaithfulEncoder::build(source, 8, 170, out));
+    TEST_ASSERT_TRUE(DashEpasFaithfulEncoderTestAccess::build(source, 8, 170, out));
 
     TEST_ASSERT_EQUAL_UINT32(880, out.id);
     TEST_ASSERT_EQUAL_UINT8(8, out.dlc);
@@ -134,10 +134,10 @@ void test_encoder_preserves_source_fields_and_recomputes_checksum()
 void test_encoder_clamps_torque_to_180_raw()
 {
     CanFrame out = {};
-    TEST_ASSERT_TRUE(DashEpasFaithfulEncoder::build(makeEpasFrame(1), 2, 250, out));
+    TEST_ASSERT_TRUE(DashEpasFaithfulEncoderTestAccess::build(makeEpasFrame(1), 2, 250, out));
     TEST_ASSERT_EQUAL_INT(180, decodeSignedTorque(out));
 
-    TEST_ASSERT_TRUE(DashEpasFaithfulEncoder::build(makeEpasFrame(1), 2, -250, out));
+    TEST_ASSERT_TRUE(DashEpasFaithfulEncoderTestAccess::build(makeEpasFrame(1), 2, -250, out));
     TEST_ASSERT_EQUAL_INT(-180, decodeSignedTorque(out));
 }
 
@@ -307,7 +307,7 @@ void test_build_due_frame_requires_final_gate_active_at_send_time()
 
     DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs);
     TEST_ASSERT_FALSE(after.pendingEcho);
-    TEST_ASSERT_EQUAL_STRING("finalGateLost", after.blockedReason);
+    TEST_ASSERT_EQUAL_STRING("gate", after.blockedReason);
     TEST_ASSERT_EQUAL_UINT8(5, after.lastApState);
     TEST_ASSERT_EQUAL_UINT8(4, after.lastHos);
     TEST_ASSERT_EQUAL_UINT32(before.gateBlocks + 1, after.gateBlocks);
@@ -354,6 +354,45 @@ void test_build_due_frame_enters_abort_cooldown_for_final_ap_abort()
     TEST_ASSERT_EQUAL_STRING("abort", after.blockedReason);
     TEST_ASSERT_EQUAL_UINT8(8, after.lastApState);
     TEST_ASSERT_EQUAL_UINT8(3, after.lastHos);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, after.cooldownRemainMs);
+}
+
+void test_build_due_frame_during_abort_cooldown_preserves_abort_reason()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(8, 3, 1000, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, n.diag(1000).mode);
+
+    CanFrame out = {};
+    DashEpasLateEchoTxToken token = {};
+    TEST_ASSERT_FALSE(n.buildDueFrame(1100, out, true, 0, 3, nullptr, token));
+
+    DashEpasLateEchoDiag after = n.diag(1100);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
+    TEST_ASSERT_EQUAL_STRING("abort", after.blockedReason);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, after.cooldownRemainMs);
+}
+
+void test_build_due_frame_during_tx_fail_cooldown_preserves_tx_fail_reason()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+    DashEpasLateEchoDiag before = n.diag(1280);
+    CanFrame out = {};
+    DashEpasLateEchoTxToken token = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(before.pendingSendAtMs, out, true, 6, 3, nullptr, token));
+    n.notifyTxResult(token, false, before.pendingSendAtMs);
+
+    DashEpasLateEchoTxToken secondToken = {};
+    TEST_ASSERT_FALSE(n.buildDueFrame(before.pendingSendAtMs + 100, out, true, 0, 3, nullptr, secondToken));
+
+    DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs + 100);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
+    TEST_ASSERT_EQUAL_STRING("txFail", after.blockedReason);
     TEST_ASSERT_GREATER_THAN_UINT32(0, after.cooldownRemainMs);
 }
 
@@ -514,7 +553,7 @@ void test_gate_loss_during_burst_off_preserves_off_interval()
     n.onDasStatus(6, 3, 1100, false, "gateLost");
     DashEpasLateEchoDiag gated = n.diag(1100);
     TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, gated.mode);
-    TEST_ASSERT_EQUAL_STRING("gateLost", gated.blockedReason);
+    TEST_ASSERT_EQUAL_STRING("gate", gated.blockedReason);
 
     n.onDasStatus(6, 3, 1200, true, nullptr);
     TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, n.diag(1200).mode);
@@ -539,6 +578,7 @@ void test_gate_loss_on_epas_rx_cancels_pending_echo()
     DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs);
     TEST_ASSERT_FALSE(after.pendingEcho);
     TEST_ASSERT_EQUAL_STRING("gate", after.blockedReason);
+    TEST_ASSERT_EQUAL_UINT32(before.gateBlocks + 1, after.gateBlocks);
     TEST_ASSERT_FALSE(buildLateEcho(n, before.pendingSendAtMs, out, true, 6, 3, nullptr));
 }
 
@@ -824,6 +864,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_build_due_frame_requires_final_gate_active_at_send_time);
     RUN_TEST(test_build_due_frame_requires_final_ap_active_at_send_time);
     RUN_TEST(test_build_due_frame_enters_abort_cooldown_for_final_ap_abort);
+    RUN_TEST(test_build_due_frame_during_abort_cooldown_preserves_abort_reason);
+    RUN_TEST(test_build_due_frame_during_tx_fail_cooldown_preserves_tx_fail_reason);
     RUN_TEST(test_build_due_frame_requires_final_hos_active_at_send_time);
     RUN_TEST(test_hos_clear_cancels_pending_echo);
     RUN_TEST(test_ap_inactive_does_not_enter_burst_on_or_schedule_echo);

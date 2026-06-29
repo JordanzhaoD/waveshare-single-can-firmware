@@ -128,8 +128,18 @@ private:
     CanFrame lastSource_{};
 };
 
-struct DashEpasFaithfulEncoder
+class DashEpasLateEcho;
+#ifdef NATIVE_BUILD
+struct DashEpasFaithfulEncoderTestAccess;
+#endif
+
+class DashEpasFaithfulEncoder
 {
+    friend class DashEpasLateEcho;
+#ifdef NATIVE_BUILD
+    friend struct DashEpasFaithfulEncoderTestAccess;
+#endif
+
     static constexpr uint32_t kEpasId = 880;
     static constexpr int kMaxTorqueRaw = 180;
 
@@ -166,6 +176,16 @@ struct DashEpasFaithfulEncoder
         return true;
     }
 };
+
+#ifdef NATIVE_BUILD
+struct DashEpasFaithfulEncoderTestAccess
+{
+    static bool build(const CanFrame &source, uint8_t expectedCounter, int targetTorqueRaw, CanFrame &out)
+    {
+        return DashEpasFaithfulEncoder::build(source, expectedCounter, targetTorqueRaw, out);
+    }
+};
+#endif
 
 enum class LateEchoModeState
 {
@@ -285,7 +305,7 @@ public:
         if (!gatesActive)
         {
             gateBlocks_++;
-            cancel(gateReason ? gateReason : "gate");
+            cancel(gateBlockReason(gateReason));
             if (mode_ != LateEchoModeState::BURST_OFF)
                 mode_ = LateEchoModeState::IDLE;
             return;
@@ -332,6 +352,8 @@ public:
         if (!enabled_ || !gatesActive)
         {
             cadence_.onRx370(frame, nowMs);
+            if (!gatesActive)
+                gateBlocks_++;
             cancel(!enabled_ ? "disabled" : "gate");
             return;
         }
@@ -404,6 +426,12 @@ public:
         lastHos_ = currentHos;
         retireCooldown(nowMs);
         advanceBurst(nowMs);
+        if (mode_ == LateEchoModeState::COOLDOWN)
+        {
+            pendingEcho_ = false;
+            builtPending_ = false;
+            return false;
+        }
         if (currentApState == 8 || currentApState == 9)
         {
             apEligible_ = false;
@@ -417,16 +445,10 @@ public:
             cancel("apInactive");
             return false;
         }
-        if (mode_ == LateEchoModeState::COOLDOWN)
-        {
-            pendingEcho_ = false;
-            builtPending_ = false;
-            return false;
-        }
         if (!gatesActive)
         {
             gateBlocks_++;
-            cancel(gateReason ? gateReason : "gate");
+            cancel(gateBlockReason(gateReason));
             return false;
         }
         if (currentHos <= 2)
@@ -531,6 +553,11 @@ private:
     static bool isEligibleApState(uint8_t apState)
     {
         return apState == 3 || apState == 4 || apState == 5 || apState == 6;
+    }
+
+    static const char *gateBlockReason(const char *)
+    {
+        return "gate";
     }
 
     int targetTorqueRaw(unsigned long nowMs) const
