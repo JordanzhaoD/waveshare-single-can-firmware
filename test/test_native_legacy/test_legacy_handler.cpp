@@ -7,10 +7,16 @@
 #include "dash_epas_late_echo.h"
 #include "drivers/mock_driver.h"
 
-static void advanceNativeDiagNowMsBy(uint32_t deltaMs)
+static uint32_t nativeDiagFutureMs(uint32_t leadMs)
 {
-    for (uint32_t i = 0; i < deltaMs; ++i)
-        (void)dashDiagNowMs();
+    return dashDiagNowMs() + leadMs;
+}
+
+static void advanceNativeDiagNowMsUntilNextCallReturns(uint32_t targetNowMs)
+{
+    while (dashDiagNowMs() + 1 < targetNowMs)
+    {
+    }
 }
 
 static MockDriver mock;
@@ -81,10 +87,9 @@ static CanFrame makeEpasFrameWithCounter(uint8_t counter, uint8_t byte4 = 0x20)
 
 static void feedStableEpasCadence(LegacyHandler &h, MockDriver &d, unsigned long startMs = 1000)
 {
-    (void)startMs;
     for (uint8_t i = 0; i < 8; ++i)
     {
-        advanceNativeDiagNowMsBy(39);
+        advanceNativeDiagNowMsUntilNextCallReturns(static_cast<uint32_t>(startMs + static_cast<unsigned long>(i) * 40));
         CanFrame epas = makeEpasFrameWithCounter(i);
         h.handleMessage(epas, d);
     }
@@ -986,13 +991,15 @@ void test_epas_late_echo_does_not_send_immediately_on_370()
     handler.bionicSteering = true;
     handler.setNagModeForTest("late_echo");
 
-    advanceNativeDiagNowMsBy(900);
+    const uint32_t dasAt = nativeDiagFutureMs(100);
+    const uint32_t epasStartAt = dasAt + 100;
+    advanceNativeDiagNowMsUntilNextCallReturns(dasAt);
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
-    feedStableEpasCadence(handler, mock);
+    feedStableEpasCadence(handler, mock, epasStartAt);
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
-    auto d = handler.lateEchoDiag(1280);
+    auto d = handler.lateEchoDiag(epasStartAt + 7 * 40);
     TEST_ASSERT_TRUE(d.pendingEcho);
     TEST_ASSERT_TRUE(d.cadenceStable);
 }
@@ -1002,15 +1009,17 @@ void test_epas_late_echo_tick_sends_due_frame_and_preserves_byte4()
     handler.bionicSteering = true;
     handler.setNagModeForTest("late_echo");
 
-    advanceNativeDiagNowMsBy(900);
+    const uint32_t dasAt = nativeDiagFutureMs(100);
+    const uint32_t epasStartAt = dasAt + 100;
+    advanceNativeDiagNowMsUntilNextCallReturns(dasAt);
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
-    feedStableEpasCadence(handler, mock, 1000);
-    auto before = handler.lateEchoDiag(1280);
+    feedStableEpasCadence(handler, mock, epasStartAt);
+    auto before = handler.lateEchoDiag(epasStartAt + 7 * 40);
     TEST_ASSERT_TRUE(before.pendingEcho);
     TEST_ASSERT_GREATER_THAN_UINT32(0, before.pendingSendAtMs);
 
-    advanceNativeDiagNowMsBy(40);
+    advanceNativeDiagNowMsUntilNextCallReturns(before.pendingSendAtMs);
     handler.tick(mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
@@ -1028,18 +1037,19 @@ void test_epas_late_echo_new_370_before_tick_drops_pending()
     handler.bionicSteering = true;
     handler.setNagModeForTest("late_echo");
 
-    advanceNativeDiagNowMsBy(900);
+    const uint32_t dasAt = nativeDiagFutureMs(100);
+    const uint32_t epasStartAt = dasAt + 100;
+    advanceNativeDiagNowMsUntilNextCallReturns(dasAt);
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
-    feedStableEpasCadence(handler, mock, 1000);
-    auto before = handler.lateEchoDiag(1280);
+    feedStableEpasCadence(handler, mock, epasStartAt);
+    auto before = handler.lateEchoDiag(epasStartAt + 7 * 40);
     TEST_ASSERT_TRUE(before.pendingEcho);
     TEST_ASSERT_GREATER_THAN_UINT32(0, before.pendingSendAtMs);
 
-    advanceNativeDiagNowMsBy(39);
+    advanceNativeDiagNowMsUntilNextCallReturns(before.pendingSendAtMs - 1);
     CanFrame epasNext = makeEpasFrameWithCounter(8);
     handler.handleMessage(epasNext, mock);
-    advanceNativeDiagNowMsBy(1);
     handler.tick(mock);
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -1054,15 +1064,17 @@ void test_epas_late_echo_abort_state_cancels_pending()
     handler.bionicSteering = true;
     handler.setNagModeForTest("late_echo");
 
-    advanceNativeDiagNowMsBy(900);
+    const uint32_t dasAt = nativeDiagFutureMs(100);
+    const uint32_t epasStartAt = dasAt + 100;
+    advanceNativeDiagNowMsUntilNextCallReturns(dasAt);
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
-    feedStableEpasCadence(handler, mock, 1000);
-    auto before = handler.lateEchoDiag(1280);
+    feedStableEpasCadence(handler, mock, epasStartAt);
+    auto before = handler.lateEchoDiag(epasStartAt + 7 * 40);
     TEST_ASSERT_TRUE(before.pendingEcho);
     TEST_ASSERT_GREATER_THAN_UINT32(0, before.pendingSendAtMs);
 
-    advanceNativeDiagNowMsBy(40);
+    advanceNativeDiagNowMsUntilNextCallReturns(before.pendingSendAtMs - 1);
     CanFrame dasAbort = makeDasFrameWithState(3, 8);
     handler.handleMessage(dasAbort, mock);
     handler.tick(mock);
