@@ -194,6 +194,49 @@ void test_due_frame_builds_only_in_late_window_and_preserves_byte4()
     TEST_ASSERT_GREATER_THAN_INT(0, after.lastRxToTxMs);
 }
 
+void test_real_epas_inside_due_window_counts_missed_before_rescheduling()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag before = n.diag(1280);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+    const unsigned long oldDueAt = before.pendingSendAtMs;
+
+    n.onEpasFrame(makeEpasFrame(8), oldDueAt + 1, true);
+
+    CanFrame out = {};
+    DashEpasLateEchoDiag after = n.diag(oldDueAt + 1);
+    TEST_ASSERT_EQUAL_UINT32(1, after.lateWindowMissed);
+    TEST_ASSERT_FALSE(n.buildDueFrame(oldDueAt + 1, out, true, 3, nullptr));
+    if (after.pendingEcho)
+        TEST_ASSERT_NOT_EQUAL_UINT32(oldDueAt, after.pendingSendAtMs);
+}
+
+void test_build_due_frame_after_late_window_expires_clears_pending_and_counts_drop()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag before = n.diag(1280);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+    const unsigned long expiredAt = before.pendingSendAtMs + DashEpasLateEcho::kMaxLatenessMs + 1;
+
+    CanFrame out = {};
+    TEST_ASSERT_FALSE(n.buildDueFrame(expiredAt, out, true, 3, nullptr));
+
+    DashEpasLateEchoDiag after = n.diag(expiredAt);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_EQUAL_UINT32(1, after.droppedLateEchoes);
+    TEST_ASSERT_EQUAL_STRING("lateWindowMissed", after.blockedReason);
+}
+
 void test_build_due_frame_requires_final_gate_active_at_send_time()
 {
     DashEpasLateEcho n;
@@ -289,6 +332,50 @@ void test_gate_loss_during_tx_fail_cooldown_preserves_cooldown()
     TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, d.mode);
     TEST_ASSERT_EQUAL_STRING("txFail", d.blockedReason);
     TEST_ASSERT_GREATER_THAN_UINT32(0, d.cooldownRemainMs);
+}
+
+void test_hos_clear_during_burst_off_preserves_off_interval()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 0, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_ON, n.diag(0).mode);
+
+    n.onDasStatus(6, 3, DashEpasLateEcho::kBurstOnMs, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, n.diag(DashEpasLateEcho::kBurstOnMs).mode);
+
+    n.onDasStatus(6, 2, 1100, true, nullptr);
+    DashEpasLateEchoDiag clear = n.diag(1100);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, clear.mode);
+    TEST_ASSERT_EQUAL_STRING("hosClear", clear.blockedReason);
+
+    n.onDasStatus(6, 3, 1200, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, n.diag(1200).mode);
+
+    n.onDasStatus(6, 3, DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_ON, n.diag(DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs).mode);
+}
+
+void test_gate_loss_during_burst_off_preserves_off_interval()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 0, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_ON, n.diag(0).mode);
+
+    n.onDasStatus(6, 3, DashEpasLateEcho::kBurstOnMs, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, n.diag(DashEpasLateEcho::kBurstOnMs).mode);
+
+    n.onDasStatus(6, 3, 1100, false, "gateLost");
+    DashEpasLateEchoDiag gated = n.diag(1100);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, gated.mode);
+    TEST_ASSERT_EQUAL_STRING("gateLost", gated.blockedReason);
+
+    n.onDasStatus(6, 3, 1200, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, n.diag(1200).mode);
+
+    n.onDasStatus(6, 3, DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_ON, n.diag(DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs).mode);
 }
 
 void test_gate_loss_on_epas_rx_cancels_pending_echo()
@@ -471,12 +558,16 @@ int main(int argc, char **argv)
     RUN_TEST(test_late_echo_schedules_at_period_minus_lead);
     RUN_TEST(test_new_rx_before_due_cancels_pending_and_counts_missed_window);
     RUN_TEST(test_due_frame_builds_only_in_late_window_and_preserves_byte4);
+    RUN_TEST(test_real_epas_inside_due_window_counts_missed_before_rescheduling);
+    RUN_TEST(test_build_due_frame_after_late_window_expires_clears_pending_and_counts_drop);
     RUN_TEST(test_build_due_frame_requires_final_gate_active_at_send_time);
     RUN_TEST(test_build_due_frame_requires_final_hos_active_at_send_time);
     RUN_TEST(test_hos_clear_cancels_pending_echo);
     RUN_TEST(test_abort_state_cancels_pending_and_enters_cooldown);
     RUN_TEST(test_hos_clear_during_abort_cooldown_preserves_cooldown);
     RUN_TEST(test_gate_loss_during_tx_fail_cooldown_preserves_cooldown);
+    RUN_TEST(test_hos_clear_during_burst_off_preserves_off_interval);
+    RUN_TEST(test_gate_loss_during_burst_off_preserves_off_interval);
     RUN_TEST(test_gate_loss_on_epas_rx_cancels_pending_echo);
     RUN_TEST(test_due_window_handles_unsigned_long_rollover);
     RUN_TEST(test_cooldown_expiry_handles_unsigned_long_rollover);

@@ -254,7 +254,8 @@ public:
         if (hos <= 2)
         {
             cancel("hosClear");
-            mode_ = LateEchoModeState::IDLE;
+            if (mode_ != LateEchoModeState::BURST_OFF)
+                mode_ = LateEchoModeState::IDLE;
             return;
         }
 
@@ -268,7 +269,8 @@ public:
         {
             gateBlocks_++;
             cancel(gateReason ? gateReason : "gate");
-            mode_ = LateEchoModeState::IDLE;
+            if (mode_ != LateEchoModeState::BURST_OFF)
+                mode_ = LateEchoModeState::IDLE;
             return;
         }
 
@@ -316,7 +318,14 @@ public:
                 cadence_.onRx370(frame, nowMs);
                 return;
             }
-            if (!inDueWindow(nowMs))
+            if (inDueWindow(nowMs))
+            {
+                pendingEcho_ = false;
+                builtPending_ = false;
+                lateWindowMissed_++;
+                blockedReason_ = "lateWindowMissed";
+            }
+            else
             {
                 pendingEcho_ = false;
                 builtPending_ = false;
@@ -382,7 +391,16 @@ public:
             return false;
         }
         if (!due(nowMs))
+        {
+            if (pendingEcho_ && !timeBefore(nowMs, pendingSendAtMs_) && !inDueWindow(nowMs))
+            {
+                pendingEcho_ = false;
+                builtPending_ = false;
+                droppedLateEchoes_++;
+                blockedReason_ = "lateWindowMissed";
+            }
             return false;
+        }
         if (!cadence_.lateEchoEligible(nowMs))
         {
             cancel(cadence_.blockedReason()[0] ? cadence_.blockedReason() : "cadenceUnstable");
