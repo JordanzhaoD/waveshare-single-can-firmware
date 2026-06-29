@@ -239,6 +239,7 @@ public:
 
         if (apState == 8 || apState == 9)
         {
+            apEligible_ = false;
             abortBlocks_++;
             enterCooldown(nowMs, kAbortCooldownMs, "abort");
             return;
@@ -248,6 +249,15 @@ public:
         {
             pendingEcho_ = false;
             builtPending_ = false;
+            return;
+        }
+
+        apEligible_ = isEligibleApState(apState);
+        if (!apEligible_)
+        {
+            cancel("apInactive");
+            if (mode_ != LateEchoModeState::BURST_OFF)
+                mode_ = LateEchoModeState::IDLE;
             return;
         }
 
@@ -288,6 +298,15 @@ public:
             cadence_.onRx370(frame, nowMs);
             pendingEcho_ = false;
             builtPending_ = false;
+            return;
+        }
+
+        if (!apEligible_)
+        {
+            cadence_.onRx370(frame, nowMs);
+            cancel("apInactive");
+            if (mode_ != LateEchoModeState::BURST_OFF)
+                mode_ = LateEchoModeState::IDLE;
             return;
         }
 
@@ -349,12 +368,13 @@ public:
         pendingEcho_ = true;
         builtPending_ = false;
         pendingSendAtMs_ = cadence_.predictedNextRxMs() - kLateEchoLeadMs;
+        pendingTorqueRaw_ = targetTorqueRaw(pendingSendAtMs_);
         blockedReason_ = "";
     }
 
     bool due(unsigned long nowMs) const
     {
-        return enabled_ && mode_ == LateEchoModeState::BURST_ON && elapsedSince(phaseStartMs_, nowMs) < kBurstOnMs && pendingEcho_ && !builtPending_ && inDueWindow(nowMs);
+        return enabled_ && apEligible_ && mode_ == LateEchoModeState::BURST_ON && elapsedSince(phaseStartMs_, nowMs) < kBurstOnMs && pendingEcho_ && !builtPending_ && inDueWindow(nowMs);
     }
 
     bool buildDueFrame(unsigned long nowMs, CanFrame &out, bool gatesActive, uint8_t currentHos, const char *gateReason)
@@ -382,6 +402,11 @@ public:
             cancel("disabled");
             return false;
         }
+        if (!apEligible_)
+        {
+            cancel("apInactive");
+            return false;
+        }
         if (mode_ != LateEchoModeState::BURST_ON)
         {
             if (pendingEcho_)
@@ -406,7 +431,7 @@ public:
             cancel(cadence_.blockedReason()[0] ? cadence_.blockedReason() : "cadenceUnstable");
             return false;
         }
-        if (!DashEpasFaithfulEncoder::build(cadence_.lastSource(), cadence_.expectedNextCounter(), DashEpasFaithfulEncoder::kMaxTorqueRaw, out))
+        if (!DashEpasFaithfulEncoder::build(cadence_.lastSource(), cadence_.expectedNextCounter(), pendingTorqueRaw_, out))
             return false;
         builtPending_ = true;
         return true;
@@ -460,6 +485,18 @@ public:
     }
 
 private:
+    static bool isEligibleApState(uint8_t apState)
+    {
+        return apState == 3 || apState == 4 || apState == 5 || apState == 6;
+    }
+
+    int targetTorqueRaw(unsigned long nowMs) const
+    {
+        const unsigned long elapsed = nowMs - phaseStartMs_;
+        const int magnitude = 150 + static_cast<int>(((elapsed / 120UL) % 4UL) * 10UL);
+        return burstDirection_ > 0 ? magnitude : -magnitude;
+    }
+
     void cancel(const char *reason)
     {
         pendingEcho_ = false;
@@ -471,6 +508,8 @@ private:
     {
         mode_ = LateEchoModeState::BURST_ON;
         phaseStartMs_ = nowMs;
+        burstDirection_ = nextBurstDirection_;
+        nextBurstDirection_ = static_cast<int8_t>(-nextBurstDirection_);
         blockedReason_ = "";
     }
 
@@ -554,6 +593,10 @@ private:
     DashEpasCadenceTracker cadence_{};
     bool pendingEcho_{false};
     bool builtPending_{false};
+    bool apEligible_{false};
+    int pendingTorqueRaw_{0};
+    int8_t burstDirection_{1};
+    int8_t nextBurstDirection_{1};
     unsigned long pendingSendAtMs_{0};
     unsigned long phaseStartMs_{0};
     unsigned long cooldownStartMs_{0};

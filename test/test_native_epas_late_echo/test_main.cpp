@@ -289,6 +289,42 @@ void test_hos_clear_cancels_pending_echo()
     TEST_ASSERT_EQUAL_STRING("hosClear", d.blockedReason);
 }
 
+void test_ap_inactive_does_not_enter_burst_on_or_schedule_echo()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+
+    n.onDasStatus(0, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    CanFrame out = {};
+    DashEpasLateEchoDiag d = n.diag(1280);
+    TEST_ASSERT_EQUAL(LateEchoModeState::IDLE, d.mode);
+    TEST_ASSERT_FALSE(d.pendingEcho);
+    TEST_ASSERT_EQUAL_STRING("apInactive", d.blockedReason);
+    TEST_ASSERT_FALSE(n.due(1000 + 8 * 40 - DashEpasLateEcho::kLateEchoLeadMs));
+    TEST_ASSERT_FALSE(n.buildDueFrame(1000 + 8 * 40 - DashEpasLateEcho::kLateEchoLeadMs, out, true, 3, nullptr));
+}
+
+void test_ap_inactive_update_cancels_existing_pending_echo()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+    TEST_ASSERT_TRUE(n.diag(1280).pendingEcho);
+
+    n.onDasStatus(0, 3, 1281, true, nullptr);
+
+    CanFrame out = {};
+    DashEpasLateEchoDiag d = n.diag(1281);
+    TEST_ASSERT_FALSE(d.pendingEcho);
+    TEST_ASSERT_EQUAL_STRING("apInactive", d.blockedReason);
+    TEST_ASSERT_FALSE(n.buildDueFrame(d.pendingSendAtMs, out, true, 3, nullptr));
+}
+
 void test_abort_state_cancels_pending_and_enters_cooldown()
 {
     DashEpasLateEcho n;
@@ -452,6 +488,59 @@ void test_cadence_tracker_recovers_after_transient_instability()
     TEST_ASSERT_EQUAL_STRING("", t.blockedReason());
 }
 
+void test_late_echo_torque_walk_stays_same_sign_within_burst()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag first = n.diag(1280);
+    CanFrame out1 = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(first.pendingSendAtMs, out1, true, 3, nullptr));
+    const int tq1 = decodeSignedTorque(out1);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(150, tq1 > 0 ? tq1 : -tq1);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(180, tq1 > 0 ? tq1 : -tq1);
+    n.notifyTxResult(true, first.pendingSendAtMs);
+
+    n.onEpasFrame(makeEpasFrame(8), 1320, true);
+    DashEpasLateEchoDiag second = n.diag(1320);
+    CanFrame out2 = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(second.pendingSendAtMs, out2, true, 3, nullptr));
+    const int tq2 = decodeSignedTorque(out2);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(150, tq2 > 0 ? tq2 : -tq2);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(180, tq2 > 0 ? tq2 : -tq2);
+    TEST_ASSERT_TRUE((tq1 > 0 && tq2 > 0) || (tq1 < 0 && tq2 < 0));
+}
+
+void test_late_echo_torque_direction_alternates_on_next_burst()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag first = n.diag(1280);
+    CanFrame out1 = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(first.pendingSendAtMs, out1, true, 3, nullptr));
+    const int tq1 = decodeSignedTorque(out1);
+    n.notifyTxResult(true, first.pendingSendAtMs);
+
+    n.onDasStatus(6, 3, 3400, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(8 + i), 3400 + i * 40, true);
+
+    DashEpasLateEchoDiag secondBurst = n.diag(3680);
+    CanFrame out2 = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(secondBurst.pendingSendAtMs, out2, true, 3, nullptr));
+    const int tq2 = decodeSignedTorque(out2);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(150, tq2 > 0 ? tq2 : -tq2);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(180, tq2 > 0 ? tq2 : -tq2);
+    TEST_ASSERT_TRUE((tq1 > 0 && tq2 < 0) || (tq1 < 0 && tq2 > 0));
+}
+
 void test_build_due_frame_is_single_use_until_tx_result()
 {
     DashEpasLateEcho n;
@@ -563,6 +652,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_build_due_frame_requires_final_gate_active_at_send_time);
     RUN_TEST(test_build_due_frame_requires_final_hos_active_at_send_time);
     RUN_TEST(test_hos_clear_cancels_pending_echo);
+    RUN_TEST(test_ap_inactive_does_not_enter_burst_on_or_schedule_echo);
+    RUN_TEST(test_ap_inactive_update_cancels_existing_pending_echo);
     RUN_TEST(test_abort_state_cancels_pending_and_enters_cooldown);
     RUN_TEST(test_hos_clear_during_abort_cooldown_preserves_cooldown);
     RUN_TEST(test_gate_loss_during_tx_fail_cooldown_preserves_cooldown);
@@ -572,6 +663,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_due_window_handles_unsigned_long_rollover);
     RUN_TEST(test_cooldown_expiry_handles_unsigned_long_rollover);
     RUN_TEST(test_cadence_tracker_recovers_after_transient_instability);
+    RUN_TEST(test_late_echo_torque_walk_stays_same_sign_within_burst);
+    RUN_TEST(test_late_echo_torque_direction_alternates_on_next_burst);
     RUN_TEST(test_build_due_frame_is_single_use_until_tx_result);
     RUN_TEST(test_build_due_frame_rejects_pending_after_burst_on_expires);
     RUN_TEST(test_disable_preserves_abort_cooldown_until_expiry);
