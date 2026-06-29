@@ -449,6 +449,46 @@ void test_build_due_frame_during_abort_cooldown_preserves_abort_reason()
     TEST_ASSERT_GREATER_THAN_UINT32(0, after.cooldownRemainMs);
 }
 
+void test_build_due_frame_enters_abort_cooldown_for_final_ap9_abort()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag before = n.diag(1280);
+    CanFrame out = {};
+    DashEpasLateEchoTxToken token = {};
+    TEST_ASSERT_TRUE(n.due(before.pendingSendAtMs));
+    TEST_ASSERT_FALSE(n.buildDueFrame(before.pendingSendAtMs, out, true, 9, 3, nullptr, token));
+
+    DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
+    TEST_ASSERT_EQUAL_STRING("abort", after.blockedReason);
+    TEST_ASSERT_EQUAL_UINT8(9, after.lastApState);
+    TEST_ASSERT_EQUAL_UINT8(3, after.lastHos);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, after.cooldownRemainMs);
+}
+
+void test_build_due_frame_during_ap9_abort_cooldown_preserves_abort_reason()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(9, 3, 1000, true, nullptr);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, n.diag(1000).mode);
+
+    CanFrame out = {};
+    DashEpasLateEchoTxToken token = {};
+    TEST_ASSERT_FALSE(n.buildDueFrame(1100, out, true, 0, 3, nullptr, token));
+
+    DashEpasLateEchoDiag after = n.diag(1100);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
+    TEST_ASSERT_EQUAL_STRING("abort", after.blockedReason);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, after.cooldownRemainMs);
+}
+
 void test_build_due_frame_during_tx_fail_cooldown_preserves_tx_fail_reason()
 {
     DashEpasLateEcho n;
@@ -1044,6 +1084,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_build_due_frame_requires_final_ap_active_at_send_time);
     RUN_TEST(test_build_due_frame_enters_abort_cooldown_for_final_ap_abort);
     RUN_TEST(test_build_due_frame_during_abort_cooldown_preserves_abort_reason);
+    RUN_TEST(test_build_due_frame_enters_abort_cooldown_for_final_ap9_abort);
+    RUN_TEST(test_build_due_frame_during_ap9_abort_cooldown_preserves_abort_reason);
     RUN_TEST(test_build_due_frame_during_tx_fail_cooldown_preserves_tx_fail_reason);
     RUN_TEST(test_build_due_frame_requires_final_hos_active_at_send_time);
     RUN_TEST(test_hos_clear_cancels_pending_echo);
