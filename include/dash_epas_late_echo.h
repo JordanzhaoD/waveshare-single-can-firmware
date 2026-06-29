@@ -175,6 +175,13 @@ enum class LateEchoModeState
     COOLDOWN
 };
 
+struct DashEpasLateEchoTxToken
+{
+    uint32_t generation{0};
+    unsigned long dueAtMs{0};
+    bool valid{false};
+};
+
 struct DashEpasLateEchoDiag
 {
     bool enabled{false};
@@ -293,6 +300,18 @@ public:
         retireCooldown(nowMs);
         advanceBurst(nowMs);
 
+        if (frame.id != DashEpasCadenceTracker::kEpasId || frame.dlc < 8)
+        {
+            if (mode_ == LateEchoModeState::COOLDOWN)
+            {
+                pendingEcho_ = false;
+                builtPending_ = false;
+            }
+            else
+                cancel("invalidFrame");
+            return;
+        }
+
         if (mode_ == LateEchoModeState::COOLDOWN)
         {
             cadence_.onRx370(frame, nowMs);
@@ -367,6 +386,7 @@ public:
 
         pendingEcho_ = true;
         builtPending_ = false;
+        pendingGeneration_++;
         pendingSendAtMs_ = cadence_.predictedNextRxMs() - kLateEchoLeadMs;
         pendingTorqueRaw_ = targetTorqueRaw(pendingSendAtMs_);
         blockedReason_ = "";
@@ -377,10 +397,30 @@ public:
         return enabled_ && apEligible_ && mode_ == LateEchoModeState::BURST_ON && elapsedSince(phaseStartMs_, nowMs) < kBurstOnMs && pendingEcho_ && !builtPending_ && inDueWindow(nowMs);
     }
 
-    bool buildDueFrame(unsigned long nowMs, CanFrame &out, bool gatesActive, uint8_t currentHos, const char *gateReason)
+    bool buildDueFrame(unsigned long nowMs, CanFrame &out, bool gatesActive, uint8_t currentApState, uint8_t currentHos, const char *gateReason)
     {
+        DashEpasLateEchoTxToken ignored;
+        return buildDueFrame(nowMs, out, gatesActive, currentApState, currentHos, gateReason, ignored);
+    }
+
+    bool buildDueFrame(unsigned long nowMs, CanFrame &out, bool gatesActive, uint8_t currentApState, uint8_t currentHos, const char *gateReason, DashEpasLateEchoTxToken &token)
+    {
+        token = {};
         retireCooldown(nowMs);
         advanceBurst(nowMs);
+        if (currentApState == 8 || currentApState == 9)
+        {
+            apEligible_ = false;
+            abortBlocks_++;
+            enterCooldown(nowMs, kAbortCooldownMs, "abort");
+            return false;
+        }
+        apEligible_ = isEligibleApState(currentApState);
+        if (!apEligible_)
+        {
+            cancel("apInactive");
+            return false;
+        }
         if (mode_ == LateEchoModeState::COOLDOWN)
         {
             pendingEcho_ = false;
@@ -434,14 +474,20 @@ public:
         if (!DashEpasFaithfulEncoder::build(cadence_.lastSource(), cadence_.expectedNextCounter(), pendingTorqueRaw_, out))
             return false;
         builtPending_ = true;
+        token.generation = pendingGeneration_;
+        token.dueAtMs = pendingSendAtMs_;
+        token.valid = true;
         return true;
     }
 
-    void notifyTxResult(bool ok, unsigned long nowMs)
+    void notifyTxResult(const DashEpasLateEchoTxToken &token, bool ok, unsigned long nowMs)
     {
+        if (!token.valid || token.generation != pendingGeneration_ || token.dueAtMs != pendingSendAtMs_ || !builtPending_)
+            return;
+
         if (ok)
         {
-            if (pendingEcho_ && builtPending_)
+            if (pendingEcho_)
             {
                 sentLateEchoes_++;
                 lastRxToTxMs_ = static_cast<int>(nowMs - cadence_.lastRxMs());
@@ -454,6 +500,15 @@ public:
 
         txFailures_++;
         enterCooldown(nowMs, kTxFailCooldownMs, "txFail");
+    }
+
+    void notifyTxResult(bool ok, unsigned long nowMs)
+    {
+        if (!ok)
+        {
+            txFailures_++;
+            enterCooldown(nowMs, kTxFailCooldownMs, "txFail");
+        }
     }
 
     DashEpasLateEchoDiag diag(unsigned long nowMs) const
@@ -602,6 +657,7 @@ private:
     unsigned long cooldownStartMs_{0};
     unsigned long cooldownDurationMs_{0};
     const char *blockedReason_{""};
+    uint32_t pendingGeneration_{0};
     uint32_t sentLateEchoes_{0};
     uint32_t lateWindowMissed_{0};
     uint32_t droppedLateEchoes_{0};
