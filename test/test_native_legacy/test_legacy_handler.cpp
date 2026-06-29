@@ -4,7 +4,10 @@
 #include "drivers/can_driver.h"
 #include "can_helpers.h"
 #include "handlers.h"
+#include "dash_epas_late_echo.h"
 #include "drivers/mock_driver.h"
+
+extern void dashSetNativeDiagNowMs(uint32_t nowMs);
 
 static MockDriver mock;
 static LegacyHandler handler;
@@ -59,6 +62,33 @@ static bool checksumValid370(const CanFrame &f)
     for (int i = 0; i < 7; ++i)
         sum += f.data[i];
     return static_cast<uint8_t>((sum + 0x73) & 0xFF) == f.data[7];
+}
+
+static CanFrame makeEpasFrameWithCounter(uint8_t counter, uint8_t byte4 = 0x20)
+{
+    CanFrame f = {.id = 880, .dlc = 8};
+    f.data[0] = 0x12;
+    f.data[1] = 0x00;
+    f.data[2] = 0x88;
+    f.data[3] = 0x00;
+    f.data[4] = byte4;
+    f.data[5] = 0xFE;
+    f.data[6] = static_cast<uint8_t>(0x20 | (counter & 0x0F));
+    uint16_t sum = 0;
+    for (int i = 0; i < 7; ++i)
+        sum += f.data[i];
+    f.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+    return f;
+}
+
+static void feedStableEpasCadence(LegacyHandler &h, MockDriver &d, unsigned long startMs = 1000)
+{
+    for (uint8_t i = 0; i < 8; ++i)
+    {
+        dashSetNativeDiagNowMs(static_cast<uint32_t>(startMs + static_cast<unsigned long>(i) * 40));
+        CanFrame epas = makeEpasFrameWithCounter(i);
+        h.handleMessage(epas, d);
+    }
 }
 
 static uint8_t counterLowNibble(const CanFrame &f)
@@ -952,6 +982,96 @@ void test_legacy_tsl6p_abort_state_blocks_subsequent_echo()
     TEST_ASSERT_EQUAL_STRING("abort", handler.nag.blockedReason());
 }
 
+void test_epas_late_echo_does_not_send_immediately_on_370()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("late_echo");
+
+    dashSetNativeDiagNowMs(900);
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    feedStableEpasCadence(handler, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    auto d = handler.lateEchoDiag(1280);
+    TEST_ASSERT_TRUE(d.pendingEcho);
+    TEST_ASSERT_TRUE(d.cadenceStable);
+}
+
+void test_epas_late_echo_tick_sends_due_frame_and_preserves_byte4()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("late_echo");
+
+    dashSetNativeDiagNowMs(900);
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    feedStableEpasCadence(handler, mock, 1000);
+    auto before = handler.lateEchoDiag(1280);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+
+    dashSetNativeDiagNowMs(before.pendingSendAtMs);
+    handler.tick(mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(880, mock.sent[0].id);
+    TEST_ASSERT_EQUAL_HEX8(0x20, mock.sent[0].data[4]);
+    TEST_ASSERT_EQUAL_UINT8(8, counterLowNibble(mock.sent[0]));
+    TEST_ASSERT_TRUE(checksumValid370(mock.sent[0]));
+    auto after = handler.lateEchoDiag(before.pendingSendAtMs);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_EQUAL_UINT32(1, after.sentLateEchoes);
+}
+
+void test_epas_late_echo_new_370_before_tick_drops_pending()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("late_echo");
+
+    dashSetNativeDiagNowMs(900);
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    feedStableEpasCadence(handler, mock, 1000);
+    auto before = handler.lateEchoDiag(1280);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+
+    dashSetNativeDiagNowMs(before.pendingSendAtMs - 1);
+    CanFrame epasNext = makeEpasFrameWithCounter(8);
+    handler.handleMessage(epasNext, mock);
+    dashSetNativeDiagNowMs(before.pendingSendAtMs);
+    handler.tick(mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    auto after = handler.lateEchoDiag(before.pendingSendAtMs);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_EQUAL_UINT32(1, after.lateWindowMissed);
+    TEST_ASSERT_EQUAL_STRING("lateWindowMissed", after.blockedReason);
+}
+
+void test_epas_late_echo_abort_state_cancels_pending()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("late_echo");
+
+    dashSetNativeDiagNowMs(900);
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    feedStableEpasCadence(handler, mock, 1000);
+    auto before = handler.lateEchoDiag(1280);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+
+    dashSetNativeDiagNowMs(before.pendingSendAtMs);
+    CanFrame dasAbort = makeDasFrameWithState(3, 8);
+    handler.handleMessage(dasAbort, mock);
+    handler.tick(mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    auto after = handler.lateEchoDiag(before.pendingSendAtMs);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
+    TEST_ASSERT_EQUAL_STRING("abort", after.blockedReason);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -1016,6 +1136,10 @@ int main()
     RUN_TEST(test_legacy_tsl6p_burst_off_gate_loss_cancels_with_reason);
     RUN_TEST(test_legacy_tsl6p_ap_inactive_cancels);
     RUN_TEST(test_legacy_tsl6p_abort_state_blocks_subsequent_echo);
+    RUN_TEST(test_epas_late_echo_does_not_send_immediately_on_370);
+    RUN_TEST(test_epas_late_echo_tick_sends_due_frame_and_preserves_byte4);
+    RUN_TEST(test_epas_late_echo_new_370_before_tick_drops_pending);
+    RUN_TEST(test_epas_late_echo_abort_state_cancels_pending);
 
     return UNITY_END();
 }
