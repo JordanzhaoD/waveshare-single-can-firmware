@@ -66,14 +66,8 @@ static bool checksumValid370(const CanFrame &f)
 
 static CanFrame makeEpasFrameWithCounter(uint8_t counter, uint8_t byte4 = 0x20)
 {
-    CanFrame f = {.id = 880, .dlc = 8};
-    f.data[0] = 0x12;
-    f.data[1] = 0x00;
-    f.data[2] = 0x88;
-    f.data[3] = 0x00;
+    CanFrame f = makeEpasFrame(0, 0.0f, counter);
     f.data[4] = byte4;
-    f.data[5] = 0xFE;
-    f.data[6] = static_cast<uint8_t>(0x20 | (counter & 0x0F));
     uint16_t sum = 0;
     for (int i = 0; i < 7; ++i)
         sum += f.data[i];
