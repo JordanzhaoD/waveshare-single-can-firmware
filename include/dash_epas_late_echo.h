@@ -218,8 +218,13 @@ public:
         enabled_ = value;
         if (!enabled_)
         {
-            cancel("disabled");
-            mode_ = LateEchoModeState::IDLE;
+            pendingEcho_ = false;
+            builtPending_ = false;
+            if (mode_ != LateEchoModeState::COOLDOWN)
+            {
+                blockedReason_ = "disabled";
+                mode_ = LateEchoModeState::IDLE;
+            }
         }
     }
 
@@ -275,6 +280,14 @@ public:
     {
         retireCooldown(nowMs);
         advanceBurst(nowMs);
+
+        if (mode_ == LateEchoModeState::COOLDOWN)
+        {
+            cadence_.onRx370(frame, nowMs);
+            pendingEcho_ = false;
+            builtPending_ = false;
+            return;
+        }
 
         if (!enabled_ || !gatesActive)
         {
@@ -332,13 +345,34 @@ public:
 
     bool due(unsigned long nowMs) const
     {
-        return pendingEcho_ && !builtPending_ && inDueWindow(nowMs);
+        return enabled_ && mode_ == LateEchoModeState::BURST_ON && elapsedSince(phaseStartMs_, nowMs) < kBurstOnMs && pendingEcho_ && !builtPending_ && inDueWindow(nowMs);
     }
 
-    bool buildDueFrame(unsigned long nowMs, CanFrame &out)
+    bool buildDueFrame(unsigned long nowMs, CanFrame &out, bool gatesActive, uint8_t currentHos, const char *gateReason)
     {
         retireCooldown(nowMs);
         advanceBurst(nowMs);
+        if (mode_ == LateEchoModeState::COOLDOWN)
+        {
+            pendingEcho_ = false;
+            builtPending_ = false;
+            return false;
+        }
+        if (!gatesActive)
+        {
+            cancel(gateReason ? gateReason : "gate");
+            return false;
+        }
+        if (currentHos <= 2)
+        {
+            cancel("hosClear");
+            return false;
+        }
+        if (!enabled_)
+        {
+            cancel("disabled");
+            return false;
+        }
         if (mode_ != LateEchoModeState::BURST_ON)
         {
             if (pendingEcho_)
