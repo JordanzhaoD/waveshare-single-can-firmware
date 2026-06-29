@@ -382,7 +382,7 @@ void test_build_due_frame_requires_final_gate_active_at_send_time()
 
     DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs);
     TEST_ASSERT_FALSE(after.pendingEcho);
-    TEST_ASSERT_EQUAL_STRING("gate", after.blockedReason);
+    TEST_ASSERT_EQUAL_STRING("finalGateLost", after.blockedReason);
     TEST_ASSERT_EQUAL_UINT8(5, after.lastApState);
     TEST_ASSERT_EQUAL_UINT8(4, after.lastHos);
     TEST_ASSERT_EQUAL_UINT32(before.gateBlocks + 1, after.gateBlocks);
@@ -655,6 +655,57 @@ void test_gate_loss_on_epas_rx_cancels_pending_echo()
     TEST_ASSERT_EQUAL_STRING("gate", after.blockedReason);
     TEST_ASSERT_EQUAL_UINT32(before.gateBlocks + 1, after.gateBlocks);
     TEST_ASSERT_FALSE(buildLateEcho(n, before.pendingSendAtMs, out, true, 6, 3, nullptr));
+}
+
+void test_inflight_hos_clear_preserves_token_for_tx_failure()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag before = n.diag(1280);
+    CanFrame out = {};
+    DashEpasLateEchoTxToken token = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(before.pendingSendAtMs, out, true, 6, 3, nullptr, token));
+
+    n.onDasStatus(6, 2, before.pendingSendAtMs + 1, true, nullptr);
+    DashEpasLateEchoDiag inFlight = n.diag(before.pendingSendAtMs + 1);
+    TEST_ASSERT_TRUE(inFlight.pendingEcho);
+    TEST_ASSERT_EQUAL_UINT32(before.pendingSendAtMs, inFlight.pendingSendAtMs);
+    TEST_ASSERT_EQUAL_UINT8(6, inFlight.lastApState);
+    TEST_ASSERT_EQUAL_UINT8(2, inFlight.lastHos);
+
+    n.notifyTxResult(token, false, before.pendingSendAtMs + 2);
+
+    DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs + 2);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
+    TEST_ASSERT_EQUAL_UINT32(1, after.txFailures);
+    TEST_ASSERT_EQUAL_STRING("txFail", after.blockedReason);
+}
+
+void test_inflight_gate_loss_blocks_new_pending_until_token_resolved()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag before = n.diag(1280);
+    CanFrame out = {};
+    DashEpasLateEchoTxToken token = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(before.pendingSendAtMs, out, true, 6, 3, nullptr, token));
+
+    n.onDasStatus(0, 3, before.pendingSendAtMs + 1, false, "finalGateLost");
+    n.onEpasFrame(makeEpasFrame(8), before.pendingSendAtMs + 2, true);
+
+    DashEpasLateEchoDiag inFlight = n.diag(before.pendingSendAtMs + 2);
+    TEST_ASSERT_TRUE(inFlight.pendingEcho);
+    TEST_ASSERT_EQUAL_UINT32(before.pendingSendAtMs, inFlight.pendingSendAtMs);
+    TEST_ASSERT_EQUAL_STRING("inFlight", inFlight.blockedReason);
+    TEST_ASSERT_FALSE(n.buildDueFrame(before.pendingSendAtMs + 2, out, true, 6, 3, nullptr, token));
 }
 
 void test_due_window_handles_unsigned_long_rollover()
@@ -1004,6 +1055,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_hos_clear_during_burst_off_preserves_off_interval);
     RUN_TEST(test_gate_loss_during_burst_off_preserves_off_interval);
     RUN_TEST(test_gate_loss_on_epas_rx_cancels_pending_echo);
+    RUN_TEST(test_inflight_hos_clear_preserves_token_for_tx_failure);
+    RUN_TEST(test_inflight_gate_loss_blocks_new_pending_until_token_resolved);
     RUN_TEST(test_due_window_handles_unsigned_long_rollover);
     RUN_TEST(test_cooldown_expiry_handles_unsigned_long_rollover);
     RUN_TEST(test_cadence_tracker_recovers_after_transient_instability);

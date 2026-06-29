@@ -267,6 +267,13 @@ public:
         haveDasStatus_ = true;
         retireCooldown(nowMs);
         advanceBurst(nowMs);
+        expireInFlight(nowMs);
+
+        if (builtPending_)
+        {
+            blockedReason_ = "inFlight";
+            return;
+        }
 
         if (apState == 8 || apState == 9)
         {
@@ -591,8 +598,18 @@ private:
         return apState == 3 || apState == 4 || apState == 5 || apState == 6;
     }
 
-    static const char *gateBlockReason(const char *)
+    static const char *gateBlockReason(const char *reason)
     {
+        if (!reason)
+            return "gate";
+        if (std::strcmp(reason, "finalGateLost") == 0)
+            return "finalGateLost";
+        if (std::strcmp(reason, "gate") == 0)
+            return "gate";
+        if (std::strcmp(reason, "toggle") == 0)
+            return "toggle";
+        if (std::strcmp(reason, "checkAD") == 0)
+            return "checkAD";
         return "gate";
     }
 
