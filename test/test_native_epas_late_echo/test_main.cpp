@@ -345,6 +345,45 @@ void test_build_due_frame_is_single_use_until_tx_result()
     TEST_ASSERT_EQUAL_UINT32(1, n.diag(before.pendingSendAtMs).sentLateEchoes);
 }
 
+void test_build_due_frame_rejects_pending_after_burst_on_expires()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 0, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 683 + i * 40, true);
+
+    DashEpasLateEchoDiag before = n.diag(963);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+    TEST_ASSERT_EQUAL_UINT32(1000, before.pendingSendAtMs);
+
+    CanFrame out = {};
+    TEST_ASSERT_FALSE(n.buildDueFrame(1000, out));
+    DashEpasLateEchoDiag after = n.diag(1000);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_NOT_EQUAL(LateEchoModeState::BURST_ON, after.mode);
+    TEST_ASSERT_EQUAL_STRING("burstOff", after.blockedReason);
+}
+
+void test_invalid_real_epas_inside_due_window_cancels_stale_pending_echo()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+    DashEpasLateEchoDiag before = n.diag(1280);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+
+    n.onEpasFrame(makeEpasFrame(12), before.pendingSendAtMs + 1, true);
+
+    CanFrame out = {};
+    DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs + 1);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_EQUAL_STRING("counterUnstable", after.blockedReason);
+    TEST_ASSERT_FALSE(n.buildDueFrame(before.pendingSendAtMs + 1, out));
+}
+
 int main(int argc, char **argv)
 {
     UNITY_BEGIN();
@@ -366,5 +405,7 @@ int main(int argc, char **argv)
     RUN_TEST(test_cooldown_expiry_handles_unsigned_long_rollover);
     RUN_TEST(test_cadence_tracker_recovers_after_transient_instability);
     RUN_TEST(test_build_due_frame_is_single_use_until_tx_result);
+    RUN_TEST(test_build_due_frame_rejects_pending_after_burst_on_expires);
+    RUN_TEST(test_invalid_real_epas_inside_due_window_cancels_stale_pending_echo);
     return UNITY_END();
 }

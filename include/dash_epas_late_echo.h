@@ -217,7 +217,10 @@ public:
     {
         enabled_ = value;
         if (!enabled_)
+        {
             cancel("disabled");
+            mode_ = LateEchoModeState::IDLE;
+        }
     }
 
     bool enabled() const { return enabled_; }
@@ -288,6 +291,7 @@ public:
             return;
         }
 
+        const bool hadPending = pendingEcho_;
         if (pendingEcho_)
         {
             if (timeBefore(nowMs, pendingSendAtMs_))
@@ -312,7 +316,11 @@ public:
 
         if (!cadence_.lateEchoEligible(nowMs))
         {
+            pendingEcho_ = false;
+            builtPending_ = false;
             blockedReason_ = cadence_.blockedReason();
+            if (hadPending && (!blockedReason_ || blockedReason_[0] == '\0'))
+                blockedReason_ = "cadenceUnstable";
             return;
         }
 
@@ -329,8 +337,23 @@ public:
 
     bool buildDueFrame(unsigned long nowMs, CanFrame &out)
     {
+        retireCooldown(nowMs);
+        advanceBurst(nowMs);
+        if (mode_ != LateEchoModeState::BURST_ON)
+        {
+            if (pendingEcho_)
+                cancel("burstOff");
+            else
+                blockedReason_ = "burstOff";
+            return false;
+        }
         if (!due(nowMs))
             return false;
+        if (!cadence_.lateEchoEligible(nowMs))
+        {
+            cancel(cadence_.blockedReason()[0] ? cadence_.blockedReason() : "cadenceUnstable");
+            return false;
+        }
         if (!DashEpasFaithfulEncoder::build(cadence_.lastSource(), cadence_.expectedNextCounter(), DashEpasFaithfulEncoder::kMaxTorqueRaw, out))
             return false;
         builtPending_ = true;
