@@ -269,17 +269,17 @@ public:
         advanceBurst(nowMs);
         expireInFlight(nowMs);
 
-        if (builtPending_)
-        {
-            blockedReason_ = "inFlight";
-            return;
-        }
-
         if (apState == 8 || apState == 9)
         {
             apEligible_ = false;
             abortBlocks_++;
             enterCooldown(nowMs, kAbortCooldownMs, "abort");
+            return;
+        }
+
+        if (builtPending_)
+        {
+            blockedReason_ = "inFlight";
             return;
         }
 
@@ -332,12 +332,6 @@ public:
         advanceBurst(nowMs);
         expireInFlight(nowMs);
 
-        if (builtPending_)
-        {
-            blockedReason_ = "inFlight";
-            return;
-        }
-
         if (frame.id != DashEpasCadenceTracker::kEpasId || frame.dlc < 8)
         {
             if (mode_ == LateEchoModeState::COOLDOWN)
@@ -359,6 +353,13 @@ public:
             }
             else
                 cancel("checksumInvalid");
+            return;
+        }
+
+        if (builtPending_)
+        {
+            cadence_.onRx370(frame, nowMs);
+            blockedReason_ = "inFlight";
             return;
         }
 

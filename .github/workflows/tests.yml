@@ -68,6 +68,7 @@ jobs:
           - native_helpers
           - native_twai
           - native_reactive_nag
+          - native_epas_late_echo
           - native_wheel_dnd
     steps:
       - uses: actions/checkout@v6

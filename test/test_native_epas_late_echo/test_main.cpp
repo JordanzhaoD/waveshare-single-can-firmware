@@ -858,6 +858,64 @@ void test_late_echo_torque_direction_alternates_on_next_burst()
     TEST_ASSERT_TRUE((tq1 > 0 && tq2 < 0) || (tq1 < 0 && tq2 > 0));
 }
 
+void test_inflight_ap_abort_enters_cooldown_without_losing_token_ownership()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag first = n.diag(1280);
+    CanFrame out = {};
+    DashEpasLateEchoTxToken token = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(first.pendingSendAtMs, out, true, 6, 3, nullptr, token));
+
+    n.onDasStatus(8, 3, first.pendingSendAtMs + 1, true, nullptr);
+
+    DashEpasLateEchoDiag aborted = n.diag(first.pendingSendAtMs + 1);
+    TEST_ASSERT_FALSE(aborted.pendingEcho);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, aborted.mode);
+    TEST_ASSERT_EQUAL_STRING("abort", aborted.blockedReason);
+    TEST_ASSERT_EQUAL_UINT8(8, aborted.lastApState);
+    TEST_ASSERT_EQUAL_UINT32(first.abortBlocks + 1, aborted.abortBlocks);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, aborted.cooldownRemainMs);
+
+    n.notifyTxResult(token, true, first.pendingSendAtMs + 2);
+    DashEpasLateEchoDiag after = n.diag(first.pendingSendAtMs + 2);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
+    TEST_ASSERT_EQUAL_STRING("abort", after.blockedReason);
+    TEST_ASSERT_EQUAL_UINT32(0, after.sentLateEchoes);
+}
+
+void test_inflight_real_epas_frame_advances_cadence_without_rescheduling_or_losing_token()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag first = n.diag(1280);
+    CanFrame out = {};
+    DashEpasLateEchoTxToken token = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(first.pendingSendAtMs, out, true, 6, 3, nullptr, token));
+
+    n.onEpasFrame(makeEpasFrame(8), first.pendingSendAtMs + 1, true);
+    DashEpasLateEchoDiag inFlight = n.diag(first.pendingSendAtMs + 1);
+    TEST_ASSERT_TRUE(inFlight.pendingEcho);
+    TEST_ASSERT_EQUAL_UINT32(first.pendingSendAtMs, inFlight.pendingSendAtMs);
+    TEST_ASSERT_GREATER_THAN_UINT32(first.predictedNextRxMs, inFlight.predictedNextRxMs);
+    TEST_ASSERT_EQUAL_UINT8(9, inFlight.expectedNextCounter);
+    TEST_ASSERT_EQUAL_STRING("inFlight", inFlight.blockedReason);
+
+    n.notifyTxResult(token, false, first.pendingSendAtMs + 2);
+    DashEpasLateEchoDiag after = n.diag(first.pendingSendAtMs + 2);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
+    TEST_ASSERT_EQUAL_UINT32(1, after.txFailures);
+    TEST_ASSERT_EQUAL_STRING("txFail", after.blockedReason);
+}
+
 void test_inflight_tx_blocks_real_epas_reschedule_until_notify_failure()
 {
     DashEpasLateEcho n;
@@ -1104,6 +1162,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_cadence_tracker_recovers_after_transient_instability);
     RUN_TEST(test_late_echo_torque_walk_stays_same_sign_within_burst);
     RUN_TEST(test_late_echo_torque_direction_alternates_on_next_burst);
+    RUN_TEST(test_inflight_ap_abort_enters_cooldown_without_losing_token_ownership);
+    RUN_TEST(test_inflight_real_epas_frame_advances_cadence_without_rescheduling_or_losing_token);
     RUN_TEST(test_inflight_tx_blocks_real_epas_reschedule_until_notify_failure);
     RUN_TEST(test_inflight_tx_rejects_duplicate_build_without_clearing_token_ownership);
     RUN_TEST(test_delayed_tx_success_for_old_frame_does_not_clear_new_pending_echo);
