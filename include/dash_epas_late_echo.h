@@ -397,15 +397,11 @@ public:
         return enabled_ && apEligible_ && mode_ == LateEchoModeState::BURST_ON && elapsedSince(phaseStartMs_, nowMs) < kBurstOnMs && pendingEcho_ && !builtPending_ && inDueWindow(nowMs);
     }
 
-    bool buildDueFrame(unsigned long nowMs, CanFrame &out, bool gatesActive, uint8_t currentApState, uint8_t currentHos, const char *gateReason)
-    {
-        DashEpasLateEchoTxToken ignored;
-        return buildDueFrame(nowMs, out, gatesActive, currentApState, currentHos, gateReason, ignored);
-    }
-
     bool buildDueFrame(unsigned long nowMs, CanFrame &out, bool gatesActive, uint8_t currentApState, uint8_t currentHos, const char *gateReason, DashEpasLateEchoTxToken &token)
     {
         token = {};
+        lastApState_ = currentApState;
+        lastHos_ = currentHos;
         retireCooldown(nowMs);
         advanceBurst(nowMs);
         if (currentApState == 8 || currentApState == 9)
@@ -429,6 +425,7 @@ public:
         }
         if (!gatesActive)
         {
+            gateBlocks_++;
             cancel(gateReason ? gateReason : "gate");
             return false;
         }
@@ -500,15 +497,6 @@ public:
 
         txFailures_++;
         enterCooldown(nowMs, kTxFailCooldownMs, "txFail");
-    }
-
-    void notifyTxResult(bool ok, unsigned long nowMs)
-    {
-        if (!ok)
-        {
-            txFailures_++;
-            enterCooldown(nowMs, kTxFailCooldownMs, "txFail");
-        }
     }
 
     DashEpasLateEchoDiag diag(unsigned long nowMs) const
