@@ -1323,6 +1323,14 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
+  <div class="row">
+    <label>NAG 模式</label>
+    <select id="nag-mode-select" onchange="saveDefenseConfig()">
+      <option value="0">Off</option>
+      <option value="2">EPAS Late Echo 实验</option>
+    </select>
+  </div>
+  <div class="hint warn">EPAS Late Echo 为封闭环境研究模式：默认关闭，只发送 0x370，保留 handsOnLevel，cadence/timing 不满足时自动不发。</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">扭矩篡改(1.80Nm) <span class="exp-badge">高危</span></div>
@@ -1845,6 +1853,8 @@ var OLD_DNS_BLACKLIST = 'tesla.cn\ntesla.com\nteslamotors.com\ntesla.services';
 
 // ── Utilities ──────────────────────────────────────────────
 function $(id){return document.getElementById(id)}
+function val(id){var e=$(id);return e?e.value:''}
+function setVal(id,v){var e=$(id);if(e)e.value=v}
 function setText(id,txt){var e=$(id);if(e)e.textContent=txt}
 function setFsdVisualState(on){
   var stateText=on?'ON':'OFF';
@@ -2430,6 +2440,8 @@ async function loadDefenseConfig(){
   if(tgl)tgl.checked=!!d.enabled;
   var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
   var bioRisk=$('def-bionic-risk');if(bioRisk)bioRisk.style.display=!!d.bionic_steering?'block':'none';
+  var conf=(d&&d.defense)?d:{defense:{nagMode:(d&&d.nagMode!=null)?d.nagMode:0}};
+  setVal('nag-mode-select', String((conf&&conf.defense&&conf.defense.nagMode!=null)?conf.defense.nagMode:0));
   var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
   var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
   var se=$('def-soft-engage-tgl');if(se)se.checked=!!d.soft_engage;
@@ -2762,6 +2774,7 @@ async function saveDefenseConfig(){
   var data={
     enabled:tgl&&tgl.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
+    nagMode: parseInt(val('nag-mode-select')||'0',10),
     nag_torque_tamper:ntt&&ntt.checked?'1':'0',
     soft_engage:se&&se.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',

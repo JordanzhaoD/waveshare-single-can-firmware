@@ -209,6 +209,17 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('String(dashNagMode <= 2 ? dashNagMode : 0)', status_prefix)
         self.assertIn('=== EPAS-faithful Late Echo ===', self.dash)
 
+    def test_epas_late_echo_ui_selector_contract(self) -> None:
+        for token in [
+            "nag-mode-select",
+            "EPAS Late Echo",
+            "实验",
+            "nagMode",
+            "defense.nagMode",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
         """Device status must show which firmware/UI and handler mode are running."""
         for token in [
