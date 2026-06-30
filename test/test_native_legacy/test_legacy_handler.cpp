@@ -811,9 +811,23 @@ void test_legacy_tsl6p_off_no_echo()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
+void test_legacy_tsl6p_default_mode_off_no_echo_even_when_bionic_enabled()
+{
+    handler.bionicSteering = true;
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(epas, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_FALSE(handler.reactiveDiag().enabled);
+}
+
 void test_legacy_tsl6p_hos3_sends_first_sequence_frame()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
 
@@ -831,6 +845,7 @@ void test_legacy_tsl6p_hos3_sends_first_sequence_frame()
 void test_legacy_tsl6p_sequence_cycles_absolute_torque_targets()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
 
@@ -849,6 +864,7 @@ void test_legacy_tsl6p_sequence_cycles_absolute_torque_targets()
 void test_legacy_tsl6p_burst_off_suppresses_echo()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     CanFrame epas = makeEpasFrame(0, 0.10f, 2);
@@ -868,6 +884,7 @@ void test_legacy_tsl6p_burst_off_suppresses_echo()
 void test_legacy_tsl6p_370_path_advances_cycle_without_fresh_399()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
@@ -893,6 +910,7 @@ void test_legacy_tsl6p_370_path_advances_cycle_without_fresh_399()
 void test_legacy_tsl6p_hos_clear_stops_future_echo()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     CanFrame epas = makeEpasFrame(0, 0.10f, 2);
@@ -911,6 +929,7 @@ void test_legacy_tsl6p_hos_clear_stops_future_echo()
 void test_legacy_tsl6p_checkad_blocks_and_cancels()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
@@ -927,6 +946,7 @@ void test_legacy_tsl6p_checkad_blocks_and_cancels()
 void test_legacy_tsl6p_checkad_false_from_idle_does_not_start_burst_session()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     handler.checkAD = denyAD;
 
     CanFrame das = makeDasFrameWithState(3, 6);
@@ -940,6 +960,7 @@ void test_legacy_tsl6p_checkad_false_from_idle_does_not_start_burst_session()
 void test_legacy_tsl6p_burst_off_gate_loss_cancels_with_reason()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     handler.nag.onNagSample(3, 5000, true, 6);
@@ -956,6 +977,7 @@ void test_legacy_tsl6p_burst_off_gate_loss_cancels_with_reason()
 void test_legacy_tsl6p_ap_inactive_cancels()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
@@ -973,6 +995,7 @@ void test_legacy_tsl6p_ap_inactive_cancels()
 void test_legacy_tsl6p_abort_state_blocks_subsequent_echo()
 {
     handler.bionicSteering = true;
+    handler.setNagModeForTest("legacy_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
@@ -1143,6 +1166,7 @@ int main()
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
 
     RUN_TEST(test_legacy_tsl6p_off_no_echo);
+    RUN_TEST(test_legacy_tsl6p_default_mode_off_no_echo_even_when_bionic_enabled);
     RUN_TEST(test_legacy_tsl6p_hos3_sends_first_sequence_frame);
     RUN_TEST(test_legacy_tsl6p_sequence_cycles_absolute_torque_targets);
     RUN_TEST(test_legacy_tsl6p_burst_off_suppresses_echo);

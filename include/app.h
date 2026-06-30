@@ -222,15 +222,19 @@ static bool appLoop()
 #endif
 #endif
 
+    CarManagerBase *h = appActiveHandler ? appActiveHandler : appHandler.get();
+
     if constexpr (Driver::kSupportsISR)
     {
         if (!frameReady)
+        {
+            h->tick(dashDiagNowMs(), *appDriver);
             return false;
+        }
         frameReady = false;
     }
 
     CanFrame frame;
-    CarManagerBase *h = appActiveHandler ? appActiveHandler : appHandler.get();
     uint8_t framesThisLoop = 0;
     bool processedFrame = false;
     while (appDriver->read(frame))

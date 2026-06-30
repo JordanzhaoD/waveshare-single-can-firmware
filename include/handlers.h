@@ -317,15 +317,14 @@ struct LegacyHandler : public CarManagerBase
     DashReactiveNagBurst nag; // reactive NAG-suppression burst state machine
     DashEpasLateEcho lateNag;
     NagMode nagMode{NagMode::Off};
-    bool nagModeExplicit{false};
     uint8_t lastNagApState{0};
     uint8_t lastNagHos{0};
     const char *lastNagGateReason{"toggle"};
     bool lastNagGatesActive{false};
 
     bool bionicDisabled() const override { return false; } // reactive has no auto-disable
-    bool lateEchoSelected() const { return nagModeExplicit && nagMode == NagMode::EpasLateEcho; }
-    bool legacyTsl6pSelected() const { return (!nagModeExplicit) || nagMode == NagMode::LegacyTsl6p; }
+    bool lateEchoSelected() const { return nagMode == NagMode::EpasLateEcho; }
+    bool legacyTsl6pSelected() const { return nagMode == NagMode::LegacyTsl6p; }
 
     void refreshLateNagEnabled()
     {
@@ -334,7 +333,6 @@ struct LegacyHandler : public CarManagerBase
 
     void setNagMode(uint8_t mode)
     {
-        nagModeExplicit = true;
         if (mode == static_cast<uint8_t>(NagMode::LegacyTsl6p))
             nagMode = NagMode::LegacyTsl6p;
         else if (mode == static_cast<uint8_t>(NagMode::EpasLateEcho))
