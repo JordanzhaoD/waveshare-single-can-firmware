@@ -613,6 +613,24 @@ struct LegacyHandler : public CarManagerBase
                 else if (legacyTsl6pSelected())
                     nag.onNagSample(hos, nowMs, active, apState, gateReason);
             }
+            else if (lateEchoSelected() && (apState == 8 || apState == 9))
+            {
+                bool checkAdAllowed = !(checkAD && !checkAD());
+                const char *gateReason = nullptr;
+                if (!(bool)bionicSteering)
+                    gateReason = "toggle";
+                else if (!APActive)
+                    gateReason = "apInactive";
+                else if (!checkAdAllowed)
+                    gateReason = "checkAD";
+                bool active = gateReason == nullptr;
+                uint32_t nowMs = dashDiagNowMs();
+                lastNagApState = apState;
+                lastNagGateReason = gateReason;
+                lastNagGatesActive = active;
+                refreshLateNagEnabled();
+                lateNag.onDasStatus(apState, lastNagHos, nowMs, active, gateReason);
+            }
             return;
         }
         // 0x3EE (1006) — FSD activation frame (mux 0/1)
