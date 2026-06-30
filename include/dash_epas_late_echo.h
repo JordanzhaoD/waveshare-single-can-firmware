@@ -213,12 +213,14 @@ struct DashEpasLateEchoDiag
     const char *blockedReason{""};
 
     bool cadenceStable{false};
+    bool lateEchoEligible{false};
     uint16_t periodMs{0};
     uint16_t jitterMs{0};
     uint8_t counterStep{0};
     uint8_t expectedNextCounter{0};
     unsigned long predictedNextRxMs{0};
 
+    uint32_t scheduledEchoes{0};
     uint32_t sentLateEchoes{0};
     uint32_t lateWindowMissed{0};
     uint32_t droppedLateEchoes{0};
@@ -226,6 +228,9 @@ struct DashEpasLateEchoDiag
     uint32_t gateBlocks{0};
     uint32_t txFailures{0};
     int lastRxToTxMs{0};
+    bool preserveHandsOnLevel{false};
+    uint8_t lastSourceHandsOnLevel{0};
+    uint8_t lastTxHandsOnLevel{0};
     uint8_t lastApState{0};
     uint8_t lastHos{0};
 };
@@ -440,6 +445,7 @@ public:
         pendingEcho_ = true;
         builtPending_ = false;
         pendingGeneration_++;
+        scheduledEchoes_++;
         pendingSendAtMs_ = cadence_.predictedNextRxMs() - kLateEchoLeadMs;
         pendingTorqueRaw_ = targetTorqueRaw(pendingSendAtMs_);
         blockedReason_ = "";
@@ -535,6 +541,9 @@ public:
         }
         if (!DashEpasFaithfulEncoder::build(cadence_.lastSource(), cadence_.expectedNextCounter(), pendingTorqueRaw_, out))
             return false;
+        preserveHandsOnLevel_ = true;
+        lastSourceHandsOnLevel_ = static_cast<uint8_t>((cadence_.lastSource().data[4] >> 6) & 0x03);
+        lastTxHandsOnLevel_ = static_cast<uint8_t>((out.data[4] >> 6) & 0x03);
         builtPending_ = true;
         builtAtMs_ = nowMs;
         token.generation = pendingGeneration_;
@@ -576,11 +585,13 @@ public:
         d.phaseRemainMs = phaseRemain(nowMs);
         d.blockedReason = blockedReason_;
         d.cadenceStable = cadence_.stable();
+        d.lateEchoEligible = cadence_.lateEchoEligible(nowMs);
         d.periodMs = cadence_.periodMs();
         d.jitterMs = cadence_.jitterMs();
         d.counterStep = cadence_.counterStep();
         d.expectedNextCounter = cadence_.expectedNextCounter();
         d.predictedNextRxMs = cadence_.predictedNextRxMs();
+        d.scheduledEchoes = scheduledEchoes_;
         d.sentLateEchoes = sentLateEchoes_;
         d.lateWindowMissed = lateWindowMissed_;
         d.droppedLateEchoes = droppedLateEchoes_;
@@ -588,6 +599,9 @@ public:
         d.gateBlocks = gateBlocks_;
         d.txFailures = txFailures_;
         d.lastRxToTxMs = lastRxToTxMs_;
+        d.preserveHandsOnLevel = preserveHandsOnLevel_;
+        d.lastSourceHandsOnLevel = lastSourceHandsOnLevel_;
+        d.lastTxHandsOnLevel = lastTxHandsOnLevel_;
         d.lastApState = lastApState_;
         d.lastHos = lastHos_;
         return d;
@@ -752,6 +766,7 @@ private:
     unsigned long cooldownDurationMs_{0};
     const char *blockedReason_{""};
     uint32_t pendingGeneration_{0};
+    uint32_t scheduledEchoes_{0};
     uint32_t sentLateEchoes_{0};
     uint32_t lateWindowMissed_{0};
     uint32_t droppedLateEchoes_{0};
@@ -759,6 +774,9 @@ private:
     uint32_t gateBlocks_{0};
     uint32_t txFailures_{0};
     int lastRxToTxMs_{0};
+    bool preserveHandsOnLevel_{false};
+    uint8_t lastSourceHandsOnLevel_{0};
+    uint8_t lastTxHandsOnLevel_{0};
     uint8_t lastApState_{0};
     uint8_t lastHos_{0};
 };

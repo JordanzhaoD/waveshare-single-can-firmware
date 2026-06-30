@@ -383,7 +383,7 @@ struct LegacyHandler : public CarManagerBase
             d.lastApState = late.lastApState;
             d.lastHandsOnState = late.lastHos;
             d.cadenceStable = late.cadenceStable;
-            d.lateEchoEligible = late.cadenceStable;
+            d.lateEchoEligible = late.lateEchoEligible;
             d.pendingEcho = late.pendingEcho;
             d.periodMs = late.periodMs;
             d.jitterMs = late.jitterMs;
@@ -391,13 +391,15 @@ struct LegacyHandler : public CarManagerBase
             d.expectedNextCounter = late.expectedNextCounter;
             d.predictedNextRxMs = late.predictedNextRxMs;
             d.pendingSendAtMs = late.pendingSendAtMs;
-            d.scheduledEchoes = late.pendingEcho ? 1 : 0;
+            d.scheduledEchoes = late.scheduledEchoes;
             d.sentLateEchoes = late.sentLateEchoes;
             d.droppedLateEchoes = late.droppedLateEchoes;
             d.lateWindowMissed = late.lateWindowMissed;
             d.lastRxToTxMs = late.lastRxToTxMs;
             d.lastLeadMs = DashEpasLateEcho::kLateEchoLeadMs;
-            d.preserveHandsOnLevel = true;
+            d.preserveHandsOnLevel = late.preserveHandsOnLevel;
+            d.lastSourceHandsOnLevel = late.lastSourceHandsOnLevel;
+            d.lastTxHandsOnLevel = late.lastTxHandsOnLevel;
         }
         return d;
     }

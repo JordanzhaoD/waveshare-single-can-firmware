@@ -157,7 +157,14 @@ void test_late_echo_schedules_at_period_minus_lead()
 
     DashEpasLateEchoDiag d = n.diag(1280);
     TEST_ASSERT_TRUE(d.pendingEcho);
+    TEST_ASSERT_TRUE(d.lateEchoEligible);
+    TEST_ASSERT_EQUAL_UINT32(1, d.scheduledEchoes);
     TEST_ASSERT_EQUAL_UINT32(1000 + 8 * 40 - DashEpasLateEcho::kLateEchoLeadMs, d.pendingSendAtMs);
+
+    DashEpasLateEchoDiag stale = n.diag(1000 + 7 * 40 + DashEpasCadenceTracker::kStaleMs + 1);
+    TEST_ASSERT_TRUE(stale.cadenceStable);
+    TEST_ASSERT_FALSE(stale.lateEchoEligible);
+
     TEST_ASSERT_FALSE(n.due(d.pendingSendAtMs - 1));
     TEST_ASSERT_TRUE(n.due(d.pendingSendAtMs));
     TEST_ASSERT_TRUE(n.due(d.pendingSendAtMs + DashEpasLateEcho::kMaxLatenessMs));
@@ -189,16 +196,20 @@ void test_due_frame_builds_only_in_late_window_and_preserves_byte4()
     n.setEnabled(true);
     n.onDasStatus(6, 3, 900, true, nullptr);
     for (uint8_t i = 0; i < 8; ++i)
-        n.onEpasFrame(makeEpasFrame(i, 0x20), 1000 + i * 40, true);
+        n.onEpasFrame(makeEpasFrame(i, 0xA0), 1000 + i * 40, true);
 
     DashEpasLateEchoDiag before = n.diag(1280);
     CanFrame out = {};
     DashEpasLateEchoTxToken token = {};
     TEST_ASSERT_FALSE(n.buildDueFrame(before.pendingSendAtMs - 1, out, true, 6, 3, nullptr, token));
     TEST_ASSERT_TRUE(n.buildDueFrame(before.pendingSendAtMs, out, true, 6, 3, nullptr, token));
-    TEST_ASSERT_EQUAL_HEX8(0x20, out.data[4]);
+    TEST_ASSERT_EQUAL_HEX8(0xA0, out.data[4]);
     TEST_ASSERT_EQUAL_UINT8(8, out.data[6] & 0x0F);
     TEST_ASSERT_TRUE(checksumValid370(out));
+    DashEpasLateEchoDiag built = n.diag(before.pendingSendAtMs);
+    TEST_ASSERT_TRUE(built.preserveHandsOnLevel);
+    TEST_ASSERT_EQUAL_UINT8(2, built.lastSourceHandsOnLevel);
+    TEST_ASSERT_EQUAL_UINT8(2, built.lastTxHandsOnLevel);
 
     n.notifyTxResult(token, true, before.pendingSendAtMs);
     DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs);
