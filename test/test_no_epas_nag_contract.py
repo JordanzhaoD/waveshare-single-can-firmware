@@ -172,3 +172,42 @@ class Tsl6pBurstNagV4Contract(unittest.TestCase):
         self.assertIn("apState == 8 || apState == 9", self.reactive)
         self.assertIn("enterAbortCooldown", self.reactive)
         self.assertIn('"abort"', self.reactive)
+
+
+class EpasLateEchoContract(unittest.TestCase):
+    def setUp(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        self.handlers = (root / "include" / "handlers.h").read_text()
+        self.late = (root / "include" / "dash_epas_late_echo.h").read_text()
+        self.legacy = legacy_handler_block(self.handlers)
+
+    def test_late_echo_preserves_370_byte4(self) -> None:
+        self.assertIn("out.data[4] = source.data[4]", self.late)
+        self.assertNotIn("| 0x40", self.late)
+        self.assertIn("preserveHandsOnLevel", self.late)
+
+    def test_late_echo_hard_caps_torque(self) -> None:
+        self.assertRegex(self.late, r"kMaxTorqueRaw\s*=\s*180")
+        self.assertIn("targetTorqueRaw > kMaxTorqueRaw", self.late)
+        self.assertIn("targetTorqueRaw < -kMaxTorqueRaw", self.late)
+        self.assertNotIn("kMaxTorqueRaw{220}", self.late)
+        self.assertNotIn("kMaxTorqueRaw{250}", self.late)
+
+    def test_late_echo_uses_tick_not_immediate_send(self) -> None:
+        epas_branch_start = self.legacy.index("if (frame.id == 880)")
+        late_branch_start = self.legacy.index("if (lateEchoSelected())", epas_branch_start)
+        late_branch_end = self.legacy.index("if (!legacyTsl6pSelected()", late_branch_start)
+        late_branch = self.legacy[late_branch_start:late_branch_end]
+        self.assertIn("lateNag.onEpasFrame", late_branch)
+        self.assertNotIn("driver.send", late_branch)
+        self.assertIn("void tick(uint32_t nowMs, CanDriver &driver) override", self.legacy)
+        self.assertIn("lateNag.buildDueFrame", self.legacy)
+
+    def test_late_echo_does_not_write_399_129_or_39b(self) -> None:
+        for forbidden in ["echo.id = 921", "out.id = 921", "echo.id = 297", "out.id = 297", "echo.id = 923", "out.id = 923"]:
+            self.assertNotIn(forbidden, self.handlers + self.late)
+        block_start = self.legacy.index("if (frame.id == 921)")
+        block_end = self.legacy.index("// 0x3EE", block_start)
+        block = self.legacy[block_start:block_end]
+        self.assertNotIn("driver.send", block)
+        self.assertIsNone(re.search(r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=(?!=)", block))
