@@ -163,6 +163,32 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("var map=[3,0,1,2];", self.ui)
         self.assertIn("if (v <= 3 && v != hwMode)", self.dash)
 
+    def test_epas_late_echo_status_and_config_contract(self) -> None:
+        for token in [
+            '"lateEchoMode"',
+            '"cadenceStable"',
+            '"lateEchoEligible"',
+            '"pendingEcho"',
+            '"periodMs"',
+            '"jitterMs"',
+            '"counterStep"',
+            '"expectedNextCounter"',
+            '"pendingSendAtMs"',
+            '"scheduledEchoes"',
+            '"sentLateEchoes"',
+            '"droppedLateEchoes"',
+            '"lateWindowMissed"',
+            '"lastRxToTxMs"',
+            '"preserveHandsOnLevel"',
+            '"lastSourceHandsOnLevel"',
+            '"lastTxHandsOnLevel"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        self.assertIn('def_nag_mode', self.dash)
+        self.assertIn('setNagMode', self.dash)
+        self.assertIn('=== EPAS-faithful Late Echo ===', self.dash)
+
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
         """Device status must show which firmware/UI and handler mode are running."""
         for token in [

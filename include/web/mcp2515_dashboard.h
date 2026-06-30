@@ -202,6 +202,7 @@ static bool dashFogOffRequested = false;  // one-shot fail-off/stop command owne
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
+static uint8_t dashNagMode = 0; // 0=off, 1=legacy_tsl6p, 2=epas_late_echo
 static bool dashSpeedNoDisturb = false;
 static bool dashDndVolume = false;       // 音量消除DND（Phase 3实现执行逻辑）
 static bool dashDndSpeed = false;        // 速度滚轮DND（Phase 3实现执行逻辑）
@@ -1353,6 +1354,8 @@ static void dashApplyRuntimeState()
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
+        if (CarManagerBase *reactive = dashReactiveNagHandler())
+            static_cast<LegacyHandler *>(reactive)->setNagMode(dashNagMode);
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
         dashHandler->banShieldEnable = nvsBanShieldEnable;
@@ -1408,6 +1411,7 @@ static void dashSavePrefs()
     prefs.putUChar("lt_fog", dashRearFogStrategy);
     prefs.putBool("def_en", dashDefenseEnabled);
     prefs.putBool("def_bio", dashBionicSteering);
+    prefs.putUChar("def_nag_mode", dashNagMode <= 2 ? dashNagMode : 0);
     prefs.putBool("def_ntt", dashNagTorqueTamper);
     prefs.putBool("def_se", dashSoftEngage);
     prefs.putBool("def_nd", dashSpeedNoDisturb);
@@ -1613,6 +1617,9 @@ static void dashLoadPrefs()
         dashRearFogStrategy = 0;
     dashDefenseEnabled = prefs.getBool("def_en", false);
     dashBionicSteering = prefs.getBool("def_bio", false);
+    dashNagMode = prefs.getUChar("def_nag_mode", 0);
+    if (dashNagMode > 2)
+        dashNagMode = 0;
     dashNagTorqueTamper = prefs.getBool("def_ntt", false);
     nagTorqueTamperRuntime = dashNagTorqueTamper; // boot-sync opt-in to NagHandler
     dashSoftEngage = prefs.getBool("def_se", kSoftEngageDefaultEnabled);
@@ -2474,6 +2481,25 @@ static void handleStatus()
         j += R"(,"phaseRemainMs":)" + String(d.phaseRemainMs);
         j += R"(,"lastTorqueRaw":)" + String(d.lastTorqueRaw);
         j += R"(,"lastTorqueNmX100":)" + String(d.lastTorqueNmX100);
+        j += R"(,"lateEchoMode":)" + String(d.lateEchoMode ? "true" : "false");
+        j += R"(,"cadenceStable":)" + String(d.cadenceStable ? "true" : "false");
+        j += R"(,"lateEchoEligible":)" + String(d.lateEchoEligible ? "true" : "false");
+        j += R"(,"pendingEcho":)" + String(d.pendingEcho ? "true" : "false");
+        j += R"(,"periodMs":)" + String(d.periodMs);
+        j += R"(,"jitterMs":)" + String(d.jitterMs);
+        j += R"(,"counterStep":)" + String((int)d.counterStep);
+        j += R"(,"expectedNextCounter":)" + String((int)d.expectedNextCounter);
+        j += R"(,"predictedNextRxMs":)" + String(d.predictedNextRxMs);
+        j += R"(,"pendingSendAtMs":)" + String(d.pendingSendAtMs);
+        j += R"(,"scheduledEchoes":)" + String(d.scheduledEchoes);
+        j += R"(,"sentLateEchoes":)" + String(d.sentLateEchoes);
+        j += R"(,"droppedLateEchoes":)" + String(d.droppedLateEchoes);
+        j += R"(,"lateWindowMissed":)" + String(d.lateWindowMissed);
+        j += R"(,"lastRxToTxMs":)" + String(d.lastRxToTxMs);
+        j += R"(,"lastLeadMs":)" + String(d.lastLeadMs);
+        j += R"(,"preserveHandsOnLevel":)" + String(d.preserveHandsOnLevel ? "true" : "false");
+        j += R"(,"lastSourceHandsOnLevel":)" + String((int)d.lastSourceHandsOnLevel);
+        j += R"(,"lastTxHandsOnLevel":)" + String((int)d.lastTxHandsOnLevel);
         j += R"(,"lastProfileId":)";
         j += String((int)d.lastProfileId);
         j += R"(,"lastProfileDir":)";
@@ -2631,6 +2657,8 @@ static void handleConfigGet()
     String j = "{\"fsdRuntime\":{";
     j += "\"legacyOffset\":" + String(nvsLegacyOffset);
     j += ",\"overrideSpeedLimit\":" + String(nvsOverrideSpeedLimit ? "true" : "false");
+    j += "},\"defense\":{";
+    j += "\"nagMode\":" + String(dashNagMode <= 2 ? dashNagMode : 0);
     j += "}}";
     server.send(200, "application/json", j);
 }
@@ -3197,6 +3225,8 @@ static String dashDefenseConfigJson()
     j += dashDefenseEnabled ? "true" : "false";
     j += ",\"bionic_steering\":";
     j += dashBionicSteering ? "true" : "false";
+    j += ",\"nag_mode\":";
+    j += String(dashNagMode <= 2 ? dashNagMode : 0);
     j += ",\"nag_torque_tamper\":";
     j += dashNagTorqueTamper ? "true" : "false";
     j += ",\"soft_engage\":";
@@ -3231,6 +3261,7 @@ static void handleDefenseConfig()
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
+        server.hasArg("nag_mode") || server.hasArg("nagMode") ||
         server.hasArg("nag_torque_tamper") ||
         server.hasArg("soft_engage"))
     {
@@ -3252,6 +3283,12 @@ static void handleDefenseConfig()
                 dashHandler->bionicSteering = v;
                 dashHandler->resetBionic((uint32_t)millis()); // I-2: reset burst state on any toggle change (on or off)
             }
+        }
+        if (server.hasArg("nag_mode") || server.hasArg("nagMode"))
+        {
+            String raw = server.hasArg("nag_mode") ? server.arg("nag_mode") : server.arg("nagMode");
+            uint8_t mode = static_cast<uint8_t>(raw.toInt());
+            dashNagMode = mode <= 2 ? mode : 0;
         }
         if (server.hasArg("nag_torque_tamper"))
         {
@@ -5518,6 +5555,19 @@ static void dashSerialRunCommand(char *cmd)
                           (unsigned long)d.phaseRemainMs, (unsigned long)d.cooldownRemainMs,
                           d.lastTorqueRaw, d.lastTorqueNmX100,
                           d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
+            Serial.println("=== EPAS-faithful Late Echo ===");
+            Serial.printf("enabled=%d mode=%d pending=%d\n",
+                          (int)d.enabled, (int)d.lateEchoMode, (int)d.pendingEcho);
+            Serial.printf("cadenceStable=%d periodMs=%lu jitterMs=%lu counterStep=%d lateEchoEligible=%d\n",
+                          (int)d.cadenceStable, (unsigned long)d.periodMs, (unsigned long)d.jitterMs,
+                          (int)d.counterStep, (int)d.lateEchoEligible);
+            Serial.printf("scheduled=%lu sent=%lu dropped=%lu missed=%lu\n",
+                          (unsigned long)d.scheduledEchoes, (unsigned long)d.sentLateEchoes,
+                          (unsigned long)d.droppedLateEchoes, (unsigned long)d.lateWindowMissed);
+            Serial.printf("lastRxToTxMs=%ld leadMs=%ld preserveHandsOnLevel=%d sourceHO=%u txHO=%u lastTorqueRaw=%d blockedReason=%s\n",
+                          (long)d.lastRxToTxMs, (long)d.lastLeadMs, (int)d.preserveHandsOnLevel,
+                          (unsigned)d.lastSourceHandsOnLevel, (unsigned)d.lastTxHandsOnLevel,
+                          d.lastTorqueRaw, d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
             // Raw NVS read (diagnose putUInt vs load bug). rn_* should match RAM after a flush.
             Preferences p;
             if (p.begin(PREFS_NS, true))
@@ -5766,6 +5816,7 @@ static void handleSettingsExport()
     uint8_t storedRearFogStrategy = dashRearFogStrategy;
     bool storedDefenseEnabled = dashDefenseEnabled;
     bool storedBionicSteering = dashBionicSteering;
+    uint8_t storedNagMode = dashNagMode;
     bool storedNagTorqueTamper = dashNagTorqueTamper;
     bool storedSoftEngage = dashSoftEngage;
     bool storedSpeedNoDisturb = dashSpeedNoDisturb;
@@ -5829,6 +5880,9 @@ static void handleSettingsExport()
         storedRearFogStrategy = p.getUChar("lt_fog", dashRearFogStrategy);
         storedDefenseEnabled = p.getBool("def_en", dashDefenseEnabled);
         storedBionicSteering = p.getBool("def_bio", dashBionicSteering);
+        storedNagMode = p.getUChar("def_nag_mode", dashNagMode);
+        if (storedNagMode > 2)
+            storedNagMode = 0;
         storedNagTorqueTamper = p.getBool("def_ntt", dashNagTorqueTamper);
         storedSoftEngage = p.getBool("def_se", dashSoftEngage);
         storedSpeedNoDisturb = p.getBool("def_nd", dashSpeedNoDisturb);
@@ -5966,6 +6020,7 @@ static void handleSettingsExport()
     j += ",\"rearFogValue\":" + String(storedRearFogStrategy) + "}";
     j += ",\"defense\":{\"enabled\":" + String(storedDefenseEnabled ? "true" : "false");
     j += ",\"bionicSteering\":" + String(storedBionicSteering ? "true" : "false");
+    j += ",\"nagMode\":" + String(storedNagMode);
     j += ",\"nagTorqueTamper\":" + String(storedNagTorqueTamper ? "true" : "false");
     j += ",\"softEngage\":" + String(storedSoftEngage ? "true" : "false");
     j += ",\"speedNoDisturb\":" + String(storedSpeedNoDisturb ? "true" : "false");
@@ -6248,6 +6303,11 @@ static void handleSettingsImport()
             p.putBool("def_en", defense["enabled"].as<bool>());
         if (defense["bionicSteering"].is<bool>())
             p.putBool("def_bio", defense["bionicSteering"].as<bool>());
+        if (defense["nagMode"].is<int>())
+        {
+            uint8_t mode = defense["nagMode"].as<int>();
+            p.putUChar("def_nag_mode", mode <= 2 ? mode : 0);
+        }
         if (defense["nagTorqueTamper"].is<bool>())
             p.putBool("def_ntt", defense["nagTorqueTamper"].as<bool>());
         if (defense["softEngage"].is<bool>())
