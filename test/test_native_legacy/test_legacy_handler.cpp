@@ -1112,6 +1112,58 @@ void test_epas_late_echo_abort_state_cancels_pending()
     TEST_ASSERT_EQUAL_STRING("abort", after.blockedReason);
 }
 
+void test_epas_late_echo_tick_rechecks_checkad_before_send()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("late_echo");
+
+    const uint32_t dasAt = nativeDiagFutureMs(100);
+    const uint32_t epasStartAt = dasAt + 100;
+    advanceNativeDiagNowMsUntilNextCallReturns(dasAt);
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    feedStableEpasCadence(handler, mock, epasStartAt);
+    auto before = handler.lateEchoDiag(epasStartAt + 7 * 40);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, before.pendingSendAtMs);
+
+    handler.checkAD = denyAD;
+    advanceNativeDiagNowMsUntilNextCallReturns(before.pendingSendAtMs);
+    handler.tick(mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    auto after = handler.lateEchoDiag(before.pendingSendAtMs);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_EQUAL_STRING("checkAD", after.blockedReason);
+}
+
+void test_epas_late_echo_short_370_cancels_pending_before_due()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("late_echo");
+
+    const uint32_t dasAt = nativeDiagFutureMs(100);
+    const uint32_t epasStartAt = dasAt + 100;
+    advanceNativeDiagNowMsUntilNextCallReturns(dasAt);
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    feedStableEpasCadence(handler, mock, epasStartAt);
+    auto before = handler.lateEchoDiag(epasStartAt + 7 * 40);
+    TEST_ASSERT_TRUE(before.pendingEcho);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, before.pendingSendAtMs);
+
+    advanceNativeDiagNowMsUntilNextCallReturns(before.pendingSendAtMs - 1);
+    CanFrame shortEpas = makeEpasFrameWithCounter(8);
+    shortEpas.dlc = 7;
+    handler.handleMessage(shortEpas, mock);
+    handler.tick(mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    auto after = handler.lateEchoDiag(before.pendingSendAtMs);
+    TEST_ASSERT_FALSE(after.pendingEcho);
+    TEST_ASSERT_EQUAL_STRING("invalidFrame", after.blockedReason);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -1181,6 +1233,8 @@ int main()
     RUN_TEST(test_epas_late_echo_tick_sends_due_frame_and_preserves_byte4);
     RUN_TEST(test_epas_late_echo_new_370_before_tick_drops_pending);
     RUN_TEST(test_epas_late_echo_abort_state_cancels_pending);
+    RUN_TEST(test_epas_late_echo_tick_rechecks_checkad_before_send);
+    RUN_TEST(test_epas_late_echo_short_370_cancels_pending_before_due);
 
     return UNITY_END();
 }

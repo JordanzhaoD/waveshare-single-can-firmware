@@ -425,9 +425,20 @@ struct LegacyHandler : public CarManagerBase
         refreshLateNagEnabled();
         if (!lateEchoSelected())
             return;
+
+        bool checkAdAllowed = !(checkAD && !checkAD());
+        const char *gateReason = nullptr;
+        if (!(bool)bionicSteering)
+            gateReason = "toggle";
+        else if (!APActive)
+            gateReason = "apInactive";
+        else if (!checkAdAllowed)
+            gateReason = "checkAD";
+        bool gatesActive = gateReason == nullptr;
+
         CanFrame echo;
         DashEpasLateEchoTxToken token;
-        if (!lateNag.buildDueFrame(nowMs, echo, lastNagGatesActive, lastNagApState, lastNagHos, lastNagGateReason, token))
+        if (!lateNag.buildDueFrame(nowMs, echo, gatesActive, lastNagApState, lastNagHos, gateReason, token))
             return;
         bool ok = driver.send(echo);
         if (ok)
@@ -442,7 +453,7 @@ struct LegacyHandler : public CarManagerBase
         if (onFrame)
             onFrame(frame);
         updateHwDetectedFrom920(frame);
-        if (frame.id == 880 && frame.dlc >= 8)
+        if (frame.id == 880)
         {
             // TSL6P Burst NAG v4 (opt-in via bionicSteering; default OFF): bounded 0x370 echo burst.
             unsigned long nowMs = dashDiagNowMs();
@@ -461,7 +472,7 @@ struct LegacyHandler : public CarManagerBase
                 lateNag.onEpasFrame(frame, nowMs, active);
                 return;
             }
-            if (!legacyTsl6pSelected())
+            if (!legacyTsl6pSelected() || frame.dlc < 8)
                 return;
             nag.advance(nowMs, active, gateReason);
             bool replayPending = nag.shouldEcho(nowMs);

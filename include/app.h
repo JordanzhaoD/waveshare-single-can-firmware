@@ -237,6 +237,7 @@ static bool appLoop()
     CanFrame frame;
     uint8_t framesThisLoop = 0;
     bool processedFrame = false;
+    bool rxQueueDrained = true;
     while (appDriver->read(frame))
     {
         processedFrame = true;
@@ -261,6 +262,7 @@ static bool appLoop()
 #if defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD)
         if (++framesThisLoop >= 32)
         {
+            rxQueueDrained = false;
             yield();
             break;
         }
@@ -269,6 +271,8 @@ static bool appLoop()
 #if !(defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_RGB_STATUS_LED))
     digitalWrite(PIN_LED, HIGH);
 #endif
+    if (!rxQueueDrained)
+        return processedFrame;
     h->tick(dashDiagNowMs(), *appDriver);
 #if defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_PLUGIN_ENGINE)
     dashPluginEngine.tickPeriodic(millis(), dashPluginContext(), *appDriver);
