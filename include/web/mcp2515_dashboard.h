@@ -1372,10 +1372,12 @@ static void dashApplyRuntimeState()
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
+        bool effectiveBionic = dashDefenseEnabled && dashBionicSteering;
+        uint8_t effectiveNagMode = dashDefenseEnabled ? dashNagMode : 0;
         if (CarManagerBase *reactive = dashReactiveNagHandler())
         {
-            reactive->bionicSteering = dashBionicSteering;
-            reactive->setNagMode(dashNagMode);
+            reactive->bionicSteering = effectiveBionic;
+            reactive->setNagMode(effectiveNagMode);
         }
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
@@ -3301,11 +3303,14 @@ static void handleDefenseConfig()
             if (v)
                 dashBionicDisabled = false;
             // Sync to NagHandler if available
+            uint32_t resetSeed = (uint32_t)millis();
             if (dashHandler)
             {
                 dashHandler->bionicSteering = v;
-                dashHandler->resetBionic((uint32_t)millis()); // I-2: reset burst state on any toggle change (on or off)
+                dashHandler->resetBionic(resetSeed); // I-2: reset burst state on any toggle change (on or off)
             }
+            if (CarManagerBase *reactive = dashReactiveNagHandler(); reactive && reactive != dashHandler)
+                reactive->resetBionic(resetSeed);
         }
         if (server.hasArg("nag_mode") || server.hasArg("nagMode"))
         {
