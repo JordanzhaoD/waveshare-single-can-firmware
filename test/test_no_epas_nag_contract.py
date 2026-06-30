@@ -24,6 +24,31 @@ def legacy_handler_block(handlers: str) -> str:
     return handlers[block_start:block_end]
 
 
+def frame_id_blocks(source: str, frame_id: int) -> list[str]:
+    blocks = []
+    token = f"frame.id == {frame_id}"
+    search_from = 0
+    while True:
+        condition = source.find(token, search_from)
+        if condition == -1:
+            return blocks
+        block_start = source.find("{", condition)
+        if block_start == -1:
+            return blocks
+        depth = 0
+        for idx in range(block_start, len(source)):
+            if source[idx] == "{":
+                depth += 1
+            elif source[idx] == "}":
+                depth -= 1
+                if depth == 0:
+                    blocks.append(source[condition : idx + 1])
+                    search_from = idx + 1
+                    break
+        else:
+            return blocks
+
+
 class NoEpasNagContract(unittest.TestCase):
     def setUp(self) -> None:
         self.ini = (ROOT / "platformio.ini").read_text()
@@ -204,10 +229,18 @@ class EpasLateEchoContract(unittest.TestCase):
         self.assertIn("lateNag.buildDueFrame", self.legacy)
 
     def test_late_echo_does_not_write_399_129_or_39b(self) -> None:
+        mutation_pattern = r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=(?!=)"
+
         for forbidden in ["echo.id = 921", "out.id = 921", "echo.id = 297", "out.id = 297", "echo.id = 923", "out.id = 923"]:
-            self.assertNotIn(forbidden, self.handlers + self.late)
+            self.assertNotIn(forbidden, self.legacy + self.late)
+
         block_start = self.legacy.index("if (frame.id == 921)")
         block_end = self.legacy.index("// 0x3EE", block_start)
         block = self.legacy[block_start:block_end]
         self.assertNotIn("driver.send", block)
-        self.assertIsNone(re.search(r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=(?!=)", block))
+        self.assertIsNone(re.search(mutation_pattern, block))
+
+        for frame_id in [297, 923]:
+            for branch in frame_id_blocks(self.legacy, frame_id):
+                self.assertNotIn("driver.send", branch)
+                self.assertIsNone(re.search(mutation_pattern, branch))
