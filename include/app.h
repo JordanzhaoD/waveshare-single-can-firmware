@@ -265,6 +265,7 @@ static bool appLoop()
 #if !(defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_RGB_STATUS_LED))
     digitalWrite(PIN_LED, HIGH);
 #endif
+    h->tick(dashDiagNowMs(), *appDriver);
 #if defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_PLUGIN_ENGINE)
     dashPluginEngine.tickPeriodic(millis(), dashPluginContext(), *appDriver);
 #endif

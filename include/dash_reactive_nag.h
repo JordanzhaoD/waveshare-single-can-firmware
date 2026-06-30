@@ -87,6 +87,26 @@ struct DashReactiveDiag
     unsigned long phaseRemainMs{0};
     int lastTorqueRaw{0};
     int lastTorqueNmX100{0};
+
+    bool lateEchoMode{false};
+    bool cadenceStable{false};
+    bool lateEchoEligible{false};
+    bool pendingEcho{false};
+    uint16_t periodMs{0};
+    uint16_t jitterMs{0};
+    uint8_t counterStep{0};
+    uint8_t expectedNextCounter{0};
+    uint32_t predictedNextRxMs{0};
+    uint32_t pendingSendAtMs{0};
+    uint32_t scheduledEchoes{0};
+    uint32_t sentLateEchoes{0};
+    uint32_t droppedLateEchoes{0};
+    uint32_t lateWindowMissed{0};
+    int lastRxToTxMs{0};
+    int lastLeadMs{0};
+    bool preserveHandsOnLevel{false};
+    uint8_t lastSourceHandsOnLevel{0};
+    uint8_t lastTxHandsOnLevel{0};
 };
 
 struct DashReactiveNagBurst
