@@ -189,11 +189,20 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('setNagMode', self.dash)
         self.assertIn('virtual void setNagMode(uint8_t', self.handlers)
         self.assertIn('void setNagMode(uint8_t mode) override', self.handlers)
+        self.assertIn('reactive->bionicSteering = dashBionicSteering', self.dash)
         self.assertIn('reactive->setNagMode(dashNagMode)', self.dash)
         self.assertNotIn('static_cast<LegacyHandler *>(reactive)->setNagMode', self.dash)
-        self.assertIn('int mode = raw.toInt();', self.dash)
-        self.assertIn('dashNagMode = (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0;', self.dash)
-        self.assertIn('p.putUChar("def_nag_mode", (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0);', self.dash)
+        self.assertIn('dashParseNagMode(raw, 0)', self.dash)
+        self.assertNotIn('int mode = raw.toInt();', self.dash)
+        self.assertIn('p.putUChar("def_nag_mode", 0);', self.dash)
+        self.assertIn('p.putUChar("def_nag_mode", dashClampNagMode(mode));', self.dash)
+        status_idx = self.dash.find('static void handleStatus()')
+        self.assertNotEqual(status_idx, -1)
+        reactive_idx = self.dash.find(',\\"reactiveNag\\":{', status_idx)
+        self.assertNotEqual(reactive_idx, -1)
+        status_prefix = self.dash[status_idx:reactive_idx]
+        self.assertIn(',\\"nagMode\\":', status_prefix)
+        self.assertIn('String(dashNagMode <= 2 ? dashNagMode : 0)', status_prefix)
         self.assertIn('=== EPAS-faithful Late Echo ===', self.dash)
 
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:

@@ -1151,6 +1151,24 @@ static bool dashArgTruthy(const String &v)
     return v == "1" || v == "true" || v == "on" || v == "yes";
 }
 
+static uint8_t dashClampNagMode(int mode)
+{
+    return (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0;
+}
+
+static uint8_t dashParseNagMode(const String &raw, uint8_t fallback = 0)
+{
+    if (!raw.length())
+        return fallback;
+    for (size_t i = 0; i < raw.length(); i++)
+    {
+        char c = raw.charAt(i);
+        if (c < '0' || c > '9')
+            return fallback;
+    }
+    return dashClampNagMode(raw.toInt());
+}
+
 // Clamp an AP settle delay (ms) parsed from /config into the valid range so a
 // bad or out-of-range request can never disable the legacy FSD activation gate
 // accidentally. Mirrors dashClampSpeedProfileForHw / dashClampHw3SlewRate style.
@@ -1355,7 +1373,10 @@ static void dashApplyRuntimeState()
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
         if (CarManagerBase *reactive = dashReactiveNagHandler())
+        {
+            reactive->bionicSteering = dashBionicSteering;
             reactive->setNagMode(dashNagMode);
+        }
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
         dashHandler->banShieldEnable = nvsBanShieldEnable;
@@ -2433,6 +2454,8 @@ static void handleStatus()
     j += dashHandler ? ((bool)dashHandler->removeVisionSpeedLimit ? "true" : "false") : "false";
     j += ",\"overrideSpeedLimit\":";
     j += dashHandler ? ((bool)dashHandler->overrideSpeedLimit ? "true" : "false") : "false";
+    j += ",\"nagMode\":";
+    j += String(dashNagMode <= 2 ? dashNagMode : 0);
     j += ",\"reactiveNag\":{";
     CarManagerBase *reactive = dashReactiveNagHandler();
     if (reactive)
@@ -3287,8 +3310,7 @@ static void handleDefenseConfig()
         if (server.hasArg("nag_mode") || server.hasArg("nagMode"))
         {
             String raw = server.hasArg("nag_mode") ? server.arg("nag_mode") : server.arg("nagMode");
-            int mode = raw.toInt();
-            dashNagMode = (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0;
+            dashNagMode = dashParseNagMode(raw, 0);
         }
         if (server.hasArg("nag_torque_tamper"))
         {
@@ -6306,7 +6328,11 @@ static void handleSettingsImport()
         if (defense["nagMode"].is<int>())
         {
             int mode = defense["nagMode"].as<int>();
-            p.putUChar("def_nag_mode", (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0);
+            p.putUChar("def_nag_mode", dashClampNagMode(mode));
+        }
+        else
+        {
+            p.putUChar("def_nag_mode", 0);
         }
         if (defense["nagTorqueTamper"].is<bool>())
             p.putBool("def_ntt", defense["nagTorqueTamper"].as<bool>());
