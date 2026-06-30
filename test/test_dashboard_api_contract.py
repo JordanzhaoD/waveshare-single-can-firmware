@@ -216,9 +216,16 @@ class DashboardApiContractTests(unittest.TestCase):
             "实验",
             "nagMode",
             "defense.nagMode",
+            "nag_mode",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
+
+        load_fn = re.search(r"async function loadDefenseConfig\(\)\{.*?setText\('tb-exp'", self.ui, re.S)
+        self.assertIsNotNone(load_fn)
+        load_body = load_fn.group(0)
+        self.assertIn("setVal('nag-mode-select'", load_body)
+        self.assertIn("d.nag_mode", load_body)
 
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
         """Device status must show which firmware/UI and handler mode are running."""

@@ -2440,8 +2440,8 @@ async function loadDefenseConfig(){
   if(tgl)tgl.checked=!!d.enabled;
   var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
   var bioRisk=$('def-bionic-risk');if(bioRisk)bioRisk.style.display=!!d.bionic_steering?'block':'none';
-  var conf=(d&&d.defense)?d:{defense:{nagMode:(d&&d.nagMode!=null)?d.nagMode:0}};
-  setVal('nag-mode-select', String((conf&&conf.defense&&conf.defense.nagMode!=null)?conf.defense.nagMode:0));
+  var conf=(d&&d.defense)?d:{defense:{nagMode:(d&&d.nagMode!=null)?d.nagMode:((d&&d.nag_mode!=null)?d.nag_mode:0)}};
+  setVal('nag-mode-select', String((d&&d.nag_mode!=null)?d.nag_mode:((conf&&conf.defense&&conf.defense.nagMode!=null)?conf.defense.nagMode:0)));
   var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
   var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
   var se=$('def-soft-engage-tgl');if(se)se.checked=!!d.soft_engage;
