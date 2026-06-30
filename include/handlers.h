@@ -296,6 +296,7 @@ struct CarManagerBase
     virtual uint8_t filterIdCount() const = 0;
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
+    virtual void setNagMode(uint8_t mode) { (void)mode; }
     virtual DashReactiveDiag reactiveDiag() const { return {}; }
     // Instrumentation counter persistence (NVS round-trip) — survive power-off.
     virtual void resetReactiveCounters() {}
@@ -331,7 +332,7 @@ struct LegacyHandler : public CarManagerBase
         lateNag.setEnabled(lateEchoSelected() && (bool)bionicSteering);
     }
 
-    void setNagMode(uint8_t mode)
+    void setNagMode(uint8_t mode) override
     {
         if (mode == static_cast<uint8_t>(NagMode::LegacyTsl6p))
             nagMode = NagMode::LegacyTsl6p;

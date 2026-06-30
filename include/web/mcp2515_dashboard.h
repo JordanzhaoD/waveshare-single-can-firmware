@@ -1355,7 +1355,7 @@ static void dashApplyRuntimeState()
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
         if (CarManagerBase *reactive = dashReactiveNagHandler())
-            static_cast<LegacyHandler *>(reactive)->setNagMode(dashNagMode);
+            reactive->setNagMode(dashNagMode);
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
         dashHandler->banShieldEnable = nvsBanShieldEnable;
@@ -3287,8 +3287,8 @@ static void handleDefenseConfig()
         if (server.hasArg("nag_mode") || server.hasArg("nagMode"))
         {
             String raw = server.hasArg("nag_mode") ? server.arg("nag_mode") : server.arg("nagMode");
-            uint8_t mode = static_cast<uint8_t>(raw.toInt());
-            dashNagMode = mode <= 2 ? mode : 0;
+            int mode = raw.toInt();
+            dashNagMode = (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0;
         }
         if (server.hasArg("nag_torque_tamper"))
         {
@@ -6305,8 +6305,8 @@ static void handleSettingsImport()
             p.putBool("def_bio", defense["bionicSteering"].as<bool>());
         if (defense["nagMode"].is<int>())
         {
-            uint8_t mode = defense["nagMode"].as<int>();
-            p.putUChar("def_nag_mode", mode <= 2 ? mode : 0);
+            int mode = defense["nagMode"].as<int>();
+            p.putUChar("def_nag_mode", (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0);
         }
         if (defense["nagTorqueTamper"].is<bool>())
             p.putBool("def_ntt", defense["nagTorqueTamper"].as<bool>());

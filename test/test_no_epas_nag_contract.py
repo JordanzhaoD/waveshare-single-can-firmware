@@ -95,7 +95,8 @@ class NoEpasNagContract(unittest.TestCase):
         )
         self.assertIn("bool checkAdAllowed = !(checkAD && !checkAD())", self.handlers, "reactive echo must be gated on checkAD")
         self.assertIn("nag.advance(nowMs, active, gateReason)", self.handlers, "0x370 gate loss must cancel via explicit reason")
-        self.assertIn("nag.onNagSample(hos, dashDiagNowMs(), active, apState, gateReason)", self.handlers, "0x399 gate loss must cancel via explicit reason")
+        self.assertIn("uint32_t nowMs = dashDiagNowMs();", self.handlers, "0x399 must stage one diagnostic timestamp")
+        self.assertIn("nag.onNagSample(hos, nowMs, active, apState, gateReason)", self.handlers, "legacy 0x399 gate loss must cancel via explicit reason")
 
         # LegacyHandler 0x399 NAG detection reads byte5 bits[5:2] and does not transmit/mutate 0x399.
         block_start = self.legacy.index("if (frame.id == 921)")
@@ -148,10 +149,11 @@ class Tsl6pBurstNagV4Contract(unittest.TestCase):
         block_end = self.legacy.index("// 0x3EE", block_start)
         block = self.legacy[block_start:block_end]
         self.assertIn("nag.onNagSample", block)
+        self.assertIn("lateNag.onDasStatus", block)
         self.assertIn("apState", block)
         self.assertRegex(
             block,
-            r"nag\.onNagSample\(\s*hos\s*,\s*dashDiagNowMs\(\)\s*,\s*active\s*,\s*apState\s*,\s*gateReason\s*\)",
+            r"nag\.onNagSample\(\s*hos\s*,\s*nowMs\s*,\s*active\s*,\s*apState\s*,\s*gateReason\s*\)",
         )
         self.assertNotIn("driver.send", block)
         self.assertIsNone(re.search(r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=(?!=)", block))

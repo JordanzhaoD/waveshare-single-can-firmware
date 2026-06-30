@@ -187,6 +187,13 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.dash)
         self.assertIn('def_nag_mode', self.dash)
         self.assertIn('setNagMode', self.dash)
+        self.assertIn('virtual void setNagMode(uint8_t', self.handlers)
+        self.assertIn('void setNagMode(uint8_t mode) override', self.handlers)
+        self.assertIn('reactive->setNagMode(dashNagMode)', self.dash)
+        self.assertNotIn('static_cast<LegacyHandler *>(reactive)->setNagMode', self.dash)
+        self.assertIn('int mode = raw.toInt();', self.dash)
+        self.assertIn('dashNagMode = (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0;', self.dash)
+        self.assertIn('p.putUChar("def_nag_mode", (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0);', self.dash)
         self.assertIn('=== EPAS-faithful Late Echo ===', self.dash)
 
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
@@ -1143,7 +1150,10 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);', body)
         self.assertIn('uint8_t apState = readDASAutopilotStatus(frame);', body)
         self.assertIn('APActive = isDASAutopilotActive(apState);', body)
-        self.assertIn('nag.onNagSample(hos, dashDiagNowMs(), active, apState, gateReason);', body)
+        self.assertIn('uint32_t nowMs = dashDiagNowMs();', body)
+        self.assertIn('if (lateEchoSelected())', body)
+        self.assertIn('lateNag.onDasStatus(apState, hos, nowMs, active, gateReason);', body)
+        self.assertIn('nag.onNagSample(hos, nowMs, active, apState, gateReason);', body)
 
     def test_legacy_simple_offset_helper_reuses_three_mode_state(self) -> None:
         """Legacy simple offset should reuse the speed page algorithm and clamp to byte5 wire range."""
