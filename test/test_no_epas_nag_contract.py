@@ -148,6 +148,23 @@ class NoEpasNagContract(unittest.TestCase):
         for token in ["kBurstOnMs{1000}", "kBurstOffMs{1500}", "kMaxSignedOutRaw{180}"]:
             self.assertIn(token, self.reactive, f"v4 hard bound missing: {token}")
 
+    def test_legacy_speed_safety_v2_does_not_add_forbidden_writes(self) -> None:
+        """Smart Legacy speed may only write 0x2F8; Abort Guard may not introduce new write paths."""
+        forbidden_ids = [921, 0x399, 817, 0x331, 1016, 0x3F8]
+        for frame_id in forbidden_ids:
+            for branch in frame_id_blocks(self.legacy, frame_id):
+                with self.subTest(frame_id=frame_id):
+                    self.assertNotRegex(branch, r'\bdriver\.send\s*\(')
+
+        legacy_760 = re.search(r'if \(frame\.id == 760\).*?if \(frame\.id == 1080\)', self.legacy, re.S)
+        self.assertIsNotNone(legacy_760)
+        block = legacy_760.group(0)
+        self.assertRegex(block, r'frame\.data\[5\]\s*(?:=|[|&^+\-]=)')
+        for var_name in ['frame', 'out', 'echo']:
+            for idx in [0, 1, 2, 3, 4, 6, 7]:
+                with self.subTest(var_name=var_name, idx=idx):
+                    self.assertIsNone(re.search(rf'\b{var_name}\.data\[{idx}\]\s*(?:=|[|&^+\-]=)', block))
+
 
 class Tsl6pBurstNagV4Contract(unittest.TestCase):
     def setUp(self) -> None:

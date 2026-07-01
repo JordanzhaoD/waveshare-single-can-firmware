@@ -1247,6 +1247,58 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('(fusedSpeedLimitRaw == 0 || fusedSpeedLimitRaw == 31)', self.dash)
         self.assertIn('(uint16_t)fusedSpeedLimitRaw * 5', self.dash)
 
+    def test_legacy_smart_speed_api_contract(self) -> None:
+        """config/status/export must expose Legacy Smart Offset fields."""
+        for token in [
+            '"legacyOffsetMode"',
+            '"legacySmoothDown"',
+            '"legacySmoothRateKphS"',
+            '"legacyCustomPctLow"',
+            '"legacyCustomPctMid"',
+            '"legacyCustomPctHigh"',
+            '"legacyCustomPctVeryHigh"',
+            '"legacySpeed"',
+            '"gpsSpeedSeen"',
+            '"lastSentOffsetRaw"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+        self.assertIn('"lo_mode"', self.dash)
+        self.assertIn('"lo_smooth"', self.dash)
+        self.assertIn('"lo_rate"', self.dash)
+        self.assertIn('"lo_p1"', self.dash)
+        self.assertIn('"lo_p2"', self.dash)
+        self.assertIn('"lo_p3"', self.dash)
+        self.assertIn('"lo_p4"', self.dash)
+
+    def test_abort_guard_api_contract(self) -> None:
+        """Abort Guard must be default-off defense config plus status diagnostics."""
+        for token in [
+            '"def_ag"',
+            '"abort_guard"',
+            '"abortGuard"',
+            '"latched"',
+            '"lastAbortState"',
+            '"lastBlockedPath"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        self.assertIn('prefs.getBool("def_ag", false)', self.dash)
+
+    def test_legacy_speed_ui_mentions_smart_offset_and_0x2f8_absence(self) -> None:
+        """UI must explain smart speed and frame visibility."""
+        for token in [
+            '智能速度偏移',
+            '0x2F8 未检测到',
+            '降速平滑',
+            'Abort Guard',
+            '实验',
+            '默认关闭',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
     def test_phase2_speed_offset_ui_uses_new_three_mode_contract(self) -> None:
         """Speed page must use the fixed/auto/custom UI and sync the Phase 2 APIs."""
         required_ui = [
