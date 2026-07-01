@@ -243,7 +243,6 @@ private:
         if (maxDrop == 0)
         {
             smoothingActive = true;
-            lastUpdateMs_ = nowMs;
             return lastSmoothedTargetKph_;
         }
 

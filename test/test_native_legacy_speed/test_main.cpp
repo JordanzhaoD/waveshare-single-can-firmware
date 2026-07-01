@@ -148,6 +148,24 @@ void test_speed_down_smooths_when_engaged()
     TEST_ASSERT_TRUE(low.smoothingActive);
 }
 
+void test_speed_down_accumulates_sub_kph_intervals()
+{
+    cfg.mode = LegacySmartOffsetMode::Auto;
+    cfg.smoothDownEnabled = true;
+    cfg.smoothDownRateKphS = 5;
+    (void)compute(20, 1000, true); // 100 -> target 120
+
+    LegacySmartOffsetResult low;
+    for (uint32_t nowMs = 1100; nowMs <= 2000; nowMs += 100)
+    {
+        low = compute(8, nowMs, true); // 40 -> raw target 60
+    }
+
+    TEST_ASSERT_EQUAL_UINT16(115, low.smoothedTargetKph);
+    TEST_ASSERT_EQUAL_UINT8(33, low.outputOffsetKph);
+    TEST_ASSERT_TRUE(low.smoothingActive);
+}
+
 void test_speed_down_syncs_when_not_engaged()
 {
     cfg.mode = LegacySmartOffsetMode::Auto;
@@ -181,6 +199,7 @@ int main()
     RUN_TEST(test_sna_limit_custom_without_fallback_outputs_zero);
     RUN_TEST(test_speed_up_follows_immediately);
     RUN_TEST(test_speed_down_smooths_when_engaged);
+    RUN_TEST(test_speed_down_accumulates_sub_kph_intervals);
     RUN_TEST(test_speed_down_syncs_when_not_engaged);
     RUN_TEST(test_large_dt_syncs_directly);
     return UNITY_END();
