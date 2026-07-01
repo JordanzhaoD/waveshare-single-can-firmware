@@ -10,6 +10,7 @@
 #include "log_buffer.h"
 #include "dash_hw3_speed.h"
 #include "dash_legacy_speed.h"
+#include "dash_abort_guard.h"
 #include "dash_reactive_nag.h"
 #include "dash_epas_late_echo.h"
 #include "dash_fsd_diag.h"
@@ -306,6 +307,16 @@ struct CarManagerBase
     virtual ~CarManagerBase() = default;
 };
 
+struct LegacySpeedRuntimeDiag
+{
+    bool gpsSpeedSeen = false;
+    uint8_t lastSentOffsetRaw = 0;
+    uint8_t lastSentOffsetKph = 0;
+    uint32_t txOk = 0;
+    LegacySmartOffsetResult result{};
+    const char *blockedReason = "none";
+};
+
 struct LegacyHandler : public CarManagerBase
 {
     enum class NagMode : uint8_t
@@ -317,6 +328,10 @@ struct LegacyHandler : public CarManagerBase
 
     DashReactiveNagBurst nag; // reactive NAG-suppression burst state machine
     DashEpasLateEcho lateNag;
+    DashAbortGuard abortGuard{};
+    LegacySmartOffsetConfig legacySmartOffsetConfig{};
+    LegacySmartOffsetEngine legacySmartOffsetEngine{};
+    LegacySpeedRuntimeDiag legacySpeedDiag{};
     NagMode nagMode{NagMode::Off};
     uint8_t lastNagApState{0};
     uint8_t lastNagHos{0};
@@ -326,6 +341,7 @@ struct LegacyHandler : public CarManagerBase
     bool bionicDisabled() const override { return false; } // reactive has no auto-disable
     bool lateEchoSelected() const { return nagMode == NagMode::EpasLateEcho; }
     bool legacyTsl6pSelected() const { return nagMode == NagMode::LegacyTsl6p; }
+    bool isPrimaryDasFrame(const CanFrame &frame) const { return frame.bus != CAN_BUS_PARTY; }
 
     void refreshLateNagEnabled()
     {
@@ -441,6 +457,12 @@ struct LegacyHandler : public CarManagerBase
         DashEpasLateEchoTxToken token;
         if (!lateNag.buildDueFrame(nowMs, echo, gatesActive, lastNagApState, lastNagHos, gateReason, token))
             return;
+        if (!abortGuard.allowsInjection())
+        {
+            abortGuard.recordBlock(DashAbortGuardBlockPath::Nag);
+            lateNag.notifyTxResult(token, false, nowMs);
+            return;
+        }
         bool ok = driver.send(echo);
         if (ok)
             framesSent++;
@@ -478,6 +500,11 @@ struct LegacyHandler : public CarManagerBase
             nag.advance(nowMs, active, gateReason);
             bool replayPending = nag.shouldEcho(nowMs);
             bool useReplay = replayPending && active;
+            if (useReplay && !abortGuard.allowsInjection())
+            {
+                abortGuard.recordBlock(DashAbortGuardBlockPath::Nag);
+                useReplay = false;
+            }
             if (useReplay)
             {
                 CanFrame echo;
@@ -539,21 +566,56 @@ struct LegacyHandler : public CarManagerBase
         // so the offset unit follows the car's setting.
         if (frame.id == 760)
         {
+            legacySpeedDiag.gpsSpeedSeen = true;
+            legacySpeedDiag.blockedReason = "none";
             if (checkAD && !checkAD())
                 return;
             if (frame.dlc < 6)
                 return;
-            uint8_t effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
+
+            uint32_t nowMs = dashDiagNowMs();
+            LegacySmartOffsetMode smartMode = dashClampLegacySmartMode(static_cast<int>(legacySmartOffsetConfig.mode));
+            uint8_t effectiveOffset = 0;
+            if (smartMode == LegacySmartOffsetMode::Off)
+            {
+                legacySpeedDiag.result = LegacySmartOffsetResult{};
+                legacySpeedDiag.result.mode = LegacySmartOffsetMode::Off;
+                legacySpeedDiag.result.speedLimitRaw = fusedSpeedLimitRaw;
+                legacySpeedDiag.result.lastUpdateMs = nowMs;
+                effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
+            }
+            else
+            {
+                legacySpeedDiag.result = legacySmartOffsetEngine.compute(legacySmartOffsetConfig,
+                                                                         fusedSpeedLimitRaw,
+                                                                         nowMs,
+                                                                         (bool)APActive || (bool)ADEnabled);
+                effectiveOffset = legacySpeedDiag.result.outputOffsetKph;
+            }
+
             if (effectiveOffset == 0)
                 return;
-            uint8_t raw = (uint8_t)(effectiveOffset + 30);
+            if (!abortGuard.allowsInjection())
+            {
+                legacySpeedDiag.blockedReason = "abortGuard";
+                abortGuard.recordBlock(DashAbortGuardBlockPath::LegacySpeed0x2f8);
+                return;
+            }
+
+            uint8_t raw = (uint8_t)(dashClampLegacySimpleOffsetKph(effectiveOffset) + 30);
             legacyFsdDiag.aux760.recordBefore(frame.data);
             frame.data[5] = (frame.data[5] & 0xC0) | (raw & 0x3F);
             legacyFsdDiag.aux760.recordAfter(frame.data);
             legacyFsdDiag.aux760.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
-            framesSent++;
             bool ok = driver.send(frame);
-            legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux760, ok, dashDiagNowMs());
+            if (ok)
+            {
+                framesSent++;
+                legacySpeedDiag.txOk++;
+                legacySpeedDiag.lastSentOffsetRaw = static_cast<uint8_t>(raw & 0x3F);
+                legacySpeedDiag.lastSentOffsetKph = effectiveOffset;
+            }
+            legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux760, ok, nowMs);
             if (onSend)
                 onSend(0, ok);
             return;
@@ -567,6 +629,11 @@ struct LegacyHandler : public CarManagerBase
                 return;
             if (checkAD && !checkAD())
                 return;
+            if (!abortGuard.allowsInjection())
+            {
+                abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyVisionSlider0x438);
+                return;
+            }
             legacyFsdDiag.aux1080.recordBefore(frame.data);
             frame.data[7] = (frame.data[7] & 0x80) | 100;
             legacyFsdDiag.aux1080.recordAfter(frame.data);
@@ -587,6 +654,8 @@ struct LegacyHandler : public CarManagerBase
             if (frame.dlc < 1)
                 return;
             uint8_t apState = readDASAutopilotStatus(frame);
+            if (isPrimaryDasFrame(frame))
+                abortGuard.onApState(apState, dashDiagNowMs());
             APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
@@ -663,6 +732,14 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.health = FsdHealthState::NotTriggered;
                     return;
                 }
+                if (!abortGuard.allowsInjection())
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ApGate;
+                    abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux0);
+                    return;
+                }
                 bool legacyActivationAllowed = legacyFsdActivationAllowed
                                                    ? legacyFsdActivationAllowed(nowMs)
                                                    : injectionAllowed();
@@ -716,6 +793,14 @@ struct LegacyHandler : public CarManagerBase
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::NotTriggered;
                     legacyFsdDiag.health = FsdHealthState::NotTriggered;
+                    return;
+                }
+                if (!abortGuard.allowsInjection())
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ApGate;
+                    abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux1);
                     return;
                 }
                 if (!injectionAllowed())
