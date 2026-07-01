@@ -11,6 +11,15 @@ enum class DashAbortGuardBlockPath : uint8_t
     LegacyVisionSlider0x438,
     Nag,
     ApAutoRestore,
+    Hw3DasStatus921,
+    Hw3FsdMux0,
+    Hw3FsdMux1,
+    Hw3FsdMux2,
+    Hw4DasStatus921,
+    Hw4DasStatus923,
+    Hw4FsdMux0,
+    Hw4FsdMux1,
+    Hw4FsdMux2,
 };
 
 struct DashAbortGuardDiag
@@ -41,6 +50,24 @@ inline const char *dashAbortGuardBlockPathName(DashAbortGuardBlockPath path)
         return "nag";
     case DashAbortGuardBlockPath::ApAutoRestore:
         return "ap_auto_restore";
+    case DashAbortGuardBlockPath::Hw3DasStatus921:
+        return "hw3_das_status_921";
+    case DashAbortGuardBlockPath::Hw3FsdMux0:
+        return "hw3_fsd_mux0";
+    case DashAbortGuardBlockPath::Hw3FsdMux1:
+        return "hw3_fsd_mux1";
+    case DashAbortGuardBlockPath::Hw3FsdMux2:
+        return "hw3_fsd_mux2";
+    case DashAbortGuardBlockPath::Hw4DasStatus921:
+        return "hw4_das_status_921";
+    case DashAbortGuardBlockPath::Hw4DasStatus923:
+        return "hw4_das_status_923";
+    case DashAbortGuardBlockPath::Hw4FsdMux0:
+        return "hw4_fsd_mux0";
+    case DashAbortGuardBlockPath::Hw4FsdMux1:
+        return "hw4_fsd_mux1";
+    case DashAbortGuardBlockPath::Hw4FsdMux2:
+        return "hw4_fsd_mux2";
     case DashAbortGuardBlockPath::None:
     default:
         return "none";

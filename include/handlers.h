@@ -193,6 +193,14 @@ struct CarManagerBase
         return true;
     }
 
+    bool abortGuardAllowsInjection(DashAbortGuardBlockPath path)
+    {
+        if (abortGuard.allowsInjection())
+            return true;
+        abortGuard.recordBlock(path);
+        return false;
+    }
+
     bool injectionGateOpen() const
     {
         return (bool)APActive || (bool)Parked || (bool)Summoning;
@@ -934,14 +942,17 @@ struct HW3Handler : public CarManagerBase
         {
             if (frame.dlc < 1)
                 return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            uint8_t apState = readDASAutopilotStatus(frame);
+            abortGuard.onApState(apState, dashDiagNowMs());
+            APActive = isDASAutopilotActive(apState);
             // Capture ISA fused speed limit from byte1[4:0]. raw*5 = kph;
             // 0 = SNA, 31 = NONE-broadcast — both treated as "unknown" by the
             // HW3 mux-2 override path. Used by dashComputeHw3OffsetRaw().
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
             // ISA chime suppress — runtime gate (spec Task 2, 对齐 HW4Handler:856-864)
-            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed())
+            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3DasStatus921))
             {
                 frame.data[1] |= 0x20;
                 frame.data[7] = computeVehicleChecksum(frame);
@@ -996,7 +1007,9 @@ struct HW3Handler : public CarManagerBase
                 fsdTriggered = fsdRequested;
                 ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 0 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux0))
             {
                 speedOffset = std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
                 hw3StockOffsetKph = (int)speedOffset;
@@ -1011,7 +1024,9 @@ struct HW3Handler : public CarManagerBase
             }
 
             // ── Mux 1: Nag suppression (bit-19 clear, legacy baseline) ──
-            if (index == 1 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux1))
             {
                 setBit(frame, 19, false);
                 framesSent++;
@@ -1021,7 +1036,9 @@ struct HW3Handler : public CarManagerBase
             }
 
             // ── Mux 2: Speed offset (three-layer + slew limiter) ──────────
-            if (index == 2 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 2 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux2))
             {
                 uint8_t stockRaw = static_cast<uint8_t>(((frame.data[0] >> 6) & 0x03) |
                                                         ((frame.data[1] & 0x3F) << 2));
@@ -1214,6 +1231,29 @@ struct NagHandler : public CarManagerBase
 
 struct HW4Handler : public CarManagerBase
 {
+    bool hw4Das923Byte1Moved = false;
+    bool hw4Das923UseByte0 = false;
+    uint8_t hw4Das923Byte0PinCount = 0;
+
+    uint8_t readHw4Das923ApState(const CanFrame &frame)
+    {
+        uint8_t hw4State = static_cast<uint8_t>((frame.data[1] >> 4) & 0x0F);
+        uint8_t byte0State = static_cast<uint8_t>(frame.data[0] & 0x0F);
+        if (hw4State != 1U)
+        {
+            hw4Das923Byte1Moved = true;
+            hw4Das923Byte0PinCount = 0;
+        }
+        else if (!hw4Das923UseByte0 && !hw4Das923Byte1Moved && byte0State >= 2U)
+        {
+            if (hw4Das923Byte0PinCount < 3U)
+                hw4Das923Byte0PinCount++;
+            if (hw4Das923Byte0PinCount >= 3U)
+                hw4Das923UseByte0 = true;
+        }
+        return hw4Das923UseByte0 ? byte0State : hw4State;
+    }
+
     const uint32_t *filterIds() const override
     {
         // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
@@ -1235,11 +1275,14 @@ struct HW4Handler : public CarManagerBase
         {
             if (frame.dlc < 1)
                 return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            uint8_t apState = readDASAutopilotStatus(frame);
+            abortGuard.onApState(apState, dashDiagNowMs());
+            APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
             // ISA chime suppress — runtime gate (all build modes)
-            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed())
+            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4DasStatus921))
             {
                 frame.data[1] |= 0x20;
                 frame.data[7] = computeVehicleChecksum(frame);
@@ -1252,16 +1295,26 @@ struct HW4Handler : public CarManagerBase
             return;
         }
         // ISA override — rewrite fused/vision speed limit to NONE (spec Task 3, 对齐 tesla handleDASStatusISAOverride)
-        if (frame.id == 923 && frame.dlc >= 8 &&
-            (bool)isaOverride && injectionAllowed())
+        if (frame.id == 923)
         {
-            frame.data[1] |= 0x1F; // DAS_fusedSpeedLimit = 31 (NONE)
-            frame.data[2] |= 0x1F; // DAS_visionOnlySpeedLimit = 31 (NONE)
-            frame.data[7] = computeVehicleChecksum(frame);
-            framesSent++;
-            driver.send(frame);
-            if (onSend)
-                onSend(0, true);
+            if (frame.dlc < 2)
+                return;
+            uint8_t apState = readHw4Das923ApState(frame);
+            abortGuard.onApState(apState, dashDiagNowMs());
+            APActive = isDASAutopilotActive(apState);
+            if (frame.dlc >= 2)
+                fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
+            if (frame.dlc >= 8 && (bool)isaOverride && injectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4DasStatus923))
+            {
+                frame.data[1] |= 0x1F; // DAS_fusedSpeedLimit = 31 (NONE)
+                frame.data[2] |= 0x1F; // DAS_visionOnlySpeedLimit = 31 (NONE)
+                frame.data[7] = computeVehicleChecksum(frame);
+                framesSent++;
+                driver.send(frame);
+                if (onSend)
+                    onSend(0, true);
+            }
             return;
         }
         if (frame.id == 1016)
@@ -1335,7 +1388,9 @@ struct HW4Handler : public CarManagerBase
                 fsdTriggered = fsdRequested;
                 ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 0 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux0))
             {
                 setBit(frame, 46, true);
                 setBit(frame, 60, true);
@@ -1350,7 +1405,9 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 1: FSD-ready signal (bit 47) + nag suppression (bit 19).
-            if (index == 1 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux1))
             {
                 setBit(frame, 47, true);
                 setBit(frame, 19, false);
@@ -1361,7 +1418,9 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 2: Speed profile + offset
-            if (index == 2 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 2 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux2))
             {
                 // Speed profile
                 frame.data[7] &= static_cast<uint8_t>(~(0x07 << 4));

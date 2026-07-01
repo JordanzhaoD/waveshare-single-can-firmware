@@ -178,6 +178,63 @@ class DashboardApiContractTests(unittest.TestCase):
             "blocked AP auto-restore attempts should be recorded in Abort Guard diagnostics",
         )
 
+    def test_hw3_hw4_das_status_feeds_abort_guard(self) -> None:
+        """Active HW3/HW4 handlers must latch Abort Guard from DAS AP abort states."""
+        for handler_name in ["HW3Handler", "HW4Handler"]:
+            with self.subTest(handler=handler_name):
+                handler_start = self.handlers.index(f"struct {handler_name}")
+                handler_end = self.handlers.find("struct ", handler_start + 1)
+                if handler_end == -1:
+                    handler_end = len(self.handlers)
+                handler = self.handlers[handler_start:handler_end]
+                status_start = handler.index("if (frame.id == 921)")
+                status_end = handler.find("if (frame.id ==", status_start + 1)
+                if status_end == -1:
+                    status_end = len(handler)
+                status_block = handler[status_start:status_end]
+                ap_read_idx = status_block.index("readDASAutopilotStatus(frame)")
+                latch_idx = status_block.find("abortGuard.onApState")
+                self.assertNotEqual(latch_idx, -1, f"{handler_name} DAS status must feed Abort Guard")
+                self.assertGreater(latch_idx, ap_read_idx)
+                self.assertIn("dashDiagNowMs()", status_block[latch_idx:])
+
+        hw4_start = self.handlers.index("struct HW4Handler")
+        hw4 = self.handlers[hw4_start:]
+        status923_start = hw4.index("if (frame.id == 923")
+        status923_end = hw4.index("if (frame.id == 1016)", status923_start)
+        status923_block = hw4[status923_start:status923_end]
+        ap_read_idx = status923_block.find("readHw4Das923ApState(frame)")
+        latch_idx = status923_block.find("abortGuard.onApState")
+        gate_idx = status923_block.find("abortGuardAllowsInjection")
+        self.assertNotEqual(ap_read_idx, -1, "HW4 923 DAS status must use the dedicated safe AP-state decoder")
+        self.assertNotIn("readDASAutopilotStatus(frame)", status923_block)
+        self.assertIn("(frame.data[1] >> 4) & 0x0F", hw4)
+        self.assertIn("hw4Das923UseByte0", hw4)
+        self.assertNotEqual(latch_idx, -1, "HW4 923 DAS status must feed Abort Guard")
+        self.assertGreater(latch_idx, ap_read_idx)
+        self.assertNotEqual(gate_idx, -1, "HW4 923 write path must remain Abort Guard gated")
+        self.assertLess(latch_idx, gate_idx, "HW4 923 must latch Abort Guard before injection gating")
+        self.assertIn("dashDiagNowMs()", status923_block[latch_idx:])
+
+    def test_hw3_hw4_send_paths_are_gated_by_abort_guard(self) -> None:
+        """HW3/HW4 built-in CAN injection sends must stop while Abort Guard is latched."""
+        self.assertIn("abortGuardAllowsInjection", self.handlers)
+        self.assertIn("abortGuard.recordBlock", self.handlers)
+        for handler_name in ["HW3Handler", "HW4Handler"]:
+            with self.subTest(handler=handler_name):
+                handler_start = self.handlers.index(f"struct {handler_name}")
+                handler_end = self.handlers.find("struct ", handler_start + 1)
+                if handler_end == -1:
+                    handler_end = len(self.handlers)
+                handler = self.handlers[handler_start:handler_end]
+                for match in re.finditer(r"driver\.send\(frame\)", handler):
+                    prefix = handler[:match.start()]
+                    self.assertIn(
+                        "abortGuardAllowsInjection(",
+                        prefix,
+                        f"{handler_name} send at offset {match.start()} must check Abort Guard before sending",
+                    )
+
     def test_epas_late_echo_status_and_config_contract(self) -> None:
         for token in [
             '"lateEchoMode"',

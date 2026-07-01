@@ -511,6 +511,57 @@ void test_hw4_isa_override_runtime_off_skips_send()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
+void test_hw4_923_standard_byte1_abort_latches_and_blocks_isa_override()
+{
+    handler.abortGuard.setEnabled(true);
+    handler.isaOverride = true;
+    CanFrame f = {.id = 923};
+    f.data[0] = 0x00;
+    f.data[1] = 0x80; // standard HW4 DAS_autopilotState = 8 in byte1[7:4]
+
+    handler.handleMessage(f, mock);
+
+    DashAbortGuardDiag diag = handler.abortGuard.diag();
+    TEST_ASSERT_TRUE(diag.latched);
+    TEST_ASSERT_EQUAL_UINT8(8, diag.lastAbortState);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_STRING("hw4_das_status_923", diag.lastBlockedPath);
+}
+
+void test_hw4_923_standard_byte0_abort_nibble_does_not_latch_when_byte1_moved()
+{
+    handler.abortGuard.setEnabled(true);
+    handler.isaOverride = false;
+    CanFrame f = {.id = 923};
+    f.data[0] = 0x08; // unrelated byte0 low nibble must not be treated as abort on standard HW4
+    f.data[1] = 0x20; // byte1[7:4] != 1 proves standard HW4 byte1 mapping
+
+    handler.handleMessage(f, mock);
+
+    DashAbortGuardDiag diag = handler.abortGuard.diag();
+    TEST_ASSERT_FALSE(diag.latched);
+    TEST_ASSERT_EQUAL_UINT8(2, diag.lastApState);
+}
+
+void test_hw4_923_highland_byte0_fallback_requires_three_pinned_byte1_frames()
+{
+    handler.abortGuard.setEnabled(true);
+    handler.isaOverride = false;
+    CanFrame f = {.id = 923};
+    f.data[0] = 0x08; // Highland fallback AP abort state candidate
+    f.data[1] = 0x10; // byte1[7:4] pinned at 1 signature
+
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_FALSE(handler.abortGuard.diag().latched);
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_FALSE(handler.abortGuard.diag().latched);
+    handler.handleMessage(f, mock);
+
+    DashAbortGuardDiag diag = handler.abortGuard.diag();
+    TEST_ASSERT_TRUE(diag.latched);
+    TEST_ASSERT_EQUAL_UINT8(8, diag.lastAbortState);
+}
+
 // --- Ban Shield ---
 
 void test_hw4_ban_shield_blocks_changed_2047_mux2()
@@ -588,6 +639,9 @@ int main()
     RUN_TEST(test_hw4_isa_override_preserves_high_bits);
     RUN_TEST(test_hw4_isa_override_checksum_correct);
     RUN_TEST(test_hw4_isa_override_runtime_off_skips_send);
+    RUN_TEST(test_hw4_923_standard_byte1_abort_latches_and_blocks_isa_override);
+    RUN_TEST(test_hw4_923_standard_byte0_abort_nibble_does_not_latch_when_byte1_moved);
+    RUN_TEST(test_hw4_923_highland_byte0_fallback_requires_three_pinned_byte1_frames);
 
     return UNITY_END();
 }
