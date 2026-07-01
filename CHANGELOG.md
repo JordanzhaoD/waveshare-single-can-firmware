@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-07-02
+
+### Added
+- **EPAS Late Echo（研究模式转正）**：Legacy handler 内的 EPAS late-echo NAG 引擎。tokenized TX 完成、in-flight 帧所有权、fresh DAS context gate、AP9 abort 短路、torque walk、defense config 联动、UI 选择器 + 诊断。默认关闭，opt-in（NVS / defense_config）。从 v1.0.4 pre-release（`v1.0.4-atlas-single-can-epas-late-echo`）转正进入稳定版。
+- **Legacy 智能速度偏移（Smart Offset）**：Off / Manual / Auto / Custom 四模式。Auto 按限速分段百分比 + 绝对 cap 表（35→60 … 120→132）+ 降速平滑（默认 5 km/h/s，含 sub-kph 高频累积修复）。**输出唯一路径**：`0x2F8 / 760 UI_gpsVehicleSpeed byte5 low 6 bits`，保留 byte5 高 2 位（`0xC0`）。Dashboard/API/UI/status/export/import/serial 全集成；NVS keys `lo_mode/lo_smooth/lo_rate/lo_p1..4`。
+- **Abort Guard（实验，默认关闭）**：对齐 `flipper-tesla-fsd` v2.16-beta.11 steer-jerk probe。AP state 8/9 latch 后 block 注入；state <2 clear；state 6 不 clear。覆盖 Legacy 0x2F8 / 0x3EE mux0·mux1 / 0x438 / NAG late-echo / plugin engine / AP auto-restore / HW3·HW4 send paths / HW4 923 latch-before-gate。
+- **HW4 `0x39B/923` 安全 decoder**：标准 HW4 从 byte1 high nibble 解 AP state；Highland byte0 fallback 仅在 pinned-byte1 signature 连续 3 帧 candidate 后启用；byte1 再次移动即永久退出 fallback（保守且正确）。NVS key `def_ag`。
+- native 测试：HW4 923 fallback 状态机（标准 byte1 latch / byte0 false-latch 抑制 / 连续 candidate / fallback 退出）、Abort Guard 状态机、Smart Offset 全模式 + 平滑累积；Python 契约（block-scoped 禁写扫描、760 byte5 单一字段写入、opt-in 门控、默认值）。
+
+### 安全
+- 硬约束逐项通过 final review：无新增 `0x399 / 0x331 / 0x3F8` 写；无新增 `0x3FD non-HW4` offset 写；未扩大 `0x370` torque/hands-on 注入（torque tamper 仍 opt-in/default off）；智能速度输出仅 `0x2F8/760 byte5 low 6 bits`。
+- Abort Guard 与 Smart Auto 升级后默认关闭（升级最多进入 Manual，不会自动选 Auto）。
+- EPAS 注入事故禁令完整（`test_no_epas_nag_contract.py` 守卫不变）。
+
 ## [1.0.4] - 2026-06-25
 
 ### Added
