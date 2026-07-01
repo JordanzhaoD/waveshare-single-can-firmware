@@ -1242,14 +1242,22 @@ struct HW4Handler : public CarManagerBase
         if (hw4State != 1U)
         {
             hw4Das923Byte1Moved = true;
+            hw4Das923UseByte0 = false;
             hw4Das923Byte0PinCount = 0;
         }
-        else if (!hw4Das923UseByte0 && !hw4Das923Byte1Moved && byte0State >= 2U)
+        else if (!hw4Das923UseByte0 && !hw4Das923Byte1Moved)
         {
-            if (hw4Das923Byte0PinCount < 3U)
-                hw4Das923Byte0PinCount++;
-            if (hw4Das923Byte0PinCount >= 3U)
-                hw4Das923UseByte0 = true;
+            if (byte0State >= 2U)
+            {
+                if (hw4Das923Byte0PinCount < 3U)
+                    hw4Das923Byte0PinCount++;
+                if (hw4Das923Byte0PinCount >= 3U)
+                    hw4Das923UseByte0 = true;
+            }
+            else
+            {
+                hw4Das923Byte0PinCount = 0;
+            }
         }
         return hw4Das923UseByte0 ? byte0State : hw4State;
     }
