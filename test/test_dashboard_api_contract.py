@@ -1303,6 +1303,38 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
 
+    def test_legacy_smart_speed_ui_matches_backend_contract(self) -> None:
+        """Legacy smart speed UI must match backend enum/range/status contracts."""
+        for token in [
+            "if(v==='off'||v===0)return 'off'",
+            "if(v==='manual'||v===1)return 'manual'",
+            "if(v==='auto'||v===2)return 'auto'",
+            "if(v==='custom'||v===3)return 'custom'",
+            "mode=(modeVal==='off')?0:((modeVal==='manual')?1:((modeVal==='auto')?2:3))",
+            'min="1" max="20" id="legacy-smooth-rate"',
+            'min="0" max="63" id="legacy-pct-low"',
+            'min="0" max="63" id="legacy-pct-mid"',
+            'min="0" max="63" id="legacy-pct-high"',
+            'min="0" max="63" id="legacy-pct-vhigh"',
+            "clampNum('legacy-smooth-rate',5,1,20)",
+            "clampNum('legacy-pct-low',50,0,63)",
+            "clampNum('legacy-pct-mid',30,0,63)",
+            "clampNum('legacy-pct-high',20,0,63)",
+            "clampNum('legacy-pct-vhigh',10,0,63)",
+            "ls.lastSentOffsetRaw!==undefined",
+            "syncLegacyOffsetInputs('legacy-offset-manual')",
+            "syncLegacyOffsetInputs('legacy-offset-inp')",
+            "legacyOffset:clampNum('legacy-offset-inp',0,0,33)",
+            "d.abort_guard||d.bionic_steering||d.speed_no_disturb",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+        self.assertNotIn('max="30" id="legacy-smooth-rate"', self.ui)
+        self.assertNotIn('max="50" id="legacy-pct-low"', self.ui)
+        self.assertNotIn("clampNum('legacy-smooth-rate',5,1,30)", self.ui)
+        self.assertNotIn("clampNum('legacy-pct-low',50,0,50)", self.ui)
+        self.assertNotIn("ls.gpsUserOffsetRaw!==undefined", self.ui)
+
     def test_phase2_speed_offset_ui_uses_new_three_mode_contract(self) -> None:
         """Speed page must use the fixed/auto/custom UI and sync the Phase 2 APIs."""
         required_ui = [
