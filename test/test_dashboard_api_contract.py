@@ -198,7 +198,6 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn('static_cast<LegacyHandler *>(reactive)->setNagMode', self.dash)
         self.assertIn('dashParseNagMode(raw, 0)', self.dash)
         self.assertNotIn('int mode = raw.toInt();', self.dash)
-        self.assertIn('p.putUChar("def_nag_mode", 0);', self.dash)
         self.assertIn('p.putUChar("def_nag_mode", dashClampNagMode(mode));', self.dash)
         status_idx = self.dash.find('static void handleStatus()')
         self.assertNotEqual(status_idx, -1)
@@ -830,6 +829,11 @@ class DashboardApiContractTests(unittest.TestCase):
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, body)
+        defense = re.search(r'if \(doc\["defense"\]\.is<JsonObject>\(\)\).*?if \(doc\["power"\]', body, re.S)
+        self.assertIsNotNone(defense)
+        defense_body = defense.group(0)
+        self.assertIn('if (defense["nagMode"].is<int>())', defense_body)
+        self.assertNotRegex(defense_body, r'else\s*\{\s*p\.putUChar\("def_nag_mode",\s*0\);\s*\}')
 
     def test_fsd_injection_control_lives_in_module_page(self) -> None:
         """FSD injection controls belong to Module Config, not Driving Mode."""

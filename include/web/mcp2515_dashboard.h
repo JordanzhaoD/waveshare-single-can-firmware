@@ -193,6 +193,15 @@ static bool dashSpeedProfileAuto = true;
 static uint8_t dashManualSpeedProfile = 1;
 static uint8_t dashDriveProfile = 0;  // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
 static uint8_t dashSpeedStrategy = 1; // 0=fixed, 1=auto, 2=custom
+static uint8_t dashLegacyOffsetMode = 0; // 0=off, 1=manual, 2=auto, 3=custom
+static bool dashLegacySmoothDown = true;
+static uint8_t dashLegacySmoothRateKphS = 5;
+static uint8_t dashLegacyCustomPctLow = 50;
+static uint8_t dashLegacyCustomPctMid = 30;
+static uint8_t dashLegacyCustomPctHigh = 20;
+static uint8_t dashLegacyCustomPctVeryHigh = 10;
+static bool dashAbortGuardEnabled = false;
+// Dashboard JSON contract tokens: "gpsSpeedSeen" "lastSentOffsetRaw" "latched" "lastAbortState" "lastBlockedPath"
 static bool dashLightingEnabled = false;
 static uint8_t dashLightingCount = 3;
 static uint8_t dashLightingFrequency = 1; // 0=slow, 1=medium, 2=fast
@@ -390,6 +399,9 @@ static void dashRotateAndConnect();
 static void dashSwapHandler(uint8_t mode);
 static void dashApplyFilters();
 static void dashApplyRuntimeState();
+static uint8_t dashClampLegacyOffsetMode(int v);
+static uint8_t dashClampLegacySmartRateArg(int v);
+static uint8_t dashClampLegacySmartPctArg(int v);
 static void dashClearLegacyOptionPrefs();
 static void dashLog(const String &s);
 static const char *dashWifiStatusName(int status);
@@ -1385,6 +1397,15 @@ static void dashApplyRuntimeState()
         dashHandler->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         dashHandler->overrideSpeedLimit = nvsOverrideSpeedLimit;
         dashHandler->legacyOffset = nvsLegacyOffset;
+        dashHandler->legacySmartOffsetConfig.mode = dashClampLegacySmartMode(dashLegacyOffsetMode);
+        dashHandler->legacySmartOffsetConfig.manualOffsetKph = dashClampLegacySimpleOffsetKph(nvsLegacyOffset);
+        dashHandler->legacySmartOffsetConfig.smoothDownEnabled = dashLegacySmoothDown;
+        dashHandler->legacySmartOffsetConfig.smoothDownRateKphS = dashClampLegacySmartRate(dashLegacySmoothRateKphS);
+        dashHandler->legacySmartOffsetConfig.customPctLow = dashClampLegacySmartPct(dashLegacyCustomPctLow);
+        dashHandler->legacySmartOffsetConfig.customPctMid = dashClampLegacySmartPct(dashLegacyCustomPctMid);
+        dashHandler->legacySmartOffsetConfig.customPctHigh = dashClampLegacySmartPct(dashLegacyCustomPctHigh);
+        dashHandler->legacySmartOffsetConfig.customPctVeryHigh = dashClampLegacySmartPct(dashLegacyCustomPctVeryHigh);
+        dashHandler->abortGuard.setEnabled(dashAbortGuardEnabled);
         dashHandler->tlsscBypass = nvsTlsscBypass;
         dashHandler->emergencyVehicleDetection = nvsEmergencyVehicleDetection;
         dashHandler->hw4OffsetRaw = nvsHw4OffsetRaw;
@@ -1424,6 +1445,13 @@ static void dashSavePrefs()
     prefs.putUChar("spd_str", dashSpeedStrategy);
     prefs.putUChar("offsetMode", offsetMode);     // 0=fixed, 1=auto, 2=custom
     prefs.putUChar("manualPct", manualOffsetPct); // 0-50% for fixed mode
+    prefs.putUChar("lo_mode", dashLegacyOffsetMode);
+    prefs.putBool("lo_smooth", dashLegacySmoothDown);
+    prefs.putUChar("lo_rate", dashLegacySmoothRateKphS);
+    prefs.putUChar("lo_p1", dashLegacyCustomPctLow);
+    prefs.putUChar("lo_p2", dashLegacyCustomPctMid);
+    prefs.putUChar("lo_p3", dashLegacyCustomPctHigh);
+    prefs.putUChar("lo_p4", dashLegacyCustomPctVeryHigh);
     prefs.putUChar("cp0", customPct[0]);          // Zone ≤50 km/h  (HTTP: cp1)
     prefs.putUChar("cp1", customPct[1]);          // Zone ≤70 km/h  (HTTP: cp2)
     prefs.putUChar("cp2", customPct[2]);          // Zone ≤100 km/h (HTTP: cp3)
@@ -1437,6 +1465,7 @@ static void dashSavePrefs()
     prefs.putUChar("def_nag_mode", dashNagMode <= 2 ? dashNagMode : 0);
     prefs.putBool("def_ntt", dashNagTorqueTamper);
     prefs.putBool("def_se", dashSoftEngage);
+    prefs.putBool("def_ag", dashAbortGuardEnabled);
     prefs.putBool("def_nd", dashSpeedNoDisturb);
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
@@ -1646,6 +1675,7 @@ static void dashLoadPrefs()
     dashNagTorqueTamper = prefs.getBool("def_ntt", false);
     nagTorqueTamperRuntime = dashNagTorqueTamper; // boot-sync opt-in to NagHandler
     dashSoftEngage = prefs.getBool("def_se", kSoftEngageDefaultEnabled);
+    dashAbortGuardEnabled = prefs.getBool("def_ag", false);
     dashSpeedNoDisturb = prefs.getBool("def_nd", false);
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
@@ -1717,6 +1747,17 @@ static void dashLoadPrefs()
     }
     nvsRemoveVisionSpeedLimit = prefs.getBool("fh", true);
     nvsOverrideSpeedLimit = prefs.getBool("fi", false);
+    bool hasLegacyMode = prefs.isKey("lo_mode");
+    uint8_t defaultLegacyMode = nvsLegacyOffset > 0 ? 1 : 0;
+    dashLegacyOffsetMode = dashClampLegacyOffsetMode(prefs.getUChar("lo_mode", defaultLegacyMode));
+    if (!hasLegacyMode)
+        prefs.putUChar("lo_mode", dashLegacyOffsetMode);
+    dashLegacySmoothDown = prefs.getBool("lo_smooth", true);
+    dashLegacySmoothRateKphS = dashClampLegacySmartRateArg(prefs.getUChar("lo_rate", 5));
+    dashLegacyCustomPctLow = dashClampLegacySmartPctArg(prefs.getUChar("lo_p1", 50));
+    dashLegacyCustomPctMid = dashClampLegacySmartPctArg(prefs.getUChar("lo_p2", 30));
+    dashLegacyCustomPctHigh = dashClampLegacySmartPctArg(prefs.getUChar("lo_p3", 20));
+    dashLegacyCustomPctVeryHigh = dashClampLegacySmartPctArg(prefs.getUChar("lo_p4", 10));
 
     dashApplyRuntimeState();
     if (dashHandler)
@@ -1980,6 +2021,29 @@ static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxVa
         return false;
     out = static_cast<uint8_t>(parsed);
     return true;
+}
+
+static uint8_t dashClampLegacyOffsetMode(int v)
+{
+    if (v < 0 || v > 3)
+        return 0;
+    return static_cast<uint8_t>(v);
+}
+
+static uint8_t dashClampLegacySmartRateArg(int v)
+{
+    if (v < 1 || v > 20)
+        return 5;
+    return static_cast<uint8_t>(v);
+}
+
+static uint8_t dashClampLegacySmartPctArg(int v)
+{
+    if (v < 0)
+        return 0;
+    if (v > 63)
+        return 63;
+    return static_cast<uint8_t>(v);
 }
 
 #include "web/dash_gateway.h"
@@ -2668,6 +2732,40 @@ static void handleStatus()
     j += dashDndVolume ? "true" : "false";
     j += ",\"dndSpeed\":";
     j += dashDndSpeed ? "true" : "false";
+    LegacySpeedRuntimeDiag legacySpeed = dashHandler ? dashHandler->legacySpeedDiag : LegacySpeedRuntimeDiag{};
+    DashAbortGuardDiag abortDiag = dashHandler ? dashHandler->abortGuard.diag() : DashAbortGuardDiag{};
+    j += ",\"legacySpeed\":{";
+    j += "\"mode\":" + String(static_cast<uint8_t>(legacySpeed.result.mode));
+    j += ",\"speedLimitRaw\":" + String(legacySpeed.result.speedLimitRaw);
+    j += ",\"speedLimitKph\":" + String(legacySpeed.result.speedLimitKph);
+    j += ",\"offsetPct\":" + String(legacySpeed.result.offsetPct);
+    j += ",\"absoluteCapKph\":" + String(legacySpeed.result.absoluteCapKph);
+    j += ",\"rawTargetKph\":" + String(legacySpeed.result.rawTargetKph);
+    j += ",\"smoothedTargetKph\":" + String(legacySpeed.result.smoothedTargetKph);
+    j += ",\"outputOffsetKph\":" + String(legacySpeed.result.outputOffsetKph);
+    j += ",\"fallbackUsed\":" + String(legacySpeed.result.fallbackUsed ? "true" : "false");
+    j += ",\"smoothingActive\":" + String(legacySpeed.result.smoothingActive ? "true" : "false");
+    j += ",\"gpsSpeedSeen\":" + String(legacySpeed.gpsSpeedSeen ? "true" : "false");
+    j += ",\"gpsSpeedFresh\":" + String(legacySpeed.gpsSpeedFresh ? "true" : "false");
+    j += ",\"gpsSpeedPeriodMs\":" + String(legacySpeed.gpsSpeedPeriodMs);
+    j += ",\"gpsUserOffsetRaw\":" + String(legacySpeed.gpsUserOffsetRaw);
+    j += ",\"gpsUserOffsetKph\":" + String(legacySpeed.gpsUserOffsetKph);
+    j += ",\"gpsMppLimitRaw\":" + String(legacySpeed.gpsMppLimitRaw);
+    j += ",\"gpsMppLimitKph\":" + String(legacySpeed.gpsMppLimitKph);
+    j += ",\"lastSentOffsetRaw\":" + String(legacySpeed.lastSentOffsetRaw);
+    j += ",\"lastSentOffsetKph\":" + String(legacySpeed.lastSentOffsetKph);
+    j += ",\"txOk\":" + String(legacySpeed.txOk);
+    j += ",\"txFail\":" + String(legacySpeed.txFail);
+    j += ",\"blockedReason\":\"" + String(legacySpeed.blockedReason) + "\"}";
+    j += ",\"abortGuard\":{";
+    j += "\"enabled\":" + String(abortDiag.enabled ? "true" : "false");
+    j += ",\"latched\":" + String(abortDiag.latched ? "true" : "false");
+    j += ",\"lastApState\":" + String(abortDiag.lastApState);
+    j += ",\"lastAbortState\":" + String(abortDiag.lastAbortState);
+    j += ",\"latchedAtMs\":" + String(abortDiag.latchedAtMs);
+    j += ",\"lastClearReason\":\"" + String(abortDiag.lastClearReason) + "\"";
+    j += ",\"blocks\":" + String(abortDiag.blocks);
+    j += ",\"lastBlockedPath\":\"" + String(abortDiag.lastBlockedPath) + "\"}";
     appendCapabilitiesJson(j, hwMode, effectiveHw);
     j += "}";
     server.send(200, "application/json", j);
@@ -2681,6 +2779,13 @@ static void handleConfigGet()
 {
     String j = "{\"fsdRuntime\":{";
     j += "\"legacyOffset\":" + String(nvsLegacyOffset);
+    j += ",\"legacyOffsetMode\":" + String(dashLegacyOffsetMode);
+    j += ",\"legacySmoothDown\":" + String(dashLegacySmoothDown ? "true" : "false");
+    j += ",\"legacySmoothRateKphS\":" + String(dashLegacySmoothRateKphS);
+    j += ",\"legacyCustomPctLow\":" + String(dashLegacyCustomPctLow);
+    j += ",\"legacyCustomPctMid\":" + String(dashLegacyCustomPctMid);
+    j += ",\"legacyCustomPctHigh\":" + String(dashLegacyCustomPctHigh);
+    j += ",\"legacyCustomPctVeryHigh\":" + String(dashLegacyCustomPctVeryHigh);
     j += ",\"overrideSpeedLimit\":" + String(nvsOverrideSpeedLimit ? "true" : "false");
     j += "},\"defense\":{";
     j += "\"nagMode\":" + String(dashNagMode <= 2 ? dashNagMode : 0);
@@ -2712,6 +2817,41 @@ static void handleConfig()
                 if (offset > 225)
                     offset = 225;
                 nvsLegacyOffset = offset;
+                changed = true;
+            }
+            if (fsd["legacyOffsetMode"].is<int>())
+            {
+                dashLegacyOffsetMode = dashClampLegacyOffsetMode(fsd["legacyOffsetMode"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacySmoothDown"].is<bool>())
+            {
+                dashLegacySmoothDown = fsd["legacySmoothDown"].as<bool>();
+                changed = true;
+            }
+            if (fsd["legacySmoothRateKphS"].is<int>())
+            {
+                dashLegacySmoothRateKphS = dashClampLegacySmartRateArg(fsd["legacySmoothRateKphS"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacyCustomPctLow"].is<int>())
+            {
+                dashLegacyCustomPctLow = dashClampLegacySmartPctArg(fsd["legacyCustomPctLow"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacyCustomPctMid"].is<int>())
+            {
+                dashLegacyCustomPctMid = dashClampLegacySmartPctArg(fsd["legacyCustomPctMid"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacyCustomPctHigh"].is<int>())
+            {
+                dashLegacyCustomPctHigh = dashClampLegacySmartPctArg(fsd["legacyCustomPctHigh"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacyCustomPctVeryHigh"].is<int>())
+            {
+                dashLegacyCustomPctVeryHigh = dashClampLegacySmartPctArg(fsd["legacyCustomPctVeryHigh"].as<int>());
                 changed = true;
             }
             if (fsd["overrideSpeedLimit"].is<bool>())
@@ -3256,6 +3396,8 @@ static String dashDefenseConfigJson()
     j += dashNagTorqueTamper ? "true" : "false";
     j += ",\"soft_engage\":";
     j += dashSoftEngage ? "true" : "false";
+    j += ",\"abort_guard\":";
+    j += dashAbortGuardEnabled ? "true" : "false";
     // Bionic disabled warning (3 consecutive failures)
     bool bionicDisabled = dashHandler ? dashHandler->bionicDisabled() : dashBionicDisabled;
     j += ",\"bionic_disabled\":";
@@ -3288,7 +3430,7 @@ static void handleDefenseConfig()
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
         server.hasArg("nag_mode") || server.hasArg("nagMode") ||
         server.hasArg("nag_torque_tamper") ||
-        server.hasArg("soft_engage"))
+        server.hasArg("soft_engage") || server.hasArg("abort_guard"))
     {
         bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
@@ -3330,6 +3472,8 @@ static void handleDefenseConfig()
             bool v = dashArgTruthy(server.arg("soft_engage"));
             dashSoftEngage = v; // gate reads this directly on the next Legacy mux0 frame
         }
+        if (server.hasArg("abort_guard"))
+            dashAbortGuardEnabled = dashArgTruthy(server.arg("abort_guard"));
         if (server.hasArg("sound_warning_suppression"))
         {
             bool v = dashArgTruthy(server.arg("sound_warning_suppression"));
@@ -5405,6 +5549,8 @@ static void dashSerialPrintHelp()
     Serial.println("  can_status     print CAN/injection summary");
     Serial.println("  task_stats     sample FreeRTOS tasks for 1s asynchronously");
     Serial.println("  reactive_nag   reactive NAG-suppression diagnostics");
+    Serial.println("  legacy_speed   Legacy Smart Speed diagnostics");
+    Serial.println("  abort_guard    Abort Guard diagnostics");
     Serial.println("  reactive_nag_reset  zero the reactive counters (RAM+NVS)");
     Serial.println("  reactive_nag_bump   +111/222/333/444 + flush (persistence self-test)");
     Serial.println();
@@ -5667,6 +5813,22 @@ static void dashSerialRunCommand(char *cmd)
             }
         }
     }
+    else if (strcmp(start, "legacy_speed") == 0)
+    {
+        LegacySpeedRuntimeDiag d = dashHandler ? dashHandler->legacySpeedDiag : LegacySpeedRuntimeDiag{};
+        Serial.println("=== Legacy Smart Speed ===");
+        Serial.printf("mode=%u limitRaw=%u limitKph=%u\n", (unsigned)static_cast<uint8_t>(d.result.mode), d.result.speedLimitRaw, d.result.speedLimitKph);
+        Serial.printf("pct=%u cap=%u rawTarget=%u smoothTarget=%u\n", d.result.offsetPct, d.result.absoluteCapKph, d.result.rawTargetKph, d.result.smoothedTargetKph);
+        Serial.printf("offset=%u gpsSeen=%u period=%u\n", d.result.outputOffsetKph, d.gpsSpeedSeen ? 1 : 0, (unsigned)d.gpsSpeedPeriodMs);
+        Serial.printf("lastSentRaw=%u txOk=%u txFail=%u blocked=%s\n", d.lastSentOffsetRaw, (unsigned)d.txOk, (unsigned)d.txFail, d.blockedReason);
+    }
+    else if (strcmp(start, "abort_guard") == 0)
+    {
+        DashAbortGuardDiag d = dashHandler ? dashHandler->abortGuard.diag() : DashAbortGuardDiag{};
+        Serial.println("=== Abort Guard ===");
+        Serial.printf("enabled=%u latched=%u lastApState=%u lastAbortState=%u\n", d.enabled ? 1 : 0, d.latched ? 1 : 0, d.lastApState, d.lastAbortState);
+        Serial.printf("blocks=%u lastBlockedPath=%s clear=%s\n", (unsigned)d.blocks, d.lastBlockedPath, d.lastClearReason);
+    }
     else if (*start)
         Serial.println("Unknown command. Type help.");
 }
@@ -5837,6 +5999,14 @@ static void handleSettingsExport()
     uint8_t storedOffsetMode = offsetMode;
     uint8_t storedManualPct = manualOffsetPct;
     uint8_t storedCustomPct[4] = {customPct[0], customPct[1], customPct[2], customPct[3]};
+    uint8_t storedLegacyOffsetMode = dashLegacyOffsetMode;
+    bool storedLegacySmoothDown = dashLegacySmoothDown;
+    uint8_t storedLegacySmoothRateKphS = dashLegacySmoothRateKphS;
+    uint8_t storedLegacyCustomPctLow = dashLegacyCustomPctLow;
+    uint8_t storedLegacyCustomPctMid = dashLegacyCustomPctMid;
+    uint8_t storedLegacyCustomPctHigh = dashLegacyCustomPctHigh;
+    uint8_t storedLegacyCustomPctVeryHigh = dashLegacyCustomPctVeryHigh;
+    bool storedAbortGuard = dashAbortGuardEnabled;
     bool storedLightingEnabled = dashLightingEnabled;
     uint8_t storedLightingCount = dashLightingCount;
     uint8_t storedLightingFrequency = dashLightingFrequency;
@@ -5901,6 +6071,13 @@ static void handleSettingsExport()
         storedCustomPct[1] = dashClampSpeedCustomPct(p.getUChar("cp1", customPct[1]));
         storedCustomPct[2] = dashClampSpeedCustomPct(p.getUChar("cp2", customPct[2]));
         storedCustomPct[3] = dashClampSpeedCustomPct(p.getUChar("cp3", customPct[3]));
+        storedLegacyOffsetMode = dashClampLegacyOffsetMode(p.getUChar("lo_mode", dashLegacyOffsetMode));
+        storedLegacySmoothDown = p.getBool("lo_smooth", dashLegacySmoothDown);
+        storedLegacySmoothRateKphS = dashClampLegacySmartRateArg(p.getUChar("lo_rate", dashLegacySmoothRateKphS));
+        storedLegacyCustomPctLow = dashClampLegacySmartPctArg(p.getUChar("lo_p1", dashLegacyCustomPctLow));
+        storedLegacyCustomPctMid = dashClampLegacySmartPctArg(p.getUChar("lo_p2", dashLegacyCustomPctMid));
+        storedLegacyCustomPctHigh = dashClampLegacySmartPctArg(p.getUChar("lo_p3", dashLegacyCustomPctHigh));
+        storedLegacyCustomPctVeryHigh = dashClampLegacySmartPctArg(p.getUChar("lo_p4", dashLegacyCustomPctVeryHigh));
         storedLightingEnabled = p.getBool("lt_en", dashLightingEnabled);
         storedLightingCount = p.getUChar("lt_cnt", dashLightingCount);
         storedLightingFrequency = p.getUChar("lt_freq", dashLightingFrequency);
@@ -5912,6 +6089,7 @@ static void handleSettingsExport()
             storedNagMode = 0;
         storedNagTorqueTamper = p.getBool("def_ntt", dashNagTorqueTamper);
         storedSoftEngage = p.getBool("def_se", dashSoftEngage);
+        storedAbortGuard = p.getBool("def_ag", dashAbortGuardEnabled);
         storedSpeedNoDisturb = p.getBool("def_nd", dashSpeedNoDisturb);
         storedDndVolume = p.getBool("def_dv", dashDndVolume);
         storedDndSpeed = p.getBool("def_ds", dashDndSpeed);
@@ -6042,6 +6220,16 @@ static void handleSettingsExport()
         j += String(storedCustomPct[i]);
     }
     j += "]}";
+    j += ",\"legacySpeed\":{";
+    j += "\"mode\":" + String(storedLegacyOffsetMode);
+    j += ",\"manualOffsetKph\":" + String(storedLegacyOffset);
+    j += ",\"smoothDown\":" + String(storedLegacySmoothDown ? "true" : "false");
+    j += ",\"smoothRateKphS\":" + String(storedLegacySmoothRateKphS);
+    j += ",\"customPctLow\":" + String(storedLegacyCustomPctLow);
+    j += ",\"customPctMid\":" + String(storedLegacyCustomPctMid);
+    j += ",\"customPctHigh\":" + String(storedLegacyCustomPctHigh);
+    j += ",\"customPctVeryHigh\":" + String(storedLegacyCustomPctVeryHigh);
+    j += "}";
     j += ",\"lighting\":{\"enabled\":" + String(storedLightingEnabled ? "true" : "false");
     j += ",\"count\":" + String(storedLightingCount) + ",\"frequencyValue\":" + String(storedLightingFrequency);
     j += ",\"rearFogValue\":" + String(storedRearFogStrategy) + "}";
@@ -6050,6 +6238,7 @@ static void handleSettingsExport()
     j += ",\"nagMode\":" + String(storedNagMode);
     j += ",\"nagTorqueTamper\":" + String(storedNagTorqueTamper ? "true" : "false");
     j += ",\"softEngage\":" + String(storedSoftEngage ? "true" : "false");
+    j += ",\"abortGuard\":" + String(storedAbortGuard ? "true" : "false");
     j += ",\"speedNoDisturb\":" + String(storedSpeedNoDisturb ? "true" : "false");
     j += ",\"dndVolume\":" + String(storedDndVolume ? "true" : "false");
     j += ",\"dndSpeed\":" + String(storedDndSpeed ? "true" : "false");
@@ -6299,6 +6488,33 @@ static void handleSettingsImport()
             }
         }
     }
+    if (doc["legacySpeed"].is<JsonObject>())
+    {
+        JsonObject legacySpeed = doc["legacySpeed"].as<JsonObject>();
+        if (legacySpeed["mode"].is<int>())
+            p.putUChar("lo_mode", dashClampLegacyOffsetMode(legacySpeed["mode"].as<int>()));
+        if (legacySpeed["manualOffsetKph"].is<int>())
+        {
+            int offset = legacySpeed["manualOffsetKph"].as<int>();
+            if (offset < -30)
+                offset = -30;
+            if (offset > 225)
+                offset = 225;
+            p.putUChar("fg", static_cast<uint8_t>(offset + 30));
+        }
+        if (legacySpeed["smoothDown"].is<bool>())
+            p.putBool("lo_smooth", legacySpeed["smoothDown"].as<bool>());
+        if (legacySpeed["smoothRateKphS"].is<int>())
+            p.putUChar("lo_rate", dashClampLegacySmartRateArg(legacySpeed["smoothRateKphS"].as<int>()));
+        if (legacySpeed["customPctLow"].is<int>())
+            p.putUChar("lo_p1", dashClampLegacySmartPctArg(legacySpeed["customPctLow"].as<int>()));
+        if (legacySpeed["customPctMid"].is<int>())
+            p.putUChar("lo_p2", dashClampLegacySmartPctArg(legacySpeed["customPctMid"].as<int>()));
+        if (legacySpeed["customPctHigh"].is<int>())
+            p.putUChar("lo_p3", dashClampLegacySmartPctArg(legacySpeed["customPctHigh"].as<int>()));
+        if (legacySpeed["customPctVeryHigh"].is<int>())
+            p.putUChar("lo_p4", dashClampLegacySmartPctArg(legacySpeed["customPctVeryHigh"].as<int>()));
+    }
     if (doc["lighting"].is<JsonObject>())
     {
         JsonObject lighting = doc["lighting"].as<JsonObject>();
@@ -6335,14 +6551,12 @@ static void handleSettingsImport()
             int mode = defense["nagMode"].as<int>();
             p.putUChar("def_nag_mode", dashClampNagMode(mode));
         }
-        else
-        {
-            p.putUChar("def_nag_mode", 0);
-        }
         if (defense["nagTorqueTamper"].is<bool>())
             p.putBool("def_ntt", defense["nagTorqueTamper"].as<bool>());
         if (defense["softEngage"].is<bool>())
             p.putBool("def_se", defense["softEngage"].as<bool>());
+        if (defense["abortGuard"].is<bool>())
+            p.putBool("def_ag", defense["abortGuard"].as<bool>());
         if (defense["speedNoDisturb"].is<bool>())
             p.putBool("def_nd", defense["speedNoDisturb"].as<bool>());
         if (defense["dndVolume"].is<bool>())
@@ -7074,6 +7288,15 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->banShieldEnable = nvsBanShieldEnable;
         handlerPool[i]->bionicSteering = dashBionicSteering;
         handlerPool[i]->legacyOffset = nvsLegacyOffset;
+        handlerPool[i]->legacySmartOffsetConfig.mode = dashClampLegacySmartMode(dashLegacyOffsetMode);
+        handlerPool[i]->legacySmartOffsetConfig.manualOffsetKph = dashClampLegacySimpleOffsetKph(nvsLegacyOffset);
+        handlerPool[i]->legacySmartOffsetConfig.smoothDownEnabled = dashLegacySmoothDown;
+        handlerPool[i]->legacySmartOffsetConfig.smoothDownRateKphS = dashClampLegacySmartRate(dashLegacySmoothRateKphS);
+        handlerPool[i]->legacySmartOffsetConfig.customPctLow = dashClampLegacySmartPct(dashLegacyCustomPctLow);
+        handlerPool[i]->legacySmartOffsetConfig.customPctMid = dashClampLegacySmartPct(dashLegacyCustomPctMid);
+        handlerPool[i]->legacySmartOffsetConfig.customPctHigh = dashClampLegacySmartPct(dashLegacyCustomPctHigh);
+        handlerPool[i]->legacySmartOffsetConfig.customPctVeryHigh = dashClampLegacySmartPct(dashLegacyCustomPctVeryHigh);
+        handlerPool[i]->abortGuard.setEnabled(dashAbortGuardEnabled);
         handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         handlerPool[i]->overrideSpeedLimit = nvsOverrideSpeedLimit;
         handlerPool[i]->legacyFsdDiag.policy = dashLegacyFsdPolicy;

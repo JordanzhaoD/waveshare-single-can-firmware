@@ -43,6 +43,25 @@ static inline bool framePayloadChanged(const CanFrame &original, const CanFrame 
     return false;
 }
 
+struct LegacySpeedRuntimeDiag
+{
+    LegacySmartOffsetResult result{};
+    bool gpsSpeedSeen = false;
+    bool gpsSpeedFresh = false;
+    uint32_t gpsSpeedPeriodMs = 0;
+    uint32_t gpsSpeedLastMs = 0;
+    uint32_t gpsSpeedCount = 0;
+    uint8_t gpsUserOffsetRaw = 0;
+    int gpsUserOffsetKph = -30;
+    uint8_t gpsMppLimitRaw = 0;
+    uint16_t gpsMppLimitKph = 0;
+    uint8_t lastSentOffsetRaw = 0;
+    uint8_t lastSentOffsetKph = 0;
+    uint32_t txOk = 0;
+    uint32_t txFail = 0;
+    const char *blockedReason = "none";
+};
+
 struct CarManagerBase
 {
     Shared<int> speedProfile{1};
@@ -67,6 +86,10 @@ struct CarManagerBase
     LegacyFsdDiag legacyFsdDiag{};
     Shared<int> legacyOffset{0};
     Shared<bool> overrideSpeedLimit{false};
+    LegacySmartOffsetConfig legacySmartOffsetConfig{};
+    LegacySmartOffsetEngine legacySmartOffsetEngine{};
+    LegacySpeedRuntimeDiag legacySpeedDiag{};
+    DashAbortGuard abortGuard{};
     Shared<bool> tlsscBypass{false};
     Shared<bool> emergencyVehicleDetection{true};
     Shared<bool> isaChimeSuppress{false};
@@ -307,15 +330,6 @@ struct CarManagerBase
     virtual ~CarManagerBase() = default;
 };
 
-struct LegacySpeedRuntimeDiag
-{
-    bool gpsSpeedSeen = false;
-    uint8_t lastSentOffsetRaw = 0;
-    uint8_t lastSentOffsetKph = 0;
-    uint32_t txOk = 0;
-    LegacySmartOffsetResult result{};
-    const char *blockedReason = "none";
-};
 
 struct LegacyHandler : public CarManagerBase
 {
@@ -328,10 +342,6 @@ struct LegacyHandler : public CarManagerBase
 
     DashReactiveNagBurst nag; // reactive NAG-suppression burst state machine
     DashEpasLateEcho lateNag;
-    DashAbortGuard abortGuard{};
-    LegacySmartOffsetConfig legacySmartOffsetConfig{};
-    LegacySmartOffsetEngine legacySmartOffsetEngine{};
-    LegacySpeedRuntimeDiag legacySpeedDiag{};
     NagMode nagMode{NagMode::Off};
     uint8_t lastNagApState{0};
     uint8_t lastNagHos{0};
@@ -566,14 +576,33 @@ struct LegacyHandler : public CarManagerBase
         // so the offset unit follows the car's setting.
         if (frame.id == 760)
         {
+            uint32_t nowMs = dashDiagNowMs();
             legacySpeedDiag.gpsSpeedSeen = true;
+            legacySpeedDiag.gpsSpeedFresh = true;
+            if (frame.dlc >= 6)
+            {
+                legacySpeedDiag.gpsUserOffsetRaw = frame.data[5] & 0x3F;
+                legacySpeedDiag.gpsUserOffsetKph = static_cast<int>(legacySpeedDiag.gpsUserOffsetRaw) - 30;
+            }
+            if (frame.dlc >= 7)
+            {
+                const uint8_t *bytes = frame.data;
+                legacySpeedDiag.gpsMppLimitRaw = bytes[6] & 0x1F;
+                legacySpeedDiag.gpsMppLimitKph = static_cast<uint16_t>(legacySpeedDiag.gpsMppLimitRaw) * 5U;
+            }
+            if (legacySpeedDiag.gpsSpeedLastMs != 0)
+                legacySpeedDiag.gpsSpeedPeriodMs = nowMs - legacySpeedDiag.gpsSpeedLastMs;
+            legacySpeedDiag.gpsSpeedLastMs = nowMs;
+            ++legacySpeedDiag.gpsSpeedCount;
             legacySpeedDiag.blockedReason = "none";
             if (checkAD && !checkAD())
+            {
+                legacySpeedDiag.blockedReason = "checkAD";
                 return;
+            }
             if (frame.dlc < 6)
                 return;
 
-            uint32_t nowMs = dashDiagNowMs();
             LegacySmartOffsetMode smartMode = dashClampLegacySmartMode(static_cast<int>(legacySmartOffsetConfig.mode));
             uint8_t effectiveOffset = 0;
             if (smartMode == LegacySmartOffsetMode::Off)
@@ -608,12 +637,18 @@ struct LegacyHandler : public CarManagerBase
             legacyFsdDiag.aux760.recordAfter(frame.data);
             legacyFsdDiag.aux760.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
             bool ok = driver.send(frame);
+            legacySpeedDiag.lastSentOffsetRaw = static_cast<uint8_t>(raw & 0x3F);
+            legacySpeedDiag.lastSentOffsetKph = effectiveOffset;
             if (ok)
             {
                 framesSent++;
                 legacySpeedDiag.txOk++;
-                legacySpeedDiag.lastSentOffsetRaw = static_cast<uint8_t>(raw & 0x3F);
-                legacySpeedDiag.lastSentOffsetKph = effectiveOffset;
+                legacySpeedDiag.blockedReason = "none";
+            }
+            else
+            {
+                legacySpeedDiag.txFail++;
+                legacySpeedDiag.blockedReason = "txFail";
             }
             legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux760, ok, nowMs);
             if (onSend)
