@@ -19,6 +19,7 @@
 #include <algorithm>
 #include "can_frame_types.h"
 #include "dash_hw3_speed.h"
+#include "dash_legacy_smart_offset.h"
 
 // Current verified Legacy/HW2.x speed-offset wire path writes UI_userSpeedOffset
 // on CAN 760 byte 5 low 6 bits (raw = offset_kph + 30). The field can encode
