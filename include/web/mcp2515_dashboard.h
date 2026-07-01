@@ -110,6 +110,7 @@ static constexpr uint8_t kDashUnsetU8 = 0xFF;
 static Preferences prefs;
 
 static CarManagerBase *dashHandler = nullptr;
+static CarManagerBase *dashReactiveNagHandler();
 static CanDriver *dashDriver = nullptr;
 #if defined(DRIVER_ESP32_EXT_MCP2515)
 static MCP2515 *dashMcp = nullptr;
@@ -125,6 +126,9 @@ static uint8_t followDist = 0;
 
 static unsigned long fpsFrames = 0;
 static unsigned long fpsLastMs = 0;
+// Reactive-NAG instrumentation counter persistence (NVS) — survive power-off.
+static unsigned long lastReactiveCountersMs = 0;
+static bool reactiveCountersLoaded = false;
 static float fps = 0.0f;
 
 static unsigned long muxRx[4] = {};
@@ -187,8 +191,17 @@ static bool dashSoftEngage = kSoftEngageDefaultEnabled; // opt-in toggle (UI/NVS
 static bool legacySoftEngageSent = false;               // per-episode latch: first bit46 release
 static bool dashSpeedProfileAuto = true;
 static uint8_t dashManualSpeedProfile = 1;
-static uint8_t dashDriveProfile = 0;  // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
-static uint8_t dashSpeedStrategy = 1; // 0=fixed, 1=auto, 2=custom
+static uint8_t dashDriveProfile = 0;     // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
+static uint8_t dashSpeedStrategy = 1;    // 0=fixed, 1=auto, 2=custom
+static uint8_t dashLegacyOffsetMode = 0; // 0=off, 1=manual, 2=auto, 3=custom
+static bool dashLegacySmoothDown = true;
+static uint8_t dashLegacySmoothRateKphS = 5;
+static uint8_t dashLegacyCustomPctLow = 50;
+static uint8_t dashLegacyCustomPctMid = 30;
+static uint8_t dashLegacyCustomPctHigh = 20;
+static uint8_t dashLegacyCustomPctVeryHigh = 10;
+static bool dashAbortGuardEnabled = false;
+// Dashboard JSON contract tokens: "gpsSpeedSeen" "lastSentOffsetRaw" "latched" "lastAbortState" "lastBlockedPath"
 static bool dashLightingEnabled = false;
 static uint8_t dashLightingCount = 3;
 static uint8_t dashLightingFrequency = 1; // 0=slow, 1=medium, 2=fast
@@ -198,6 +211,7 @@ static bool dashFogOffRequested = false;  // one-shot fail-off/stop command owne
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
+static uint8_t dashNagMode = 0; // 0=off, 1=legacy_tsl6p, 2=epas_late_echo
 static bool dashSpeedNoDisturb = false;
 static bool dashDndVolume = false;       // 音量消除DND（Phase 3实现执行逻辑）
 static bool dashDndSpeed = false;        // 速度滚轮DND（Phase 3实现执行逻辑）
@@ -385,6 +399,9 @@ static void dashRotateAndConnect();
 static void dashSwapHandler(uint8_t mode);
 static void dashApplyFilters();
 static void dashApplyRuntimeState();
+static uint8_t dashClampLegacyOffsetMode(int v);
+static uint8_t dashClampLegacySmartRateArg(int v);
+static uint8_t dashClampLegacySmartPctArg(int v);
 static void dashClearLegacyOptionPrefs();
 static void dashLog(const String &s);
 static const char *dashWifiStatusName(int status);
@@ -1034,6 +1051,7 @@ static DashPluginContext dashPluginContext()
     ctx.otaAllowed = dashOtaGuardAllowInjection();
     ctx.apGateAllowed = dashApInjectionAllowed() && legacyFsdLastAllowed;
     ctx.fsdMasterEnabled = canActive;
+    ctx.abortGuardAllowed = dashHandler ? dashHandler->abortGuard.allowsInjection() : !dashAbortGuardEnabled;
     ctx.defaultBus = CAN_BUS_DEFAULT;
     return ctx;
 }
@@ -1072,6 +1090,11 @@ static void dashTryApAutoRestore(const CanFrame &trigger, CanDriver &driver)
 {
     if (trigger.id != 0x389 || !apAutoRestore)
         return;
+    if (dashHandler && !dashHandler->abortGuard.allowsInjection())
+    {
+        dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::ApAutoRestore);
+        return;
+    }
 
     unsigned long now = millis();
     if (!apRestoreState.dasAccDropMs ||
@@ -1144,6 +1167,24 @@ static uint8_t dashClampSpeedProfileForHw(uint8_t hw, int profile)
 static bool dashArgTruthy(const String &v)
 {
     return v == "1" || v == "true" || v == "on" || v == "yes";
+}
+
+static uint8_t dashClampNagMode(int mode)
+{
+    return (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0;
+}
+
+static uint8_t dashParseNagMode(const String &raw, uint8_t fallback = 0)
+{
+    if (!raw.length())
+        return fallback;
+    for (size_t i = 0; i < raw.length(); i++)
+    {
+        char c = raw.charAt(i);
+        if (c < '0' || c > '9')
+            return fallback;
+    }
+    return dashClampNagMode(raw.toInt());
 }
 
 // Clamp an AP settle delay (ms) parsed from /config into the valid range so a
@@ -1349,12 +1390,28 @@ static void dashApplyRuntimeState()
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
+        bool effectiveBionic = dashDefenseEnabled && dashBionicSteering;
+        uint8_t effectiveNagMode = dashDefenseEnabled ? dashNagMode : 0;
+        if (CarManagerBase *reactive = dashReactiveNagHandler())
+        {
+            reactive->bionicSteering = effectiveBionic;
+            reactive->setNagMode(effectiveNagMode);
+        }
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
         dashHandler->banShieldEnable = nvsBanShieldEnable;
         dashHandler->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         dashHandler->overrideSpeedLimit = nvsOverrideSpeedLimit;
         dashHandler->legacyOffset = nvsLegacyOffset;
+        dashHandler->legacySmartOffsetConfig.mode = dashClampLegacySmartMode(dashLegacyOffsetMode);
+        dashHandler->legacySmartOffsetConfig.manualOffsetKph = dashClampLegacySimpleOffsetKph(nvsLegacyOffset);
+        dashHandler->legacySmartOffsetConfig.smoothDownEnabled = dashLegacySmoothDown;
+        dashHandler->legacySmartOffsetConfig.smoothDownRateKphS = dashClampLegacySmartRate(dashLegacySmoothRateKphS);
+        dashHandler->legacySmartOffsetConfig.customPctLow = dashClampLegacySmartPct(dashLegacyCustomPctLow);
+        dashHandler->legacySmartOffsetConfig.customPctMid = dashClampLegacySmartPct(dashLegacyCustomPctMid);
+        dashHandler->legacySmartOffsetConfig.customPctHigh = dashClampLegacySmartPct(dashLegacyCustomPctHigh);
+        dashHandler->legacySmartOffsetConfig.customPctVeryHigh = dashClampLegacySmartPct(dashLegacyCustomPctVeryHigh);
+        dashHandler->abortGuard.setEnabled(dashAbortGuardEnabled);
         dashHandler->tlsscBypass = nvsTlsscBypass;
         dashHandler->emergencyVehicleDetection = nvsEmergencyVehicleDetection;
         dashHandler->hw4OffsetRaw = nvsHw4OffsetRaw;
@@ -1394,18 +1451,27 @@ static void dashSavePrefs()
     prefs.putUChar("spd_str", dashSpeedStrategy);
     prefs.putUChar("offsetMode", offsetMode);     // 0=fixed, 1=auto, 2=custom
     prefs.putUChar("manualPct", manualOffsetPct); // 0-50% for fixed mode
-    prefs.putUChar("cp0", customPct[0]);          // Zone ≤50 km/h  (HTTP: cp1)
-    prefs.putUChar("cp1", customPct[1]);          // Zone ≤70 km/h  (HTTP: cp2)
-    prefs.putUChar("cp2", customPct[2]);          // Zone ≤100 km/h (HTTP: cp3)
-    prefs.putUChar("cp3", customPct[3]);          // Zone >100 km/h (HTTP: cp4)
+    prefs.putUChar("lo_mode", dashLegacyOffsetMode);
+    prefs.putBool("lo_smooth", dashLegacySmoothDown);
+    prefs.putUChar("lo_rate", dashLegacySmoothRateKphS);
+    prefs.putUChar("lo_p1", dashLegacyCustomPctLow);
+    prefs.putUChar("lo_p2", dashLegacyCustomPctMid);
+    prefs.putUChar("lo_p3", dashLegacyCustomPctHigh);
+    prefs.putUChar("lo_p4", dashLegacyCustomPctVeryHigh);
+    prefs.putUChar("cp0", customPct[0]); // Zone ≤50 km/h  (HTTP: cp1)
+    prefs.putUChar("cp1", customPct[1]); // Zone ≤70 km/h  (HTTP: cp2)
+    prefs.putUChar("cp2", customPct[2]); // Zone ≤100 km/h (HTTP: cp3)
+    prefs.putUChar("cp3", customPct[3]); // Zone >100 km/h (HTTP: cp4)
     prefs.putBool("lt_en", dashLightingEnabled);
     prefs.putUChar("lt_cnt", dashLightingCount);
     prefs.putUChar("lt_freq", dashLightingFrequency);
     prefs.putUChar("lt_fog", dashRearFogStrategy);
     prefs.putBool("def_en", dashDefenseEnabled);
     prefs.putBool("def_bio", dashBionicSteering);
+    prefs.putUChar("def_nag_mode", dashNagMode <= 2 ? dashNagMode : 0);
     prefs.putBool("def_ntt", dashNagTorqueTamper);
     prefs.putBool("def_se", dashSoftEngage);
+    prefs.putBool("def_ag", dashAbortGuardEnabled);
     prefs.putBool("def_nd", dashSpeedNoDisturb);
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
@@ -1609,9 +1675,13 @@ static void dashLoadPrefs()
         dashRearFogStrategy = 0;
     dashDefenseEnabled = prefs.getBool("def_en", false);
     dashBionicSteering = prefs.getBool("def_bio", false);
+    dashNagMode = prefs.getUChar("def_nag_mode", 0);
+    if (dashNagMode > 2)
+        dashNagMode = 0;
     dashNagTorqueTamper = prefs.getBool("def_ntt", false);
     nagTorqueTamperRuntime = dashNagTorqueTamper; // boot-sync opt-in to NagHandler
     dashSoftEngage = prefs.getBool("def_se", kSoftEngageDefaultEnabled);
+    dashAbortGuardEnabled = prefs.getBool("def_ag", false);
     dashSpeedNoDisturb = prefs.getBool("def_nd", false);
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
@@ -1683,6 +1753,17 @@ static void dashLoadPrefs()
     }
     nvsRemoveVisionSpeedLimit = prefs.getBool("fh", true);
     nvsOverrideSpeedLimit = prefs.getBool("fi", false);
+    bool hasLegacyMode = prefs.isKey("lo_mode");
+    uint8_t defaultLegacyMode = nvsLegacyOffset > 0 ? 1 : 0;
+    dashLegacyOffsetMode = dashClampLegacyOffsetMode(prefs.getUChar("lo_mode", defaultLegacyMode));
+    if (!hasLegacyMode)
+        prefs.putUChar("lo_mode", dashLegacyOffsetMode);
+    dashLegacySmoothDown = prefs.getBool("lo_smooth", true);
+    dashLegacySmoothRateKphS = dashClampLegacySmartRateArg(prefs.getUChar("lo_rate", 5));
+    dashLegacyCustomPctLow = dashClampLegacySmartPctArg(prefs.getUChar("lo_p1", 50));
+    dashLegacyCustomPctMid = dashClampLegacySmartPctArg(prefs.getUChar("lo_p2", 30));
+    dashLegacyCustomPctHigh = dashClampLegacySmartPctArg(prefs.getUChar("lo_p3", 20));
+    dashLegacyCustomPctVeryHigh = dashClampLegacySmartPctArg(prefs.getUChar("lo_p4", 10));
 
     dashApplyRuntimeState();
     if (dashHandler)
@@ -1946,6 +2027,29 @@ static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxVa
         return false;
     out = static_cast<uint8_t>(parsed);
     return true;
+}
+
+static uint8_t dashClampLegacyOffsetMode(int v)
+{
+    if (v < 0 || v > 3)
+        return 0;
+    return static_cast<uint8_t>(v);
+}
+
+static uint8_t dashClampLegacySmartRateArg(int v)
+{
+    if (v < 1 || v > 20)
+        return 5;
+    return static_cast<uint8_t>(v);
+}
+
+static uint8_t dashClampLegacySmartPctArg(int v)
+{
+    if (v < 0)
+        return 0;
+    if (v > 63)
+        return 63;
+    return static_cast<uint8_t>(v);
 }
 
 #include "web/dash_gateway.h"
@@ -2422,6 +2526,102 @@ static void handleStatus()
     j += dashHandler ? ((bool)dashHandler->removeVisionSpeedLimit ? "true" : "false") : "false";
     j += ",\"overrideSpeedLimit\":";
     j += dashHandler ? ((bool)dashHandler->overrideSpeedLimit ? "true" : "false") : "false";
+    j += ",\"nagMode\":";
+    j += String(dashNagMode <= 2 ? dashNagMode : 0);
+    j += ",\"reactiveNag\":{";
+    CarManagerBase *reactive = dashReactiveNagHandler();
+    if (reactive)
+    {
+        DashReactiveDiag d = reactive->reactiveDiag();
+        j += "\"enabled\":";
+        j += d.enabled ? "true" : "false";
+        j += ",\"mode\":";
+        j += String((int)d.mode);
+        j += ",\"injecting\":";
+        j += d.injecting ? "true" : "false";
+        j += ",\"currentAmp\":";
+        j += String(d.currentAmp);
+        j += ",\"lastHandsOnState\":";
+        j += String(d.lastHandsOnState);
+        j += ",\"nextProactiveInMs\":";
+        j += String(d.nextProactiveInMs);
+        j += R"(,"nagSamples":)";
+        j += String(d.nagSamples);
+        j += R"(,"reactiveBursts":)";
+        j += String(d.reactiveBursts);
+        j += R"(,"proactiveWiggles":)";
+        j += String(d.proactiveWiggles);
+        j += R"(,"echoSent":)";
+        j += String(d.echoSent);
+        j += R"(,"replayAttempts":)";
+        j += String(d.replayAttempts);
+        j += R"(,"replaySuccesses":)";
+        j += String(d.replaySuccesses);
+        j += R"(,"replayFailures":)";
+        j += String(d.replayFailures);
+        j += R"(,"burstSessions":)" + String(d.burstSessions);
+        j += R"(,"burstOnEntries":)" + String(d.burstOnEntries);
+        j += R"(,"burstOffEntries":)" + String(d.burstOffEntries);
+        j += R"(,"burstFramesSent":)" + String(d.burstFramesSent);
+        j += R"(,"burstCyclesCompleted":)" + String(d.burstCyclesCompleted);
+        j += R"(,"hosClearEvents":)" + String(d.hosClearEvents);
+        j += R"(,"hosClearDuringOn":)" + String(d.hosClearDuringOn);
+        j += R"(,"hosClearDuringOff":)" + String(d.hosClearDuringOff);
+        j += R"(,"hosClearWhileIdle":)" + String(d.hosClearWhileIdle);
+        j += R"(,"hosClearWhileCooldown":)" + String(d.hosClearWhileCooldown);
+        j += R"(,"abortBlocks":)" + String(d.abortBlocks);
+        j += R"(,"gateBlocks":)" + String(d.gateBlocks);
+        j += R"(,"txFailures":)" + String(d.txFailures);
+        j += R"(,"lastApState":)" + String(d.lastApState);
+        j += R"(,"phaseRemainMs":)" + String(d.phaseRemainMs);
+        j += R"(,"lastTorqueRaw":)" + String(d.lastTorqueRaw);
+        j += R"(,"lastTorqueNmX100":)" + String(d.lastTorqueNmX100);
+        j += R"(,"lateEchoMode":)" + String(d.lateEchoMode ? "true" : "false");
+        j += R"(,"cadenceStable":)" + String(d.cadenceStable ? "true" : "false");
+        j += R"(,"lateEchoEligible":)" + String(d.lateEchoEligible ? "true" : "false");
+        j += R"(,"pendingEcho":)" + String(d.pendingEcho ? "true" : "false");
+        j += R"(,"periodMs":)" + String(d.periodMs);
+        j += R"(,"jitterMs":)" + String(d.jitterMs);
+        j += R"(,"counterStep":)" + String((int)d.counterStep);
+        j += R"(,"expectedNextCounter":)" + String((int)d.expectedNextCounter);
+        j += R"(,"predictedNextRxMs":)" + String(d.predictedNextRxMs);
+        j += R"(,"pendingSendAtMs":)" + String(d.pendingSendAtMs);
+        j += R"(,"scheduledEchoes":)" + String(d.scheduledEchoes);
+        j += R"(,"sentLateEchoes":)" + String(d.sentLateEchoes);
+        j += R"(,"droppedLateEchoes":)" + String(d.droppedLateEchoes);
+        j += R"(,"lateWindowMissed":)" + String(d.lateWindowMissed);
+        j += R"(,"lastRxToTxMs":)" + String(d.lastRxToTxMs);
+        j += R"(,"lastLeadMs":)" + String(d.lastLeadMs);
+        j += R"(,"preserveHandsOnLevel":)" + String(d.preserveHandsOnLevel ? "true" : "false");
+        j += R"(,"lastSourceHandsOnLevel":)" + String((int)d.lastSourceHandsOnLevel);
+        j += R"(,"lastTxHandsOnLevel":)" + String((int)d.lastTxHandsOnLevel);
+        j += R"(,"lastProfileId":)";
+        j += String((int)d.lastProfileId);
+        j += R"(,"lastProfileDir":)";
+        j += String(d.lastProfileDir);
+        j += R"(,"lastPeakRaw":)";
+        j += String(d.lastPeakRaw);
+        j += R"(,"lastBaseRaw":)";
+        j += String(d.lastBaseRaw);
+        j += R"(,"lastOutDeltaRaw":)";
+        j += String(d.lastOutDeltaRaw);
+        j += R"(,"profileIndex":)";
+        j += String((int)d.profileIndex);
+        j += R"(,"lastHosBefore":)";
+        j += String((int)d.lastHosBefore);
+        j += R"(,"lastHosAfter":)";
+        j += String((int)d.lastHosAfter);
+        j += R"(,"cooldownRemainMs":)";
+        j += String(d.cooldownRemainMs);
+        j += R"(,"blockedReason":")";
+        j += jsonEscape(d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
+        j += "\"";
+    }
+    else
+    {
+        j += "\"enabled\":false";
+    }
+    j += "}";
     j += ",\"hw3AutoSpeed\":";
     j += hw3AutoSpeed ? "true" : "false";
     j += ",\"can\":";
@@ -2538,6 +2738,40 @@ static void handleStatus()
     j += dashDndVolume ? "true" : "false";
     j += ",\"dndSpeed\":";
     j += dashDndSpeed ? "true" : "false";
+    LegacySpeedRuntimeDiag legacySpeed = dashHandler ? dashHandler->legacySpeedDiag : LegacySpeedRuntimeDiag{};
+    DashAbortGuardDiag abortDiag = dashHandler ? dashHandler->abortGuard.diag() : DashAbortGuardDiag{};
+    j += ",\"legacySpeed\":{";
+    j += "\"mode\":" + String(static_cast<uint8_t>(legacySpeed.result.mode));
+    j += ",\"speedLimitRaw\":" + String(legacySpeed.result.speedLimitRaw);
+    j += ",\"speedLimitKph\":" + String(legacySpeed.result.speedLimitKph);
+    j += ",\"offsetPct\":" + String(legacySpeed.result.offsetPct);
+    j += ",\"absoluteCapKph\":" + String(legacySpeed.result.absoluteCapKph);
+    j += ",\"rawTargetKph\":" + String(legacySpeed.result.rawTargetKph);
+    j += ",\"smoothedTargetKph\":" + String(legacySpeed.result.smoothedTargetKph);
+    j += ",\"outputOffsetKph\":" + String(legacySpeed.result.outputOffsetKph);
+    j += ",\"fallbackUsed\":" + String(legacySpeed.result.fallbackUsed ? "true" : "false");
+    j += ",\"smoothingActive\":" + String(legacySpeed.result.smoothingActive ? "true" : "false");
+    j += ",\"gpsSpeedSeen\":" + String(legacySpeed.gpsSpeedSeen ? "true" : "false");
+    j += ",\"gpsSpeedFresh\":" + String(legacySpeed.gpsSpeedFresh ? "true" : "false");
+    j += ",\"gpsSpeedPeriodMs\":" + String(legacySpeed.gpsSpeedPeriodMs);
+    j += ",\"gpsUserOffsetRaw\":" + String(legacySpeed.gpsUserOffsetRaw);
+    j += ",\"gpsUserOffsetKph\":" + String(legacySpeed.gpsUserOffsetKph);
+    j += ",\"gpsMppLimitRaw\":" + String(legacySpeed.gpsMppLimitRaw);
+    j += ",\"gpsMppLimitKph\":" + String(legacySpeed.gpsMppLimitKph);
+    j += ",\"lastSentOffsetRaw\":" + String(legacySpeed.lastSentOffsetRaw);
+    j += ",\"lastSentOffsetKph\":" + String(legacySpeed.lastSentOffsetKph);
+    j += ",\"txOk\":" + String(legacySpeed.txOk);
+    j += ",\"txFail\":" + String(legacySpeed.txFail);
+    j += ",\"blockedReason\":\"" + String(legacySpeed.blockedReason) + "\"}";
+    j += ",\"abortGuard\":{";
+    j += "\"enabled\":" + String(abortDiag.enabled ? "true" : "false");
+    j += ",\"latched\":" + String(abortDiag.latched ? "true" : "false");
+    j += ",\"lastApState\":" + String(abortDiag.lastApState);
+    j += ",\"lastAbortState\":" + String(abortDiag.lastAbortState);
+    j += ",\"latchedAtMs\":" + String(abortDiag.latchedAtMs);
+    j += ",\"lastClearReason\":\"" + String(abortDiag.lastClearReason) + "\"";
+    j += ",\"blocks\":" + String(abortDiag.blocks);
+    j += ",\"lastBlockedPath\":\"" + String(abortDiag.lastBlockedPath) + "\"}";
     appendCapabilitiesJson(j, hwMode, effectiveHw);
     j += "}";
     server.send(200, "application/json", j);
@@ -2551,7 +2785,16 @@ static void handleConfigGet()
 {
     String j = "{\"fsdRuntime\":{";
     j += "\"legacyOffset\":" + String(nvsLegacyOffset);
+    j += ",\"legacyOffsetMode\":" + String(dashLegacyOffsetMode);
+    j += ",\"legacySmoothDown\":" + String(dashLegacySmoothDown ? "true" : "false");
+    j += ",\"legacySmoothRateKphS\":" + String(dashLegacySmoothRateKphS);
+    j += ",\"legacyCustomPctLow\":" + String(dashLegacyCustomPctLow);
+    j += ",\"legacyCustomPctMid\":" + String(dashLegacyCustomPctMid);
+    j += ",\"legacyCustomPctHigh\":" + String(dashLegacyCustomPctHigh);
+    j += ",\"legacyCustomPctVeryHigh\":" + String(dashLegacyCustomPctVeryHigh);
     j += ",\"overrideSpeedLimit\":" + String(nvsOverrideSpeedLimit ? "true" : "false");
+    j += "},\"defense\":{";
+    j += "\"nagMode\":" + String(dashNagMode <= 2 ? dashNagMode : 0);
     j += "}}";
     server.send(200, "application/json", j);
 }
@@ -2580,6 +2823,41 @@ static void handleConfig()
                 if (offset > 225)
                     offset = 225;
                 nvsLegacyOffset = offset;
+                changed = true;
+            }
+            if (fsd["legacyOffsetMode"].is<int>())
+            {
+                dashLegacyOffsetMode = dashClampLegacyOffsetMode(fsd["legacyOffsetMode"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacySmoothDown"].is<bool>())
+            {
+                dashLegacySmoothDown = fsd["legacySmoothDown"].as<bool>();
+                changed = true;
+            }
+            if (fsd["legacySmoothRateKphS"].is<int>())
+            {
+                dashLegacySmoothRateKphS = dashClampLegacySmartRateArg(fsd["legacySmoothRateKphS"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacyCustomPctLow"].is<int>())
+            {
+                dashLegacyCustomPctLow = dashClampLegacySmartPctArg(fsd["legacyCustomPctLow"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacyCustomPctMid"].is<int>())
+            {
+                dashLegacyCustomPctMid = dashClampLegacySmartPctArg(fsd["legacyCustomPctMid"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacyCustomPctHigh"].is<int>())
+            {
+                dashLegacyCustomPctHigh = dashClampLegacySmartPctArg(fsd["legacyCustomPctHigh"].as<int>());
+                changed = true;
+            }
+            if (fsd["legacyCustomPctVeryHigh"].is<int>())
+            {
+                dashLegacyCustomPctVeryHigh = dashClampLegacySmartPctArg(fsd["legacyCustomPctVeryHigh"].as<int>());
                 changed = true;
             }
             if (fsd["overrideSpeedLimit"].is<bool>())
@@ -3118,10 +3396,14 @@ static String dashDefenseConfigJson()
     j += dashDefenseEnabled ? "true" : "false";
     j += ",\"bionic_steering\":";
     j += dashBionicSteering ? "true" : "false";
+    j += ",\"nag_mode\":";
+    j += String(dashNagMode <= 2 ? dashNagMode : 0);
     j += ",\"nag_torque_tamper\":";
     j += dashNagTorqueTamper ? "true" : "false";
     j += ",\"soft_engage\":";
     j += dashSoftEngage ? "true" : "false";
+    j += ",\"abort_guard\":";
+    j += dashAbortGuardEnabled ? "true" : "false";
     // Bionic disabled warning (3 consecutive failures)
     bool bionicDisabled = dashHandler ? dashHandler->bionicDisabled() : dashBionicDisabled;
     j += ",\"bionic_disabled\":";
@@ -3152,8 +3434,9 @@ static void handleDefenseConfig()
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
+        server.hasArg("nag_mode") || server.hasArg("nagMode") ||
         server.hasArg("nag_torque_tamper") ||
-        server.hasArg("soft_engage"))
+        server.hasArg("soft_engage") || server.hasArg("abort_guard"))
     {
         bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
@@ -3168,12 +3451,19 @@ static void handleDefenseConfig()
             if (v)
                 dashBionicDisabled = false;
             // Sync to NagHandler if available
+            uint32_t resetSeed = (uint32_t)millis();
             if (dashHandler)
             {
                 dashHandler->bionicSteering = v;
-                if (v)
-                    dashHandler->resetBionic((uint32_t)millis());
+                dashHandler->resetBionic(resetSeed); // I-2: reset burst state on any toggle change (on or off)
             }
+            if (CarManagerBase *reactive = dashReactiveNagHandler(); reactive && reactive != dashHandler)
+                reactive->resetBionic(resetSeed);
+        }
+        if (server.hasArg("nag_mode") || server.hasArg("nagMode"))
+        {
+            String raw = server.hasArg("nag_mode") ? server.arg("nag_mode") : server.arg("nagMode");
+            dashNagMode = dashParseNagMode(raw, 0);
         }
         if (server.hasArg("nag_torque_tamper"))
         {
@@ -3188,6 +3478,8 @@ static void handleDefenseConfig()
             bool v = dashArgTruthy(server.arg("soft_engage"));
             dashSoftEngage = v; // gate reads this directly on the next Legacy mux0 frame
         }
+        if (server.hasArg("abort_guard"))
+            dashAbortGuardEnabled = dashArgTruthy(server.arg("abort_guard"));
         if (server.hasArg("sound_warning_suppression"))
         {
             bool v = dashArgTruthy(server.arg("sound_warning_suppression"));
@@ -5262,6 +5554,11 @@ static void dashSerialPrintHelp()
     Serial.println("  system_status  print CPU/heap/WiFi summary");
     Serial.println("  can_status     print CAN/injection summary");
     Serial.println("  task_stats     sample FreeRTOS tasks for 1s asynchronously");
+    Serial.println("  reactive_nag   reactive NAG-suppression diagnostics");
+    Serial.println("  legacy_speed   Legacy Smart Speed diagnostics");
+    Serial.println("  abort_guard    Abort Guard diagnostics");
+    Serial.println("  reactive_nag_reset  zero the reactive counters (RAM+NVS)");
+    Serial.println("  reactive_nag_bump   +111/222/333/444 + flush (persistence self-test)");
     Serial.println();
 }
 
@@ -5405,6 +5702,139 @@ static void dashSerialRunCommand(char *cmd)
         dashSerialPrintCanStatus();
     else if (strcmp(start, "task_stats") == 0 || strcmp(start, "tasks") == 0)
         dashSerialStartTaskStats();
+    else if (strcmp(start, "reactive_nag") == 0)
+    {
+        CarManagerBase *reactive = dashReactiveNagHandler();
+        if (reactive)
+        {
+            DashReactiveDiag d = reactive->reactiveDiag();
+            Serial.println("=== TSL6P Burst NAG v4 ===");
+            Serial.printf("enabled=%d mode=%d injecting=%d amp=%d handsOn=%d nextPhaseMs=%lu\n",
+                          (int)d.enabled, (int)d.mode, (int)d.injecting, d.currentAmp,
+                          d.lastHandsOnState, (unsigned long)d.nextProactiveInMs);
+            Serial.println("mode: 0=IDLE 1=BURST_ON 2=BURST_OFF 3=COOLDOWN");
+            Serial.printf("nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu\n",
+                          (unsigned long)d.nagSamples, (unsigned long)d.reactiveBursts,
+                          (unsigned long)d.proactiveWiggles, (unsigned long)d.echoSent);
+            Serial.printf("burstSessions=%lu burstOnEntries=%lu burstOffEntries=%lu burstFramesSent=%lu burstCyclesCompleted=%lu\n",
+                          (unsigned long)d.burstSessions, (unsigned long)d.burstOnEntries,
+                          (unsigned long)d.burstOffEntries, (unsigned long)d.burstFramesSent,
+                          (unsigned long)d.burstCyclesCompleted);
+            Serial.printf("hosClearEvents=%lu hosClearDuringOn=%lu hosClearDuringOff=%lu hosClearWhileIdle=%lu hosClearWhileCooldown=%lu abortBlocks=%lu gateBlocks=%lu txFailures=%lu\n",
+                          (unsigned long)d.hosClearEvents, (unsigned long)d.hosClearDuringOn,
+                          (unsigned long)d.hosClearDuringOff, (unsigned long)d.hosClearWhileIdle,
+                          (unsigned long)d.hosClearWhileCooldown, (unsigned long)d.abortBlocks,
+                          (unsigned long)d.gateBlocks, (unsigned long)d.txFailures);
+            Serial.printf("replayAttempts=%lu replaySuccesses=%lu replayFailures=%lu lastProfileId=%d lastProfileDir=%d\n",
+                          (unsigned long)d.replayAttempts, (unsigned long)d.replaySuccesses,
+                          (unsigned long)d.replayFailures, (int)d.lastProfileId, d.lastProfileDir);
+            Serial.printf("lastPeakRaw=%d lastBaseRaw=%d lastOutDeltaRaw=%d profileIndex=%u hosBefore=%u hosAfter=%u lastApState=%u phaseRemainMs=%lu cooldownRemainMs=%lu lastTorqueRaw=%d lastTorqueNmX100=%d blockedReason=%s\n",
+                          d.lastPeakRaw, d.lastBaseRaw, d.lastOutDeltaRaw, (unsigned)d.profileIndex,
+                          (unsigned)d.lastHosBefore, (unsigned)d.lastHosAfter, (unsigned)d.lastApState,
+                          (unsigned long)d.phaseRemainMs, (unsigned long)d.cooldownRemainMs,
+                          d.lastTorqueRaw, d.lastTorqueNmX100,
+                          d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
+            Serial.println("=== EPAS-faithful Late Echo ===");
+            Serial.printf("enabled=%d mode=%d pending=%d\n",
+                          (int)d.enabled, (int)d.lateEchoMode, (int)d.pendingEcho);
+            Serial.printf("cadenceStable=%d periodMs=%lu jitterMs=%lu counterStep=%d lateEchoEligible=%d\n",
+                          (int)d.cadenceStable, (unsigned long)d.periodMs, (unsigned long)d.jitterMs,
+                          (int)d.counterStep, (int)d.lateEchoEligible);
+            Serial.printf("scheduled=%lu sent=%lu dropped=%lu missed=%lu\n",
+                          (unsigned long)d.scheduledEchoes, (unsigned long)d.sentLateEchoes,
+                          (unsigned long)d.droppedLateEchoes, (unsigned long)d.lateWindowMissed);
+            Serial.printf("lastRxToTxMs=%ld leadMs=%ld preserveHandsOnLevel=%d sourceHO=%u txHO=%u lastTorqueRaw=%d blockedReason=%s\n",
+                          (long)d.lastRxToTxMs, (long)d.lastLeadMs, (int)d.preserveHandsOnLevel,
+                          (unsigned)d.lastSourceHandsOnLevel, (unsigned)d.lastTxHandsOnLevel,
+                          d.lastTorqueRaw, d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
+            // Raw NVS read (diagnose putUInt vs load bug). rn_* should match RAM after a flush.
+            Preferences p;
+            if (p.begin(PREFS_NS, true))
+            {
+                Serial.printf("[NVS] rn_ns=%lu rn_rb=%lu rn_pw=%lu rn_es=%lu\n",
+                              (unsigned long)p.getUInt("rn_ns", 999), (unsigned long)p.getUInt("rn_rb", 999),
+                              (unsigned long)p.getUInt("rn_pw", 999), (unsigned long)p.getUInt("rn_es", 999));
+                p.end();
+            }
+            else
+            {
+                Serial.println("[NVS] reactive counter read failed");
+            }
+        }
+        else
+        {
+            Serial.println("=== Reactive NAG === (no handler)");
+        }
+    }
+    else if (strcmp(start, "reactive_nag_reset") == 0)
+    {
+        CarManagerBase *reactive = dashReactiveNagHandler();
+        if (reactive)
+            reactive->resetReactiveCounters();
+        Preferences p;
+        if (p.begin(PREFS_NS, false))
+        {
+            p.remove("rn_ns");
+            p.remove("rn_rb");
+            p.remove("rn_pw");
+            p.remove("rn_es");
+            p.end();
+            reactiveCountersLoaded = true; // don't reload stale NVS next loop tick
+            lastReactiveCountersMs = millis();
+            Serial.println("reactive_nag counters reset (RAM + NVS)");
+        }
+        else
+        {
+            reactiveCountersLoaded = false; // retry NVS load later; RAM was still reset above
+            Serial.println("reactive_nag RAM counters reset; NVS reset failed");
+        }
+    }
+    else if (strcmp(start, "reactive_nag_bump") == 0)
+    {
+        // Persistence self-test: bump counters (magic 111/222/333/444) + immediate
+        // NVS flush. Power-cycle the device, then reactive_nag — values must survive.
+        CarManagerBase *reactive = dashReactiveNagHandler();
+        if (reactive)
+        {
+            reactive->bumpReactiveCounters();
+            DashReactiveDiag d = reactive->reactiveDiag();
+            Preferences p;
+            if (p.begin(PREFS_NS, false))
+            {
+                p.putUInt("rn_ns", d.nagSamples);
+                p.putUInt("rn_rb", d.reactiveBursts);
+                p.putUInt("rn_pw", d.proactiveWiggles);
+                p.putUInt("rn_es", d.echoSent);
+                p.end();
+                reactiveCountersLoaded = true; // ensure maintenance won't overwrite from stale NVS
+                lastReactiveCountersMs = millis();
+                Serial.printf("bumped+flushed: nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu (power-cycle to test persistence)\n",
+                              (unsigned long)d.nagSamples, (unsigned long)d.reactiveBursts,
+                              (unsigned long)d.proactiveWiggles, (unsigned long)d.echoSent);
+            }
+            else
+            {
+                reactiveCountersLoaded = false;
+                Serial.println("reactive_nag bumped RAM counters; NVS flush failed");
+            }
+        }
+    }
+    else if (strcmp(start, "legacy_speed") == 0)
+    {
+        LegacySpeedRuntimeDiag d = dashHandler ? dashHandler->legacySpeedDiag : LegacySpeedRuntimeDiag{};
+        Serial.println("=== Legacy Smart Speed ===");
+        Serial.printf("mode=%u limitRaw=%u limitKph=%u\n", (unsigned)static_cast<uint8_t>(d.result.mode), d.result.speedLimitRaw, d.result.speedLimitKph);
+        Serial.printf("pct=%u cap=%u rawTarget=%u smoothTarget=%u\n", d.result.offsetPct, d.result.absoluteCapKph, d.result.rawTargetKph, d.result.smoothedTargetKph);
+        Serial.printf("offset=%u gpsSeen=%u period=%u\n", d.result.outputOffsetKph, d.gpsSpeedSeen ? 1 : 0, (unsigned)d.gpsSpeedPeriodMs);
+        Serial.printf("lastSentRaw=%u txOk=%u txFail=%u blocked=%s\n", d.lastSentOffsetRaw, (unsigned)d.txOk, (unsigned)d.txFail, d.blockedReason);
+    }
+    else if (strcmp(start, "abort_guard") == 0)
+    {
+        DashAbortGuardDiag d = dashHandler ? dashHandler->abortGuard.diag() : DashAbortGuardDiag{};
+        Serial.println("=== Abort Guard ===");
+        Serial.printf("enabled=%u latched=%u lastApState=%u lastAbortState=%u\n", d.enabled ? 1 : 0, d.latched ? 1 : 0, d.lastApState, d.lastAbortState);
+        Serial.printf("blocks=%u lastBlockedPath=%s clear=%s\n", (unsigned)d.blocks, d.lastBlockedPath, d.lastClearReason);
+    }
     else if (*start)
         Serial.println("Unknown command. Type help.");
 }
@@ -5575,12 +6005,21 @@ static void handleSettingsExport()
     uint8_t storedOffsetMode = offsetMode;
     uint8_t storedManualPct = manualOffsetPct;
     uint8_t storedCustomPct[4] = {customPct[0], customPct[1], customPct[2], customPct[3]};
+    uint8_t storedLegacyOffsetMode = dashLegacyOffsetMode;
+    bool storedLegacySmoothDown = dashLegacySmoothDown;
+    uint8_t storedLegacySmoothRateKphS = dashLegacySmoothRateKphS;
+    uint8_t storedLegacyCustomPctLow = dashLegacyCustomPctLow;
+    uint8_t storedLegacyCustomPctMid = dashLegacyCustomPctMid;
+    uint8_t storedLegacyCustomPctHigh = dashLegacyCustomPctHigh;
+    uint8_t storedLegacyCustomPctVeryHigh = dashLegacyCustomPctVeryHigh;
+    bool storedAbortGuard = dashAbortGuardEnabled;
     bool storedLightingEnabled = dashLightingEnabled;
     uint8_t storedLightingCount = dashLightingCount;
     uint8_t storedLightingFrequency = dashLightingFrequency;
     uint8_t storedRearFogStrategy = dashRearFogStrategy;
     bool storedDefenseEnabled = dashDefenseEnabled;
     bool storedBionicSteering = dashBionicSteering;
+    uint8_t storedNagMode = dashNagMode;
     bool storedNagTorqueTamper = dashNagTorqueTamper;
     bool storedSoftEngage = dashSoftEngage;
     bool storedSpeedNoDisturb = dashSpeedNoDisturb;
@@ -5638,14 +6077,25 @@ static void handleSettingsExport()
         storedCustomPct[1] = dashClampSpeedCustomPct(p.getUChar("cp1", customPct[1]));
         storedCustomPct[2] = dashClampSpeedCustomPct(p.getUChar("cp2", customPct[2]));
         storedCustomPct[3] = dashClampSpeedCustomPct(p.getUChar("cp3", customPct[3]));
+        storedLegacyOffsetMode = dashClampLegacyOffsetMode(p.getUChar("lo_mode", dashLegacyOffsetMode));
+        storedLegacySmoothDown = p.getBool("lo_smooth", dashLegacySmoothDown);
+        storedLegacySmoothRateKphS = dashClampLegacySmartRateArg(p.getUChar("lo_rate", dashLegacySmoothRateKphS));
+        storedLegacyCustomPctLow = dashClampLegacySmartPctArg(p.getUChar("lo_p1", dashLegacyCustomPctLow));
+        storedLegacyCustomPctMid = dashClampLegacySmartPctArg(p.getUChar("lo_p2", dashLegacyCustomPctMid));
+        storedLegacyCustomPctHigh = dashClampLegacySmartPctArg(p.getUChar("lo_p3", dashLegacyCustomPctHigh));
+        storedLegacyCustomPctVeryHigh = dashClampLegacySmartPctArg(p.getUChar("lo_p4", dashLegacyCustomPctVeryHigh));
         storedLightingEnabled = p.getBool("lt_en", dashLightingEnabled);
         storedLightingCount = p.getUChar("lt_cnt", dashLightingCount);
         storedLightingFrequency = p.getUChar("lt_freq", dashLightingFrequency);
         storedRearFogStrategy = p.getUChar("lt_fog", dashRearFogStrategy);
         storedDefenseEnabled = p.getBool("def_en", dashDefenseEnabled);
         storedBionicSteering = p.getBool("def_bio", dashBionicSteering);
+        storedNagMode = p.getUChar("def_nag_mode", dashNagMode);
+        if (storedNagMode > 2)
+            storedNagMode = 0;
         storedNagTorqueTamper = p.getBool("def_ntt", dashNagTorqueTamper);
         storedSoftEngage = p.getBool("def_se", dashSoftEngage);
+        storedAbortGuard = p.getBool("def_ag", dashAbortGuardEnabled);
         storedSpeedNoDisturb = p.getBool("def_nd", dashSpeedNoDisturb);
         storedDndVolume = p.getBool("def_dv", dashDndVolume);
         storedDndSpeed = p.getBool("def_ds", dashDndSpeed);
@@ -5776,13 +6226,25 @@ static void handleSettingsExport()
         j += String(storedCustomPct[i]);
     }
     j += "]}";
+    j += ",\"legacySpeed\":{";
+    j += "\"mode\":" + String(storedLegacyOffsetMode);
+    j += ",\"manualOffsetKph\":" + String(storedLegacyOffset);
+    j += ",\"smoothDown\":" + String(storedLegacySmoothDown ? "true" : "false");
+    j += ",\"smoothRateKphS\":" + String(storedLegacySmoothRateKphS);
+    j += ",\"customPctLow\":" + String(storedLegacyCustomPctLow);
+    j += ",\"customPctMid\":" + String(storedLegacyCustomPctMid);
+    j += ",\"customPctHigh\":" + String(storedLegacyCustomPctHigh);
+    j += ",\"customPctVeryHigh\":" + String(storedLegacyCustomPctVeryHigh);
+    j += "}";
     j += ",\"lighting\":{\"enabled\":" + String(storedLightingEnabled ? "true" : "false");
     j += ",\"count\":" + String(storedLightingCount) + ",\"frequencyValue\":" + String(storedLightingFrequency);
     j += ",\"rearFogValue\":" + String(storedRearFogStrategy) + "}";
     j += ",\"defense\":{\"enabled\":" + String(storedDefenseEnabled ? "true" : "false");
     j += ",\"bionicSteering\":" + String(storedBionicSteering ? "true" : "false");
+    j += ",\"nagMode\":" + String(storedNagMode);
     j += ",\"nagTorqueTamper\":" + String(storedNagTorqueTamper ? "true" : "false");
     j += ",\"softEngage\":" + String(storedSoftEngage ? "true" : "false");
+    j += ",\"abortGuard\":" + String(storedAbortGuard ? "true" : "false");
     j += ",\"speedNoDisturb\":" + String(storedSpeedNoDisturb ? "true" : "false");
     j += ",\"dndVolume\":" + String(storedDndVolume ? "true" : "false");
     j += ",\"dndSpeed\":" + String(storedDndSpeed ? "true" : "false");
@@ -6032,6 +6494,33 @@ static void handleSettingsImport()
             }
         }
     }
+    if (doc["legacySpeed"].is<JsonObject>())
+    {
+        JsonObject legacySpeed = doc["legacySpeed"].as<JsonObject>();
+        if (legacySpeed["mode"].is<int>())
+            p.putUChar("lo_mode", dashClampLegacyOffsetMode(legacySpeed["mode"].as<int>()));
+        if (legacySpeed["manualOffsetKph"].is<int>())
+        {
+            int offset = legacySpeed["manualOffsetKph"].as<int>();
+            if (offset < -30)
+                offset = -30;
+            if (offset > 225)
+                offset = 225;
+            p.putUChar("fg", static_cast<uint8_t>(offset + 30));
+        }
+        if (legacySpeed["smoothDown"].is<bool>())
+            p.putBool("lo_smooth", legacySpeed["smoothDown"].as<bool>());
+        if (legacySpeed["smoothRateKphS"].is<int>())
+            p.putUChar("lo_rate", dashClampLegacySmartRateArg(legacySpeed["smoothRateKphS"].as<int>()));
+        if (legacySpeed["customPctLow"].is<int>())
+            p.putUChar("lo_p1", dashClampLegacySmartPctArg(legacySpeed["customPctLow"].as<int>()));
+        if (legacySpeed["customPctMid"].is<int>())
+            p.putUChar("lo_p2", dashClampLegacySmartPctArg(legacySpeed["customPctMid"].as<int>()));
+        if (legacySpeed["customPctHigh"].is<int>())
+            p.putUChar("lo_p3", dashClampLegacySmartPctArg(legacySpeed["customPctHigh"].as<int>()));
+        if (legacySpeed["customPctVeryHigh"].is<int>())
+            p.putUChar("lo_p4", dashClampLegacySmartPctArg(legacySpeed["customPctVeryHigh"].as<int>()));
+    }
     if (doc["lighting"].is<JsonObject>())
     {
         JsonObject lighting = doc["lighting"].as<JsonObject>();
@@ -6063,10 +6552,17 @@ static void handleSettingsImport()
             p.putBool("def_en", defense["enabled"].as<bool>());
         if (defense["bionicSteering"].is<bool>())
             p.putBool("def_bio", defense["bionicSteering"].as<bool>());
+        if (defense["nagMode"].is<int>())
+        {
+            int mode = defense["nagMode"].as<int>();
+            p.putUChar("def_nag_mode", dashClampNagMode(mode));
+        }
         if (defense["nagTorqueTamper"].is<bool>())
             p.putBool("def_ntt", defense["nagTorqueTamper"].as<bool>());
         if (defense["softEngage"].is<bool>())
             p.putBool("def_se", defense["softEngage"].as<bool>());
+        if (defense["abortGuard"].is<bool>())
+            p.putBool("def_ag", defense["abortGuard"].as<bool>());
         if (defense["speedNoDisturb"].is<bool>())
             p.putBool("def_nd", defense["speedNoDisturb"].as<bool>());
         if (defense["dndVolume"].is<bool>())
@@ -6732,6 +7228,13 @@ static void webTask(void *)
 
 static CarManagerBase *handlerPool[3] = {};
 
+static CarManagerBase *dashReactiveNagHandler()
+{
+    if (handlerPool[0])
+        return handlerPool[0];
+    return dashHandler;
+}
+
 static void dashInitHandlers()
 {
     handlerPool[0] = new LegacyHandler();
@@ -6791,6 +7294,15 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->banShieldEnable = nvsBanShieldEnable;
         handlerPool[i]->bionicSteering = dashBionicSteering;
         handlerPool[i]->legacyOffset = nvsLegacyOffset;
+        handlerPool[i]->legacySmartOffsetConfig.mode = dashClampLegacySmartMode(dashLegacyOffsetMode);
+        handlerPool[i]->legacySmartOffsetConfig.manualOffsetKph = dashClampLegacySimpleOffsetKph(nvsLegacyOffset);
+        handlerPool[i]->legacySmartOffsetConfig.smoothDownEnabled = dashLegacySmoothDown;
+        handlerPool[i]->legacySmartOffsetConfig.smoothDownRateKphS = dashClampLegacySmartRate(dashLegacySmoothRateKphS);
+        handlerPool[i]->legacySmartOffsetConfig.customPctLow = dashClampLegacySmartPct(dashLegacyCustomPctLow);
+        handlerPool[i]->legacySmartOffsetConfig.customPctMid = dashClampLegacySmartPct(dashLegacyCustomPctMid);
+        handlerPool[i]->legacySmartOffsetConfig.customPctHigh = dashClampLegacySmartPct(dashLegacyCustomPctHigh);
+        handlerPool[i]->legacySmartOffsetConfig.customPctVeryHigh = dashClampLegacySmartPct(dashLegacyCustomPctVeryHigh);
+        handlerPool[i]->abortGuard.setEnabled(dashAbortGuardEnabled);
         handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         handlerPool[i]->overrideSpeedLimit = nvsOverrideSpeedLimit;
         handlerPool[i]->legacyFsdDiag.policy = dashLegacyFsdPolicy;
@@ -6843,8 +7355,7 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 
     // Phase 3: Bionic PRNG uses default seed 0xDEADBEEF.
     // For better entropy, re-seed from millis() at boot via appActiveHandler.
-    // NOTE: NagHandler's bionic path was removed (dual-mode refactor, 2026-06-24);
-    // DashBionicSteer is retained (standalone-tested) but currently unused in production.
+    // NOTE: LegacyHandler uses DashReactiveNagBurst (dash_reactive_nag.h) for reactive NAG suppression.
 
     // Phase 1: 初始化功耗管理
     dashPowerMgmtInit();
@@ -6970,6 +7481,43 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     dashLog("[BOOT] ev-open-can-tools ready");
 }
 
+// Reactive-NAG instrumentation counter persistence (NVS). Counters live in RAM
+// in the engine; we boot-load them from NVS once (survive power-off/unplug) and
+// flush every 2 s. reset via serial `reactive_nag_reset`.
+// (statics declared near top of file so the serial reset cmd can see them.)
+static void dashReactiveCountersMaintenance()
+{
+    CarManagerBase *reactive = dashReactiveNagHandler();
+    if (!reactive)
+        return;
+    unsigned long now = millis();
+    if (!reactiveCountersLoaded)
+    {
+        Preferences p;
+        if (!p.begin(PREFS_NS, false))
+            return;
+        uint32_t ns = p.getUInt("rn_ns", 0), rb = p.getUInt("rn_rb", 0),
+                 pw = p.getUInt("rn_pw", 0), es = p.getUInt("rn_es", 0);
+        p.end();
+        reactive->setReactiveCounters(ns, rb, pw, es);
+        reactiveCountersLoaded = true;
+        lastReactiveCountersMs = now;
+        return;
+    }
+    if (now - lastReactiveCountersMs < 2000)
+        return;
+    Preferences p;
+    if (!p.begin(PREFS_NS, false))
+        return;
+    DashReactiveDiag d = reactive->reactiveDiag();
+    p.putUInt("rn_ns", d.nagSamples);
+    p.putUInt("rn_rb", d.reactiveBursts);
+    p.putUInt("rn_pw", d.proactiveWiggles);
+    p.putUInt("rn_es", d.echoSent);
+    p.end();
+    lastReactiveCountersMs = now;
+}
+
 static void mcpDashboardLoop()
 {
     if (Update.isRunning())
@@ -6978,6 +7526,7 @@ static void mcpDashboardLoop()
     if (recActive && (millis() - recStartMs >= kRecMaxDurationMs))
         dashStopRecordingAndSave("time limit");
     dashCheckBusHealth();
+    dashReactiveCountersMaintenance();
     if (canOnline && millis() - lastFrameMs > 10000)
     {
         canOnline = false;

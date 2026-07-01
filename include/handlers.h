@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <algorithm>
+#include <cstring>
 #include "can_frame_types.h"
 #include "drivers/can_driver.h"
 #include "can_helpers.h"
@@ -9,7 +10,9 @@
 #include "log_buffer.h"
 #include "dash_hw3_speed.h"
 #include "dash_legacy_speed.h"
-#include "dash_bionic_steer.h"
+#include "dash_abort_guard.h"
+#include "dash_reactive_nag.h"
+#include "dash_epas_late_echo.h"
 #include "dash_fsd_diag.h"
 
 #ifndef DASH_FSD_252_COMPAT
@@ -40,6 +43,25 @@ static inline bool framePayloadChanged(const CanFrame &original, const CanFrame 
     return false;
 }
 
+struct LegacySpeedRuntimeDiag
+{
+    LegacySmartOffsetResult result{};
+    bool gpsSpeedSeen = false;
+    bool gpsSpeedFresh = false;
+    uint32_t gpsSpeedPeriodMs = 0;
+    uint32_t gpsSpeedLastMs = 0;
+    uint32_t gpsSpeedCount = 0;
+    uint8_t gpsUserOffsetRaw = 0;
+    int gpsUserOffsetKph = -30;
+    uint8_t gpsMppLimitRaw = 0;
+    uint16_t gpsMppLimitKph = 0;
+    uint8_t lastSentOffsetRaw = 0;
+    uint8_t lastSentOffsetKph = 0;
+    uint32_t txOk = 0;
+    uint32_t txFail = 0;
+    const char *blockedReason = "none";
+};
+
 struct CarManagerBase
 {
     Shared<int> speedProfile{1};
@@ -64,6 +86,10 @@ struct CarManagerBase
     LegacyFsdDiag legacyFsdDiag{};
     Shared<int> legacyOffset{0};
     Shared<bool> overrideSpeedLimit{false};
+    LegacySmartOffsetConfig legacySmartOffsetConfig{};
+    LegacySmartOffsetEngine legacySmartOffsetEngine{};
+    LegacySpeedRuntimeDiag legacySpeedDiag{};
+    DashAbortGuard abortGuard{};
     Shared<bool> tlsscBypass{false};
     Shared<bool> emergencyVehicleDetection{true};
     Shared<bool> isaChimeSuppress{false};
@@ -165,6 +191,14 @@ struct CarManagerBase
         if (pluginOwnsFsdActivation && pluginOwnsFsdActivation())
             return false;
         return true;
+    }
+
+    bool abortGuardAllowsInjection(DashAbortGuardBlockPath path)
+    {
+        if (abortGuard.allowsInjection())
+            return true;
+        abortGuard.recordBlock(path);
+        return false;
     }
 
     bool injectionGateOpen() const
@@ -285,15 +319,131 @@ struct CarManagerBase
     }
 
     virtual void handleMessage(CanFrame &frame, CanDriver &driver) = 0;
+    virtual void tick(uint32_t nowMs, CanDriver &driver)
+    {
+        (void)nowMs;
+        (void)driver;
+    }
     virtual const uint32_t *filterIds() const = 0;
     virtual uint8_t filterIdCount() const = 0;
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
+    virtual void setNagMode(uint8_t mode) { (void)mode; }
+    virtual DashReactiveDiag reactiveDiag() const { return {}; }
+    // Instrumentation counter persistence (NVS round-trip) — survive power-off.
+    virtual void resetReactiveCounters() {}
+    virtual void setReactiveCounters(uint32_t /*ns*/, uint32_t /*rb*/, uint32_t /*pw*/,
+                                     uint32_t /*es*/) {}
+    virtual void bumpReactiveCounters() {}
     virtual ~CarManagerBase() = default;
 };
 
 struct LegacyHandler : public CarManagerBase
 {
+    enum class NagMode : uint8_t
+    {
+        Off = 0,
+        LegacyTsl6p = 1,
+        EpasLateEcho = 2
+    };
+
+    DashReactiveNagBurst nag; // reactive NAG-suppression burst state machine
+    DashEpasLateEcho lateNag;
+    NagMode nagMode{NagMode::Off};
+    uint8_t lastNagApState{0};
+    uint8_t lastNagHos{0};
+    const char *lastNagGateReason{"toggle"};
+    bool lastNagGatesActive{false};
+
+    bool bionicDisabled() const override { return false; } // reactive has no auto-disable
+    bool lateEchoSelected() const { return nagMode == NagMode::EpasLateEcho; }
+    bool legacyTsl6pSelected() const { return nagMode == NagMode::LegacyTsl6p; }
+    bool isPrimaryDasFrame(const CanFrame &frame) const { return frame.bus != CAN_BUS_PARTY; }
+
+    void refreshLateNagEnabled()
+    {
+        lateNag.setEnabled(lateEchoSelected() && (bool)bionicSteering);
+    }
+
+    void setNagMode(uint8_t mode) override
+    {
+        if (mode == static_cast<uint8_t>(NagMode::LegacyTsl6p))
+            nagMode = NagMode::LegacyTsl6p;
+        else if (mode == static_cast<uint8_t>(NagMode::EpasLateEcho))
+            nagMode = NagMode::EpasLateEcho;
+        else
+            nagMode = NagMode::Off;
+        refreshLateNagEnabled();
+    }
+
+    void setNagModeForTest(const char *mode)
+    {
+        if (mode && std::strcmp(mode, "legacy_tsl6p") == 0)
+            setNagMode(static_cast<uint8_t>(NagMode::LegacyTsl6p));
+        else if (mode && std::strcmp(mode, "late_echo") == 0)
+            setNagMode(static_cast<uint8_t>(NagMode::EpasLateEcho));
+        else
+            setNagMode(static_cast<uint8_t>(NagMode::Off));
+    }
+
+    void resetBionic(uint32_t seed) override
+    {
+        nag.reset();
+        nag.init(seed ? seed : 0xDEADBEEF);
+        lateNag = DashEpasLateEcho{};
+        refreshLateNagEnabled();
+    }
+
+    DashEpasLateEchoDiag lateEchoDiag(uint32_t nowMs) const { return lateNag.diag(nowMs); }
+
+    DashReactiveDiag reactiveDiag() const override
+    {
+        uint32_t nowMs = dashDiagNowMs();
+        DashReactiveDiag d = nag.diag(nowMs);
+        d.enabled = (bool)bionicSteering && nagMode != NagMode::Off;
+        if (lateEchoSelected())
+        {
+            DashEpasLateEchoDiag late = lateNag.diag(nowMs);
+            d.lateEchoMode = true;
+            d.mode = HumanReplayMode::IDLE;
+            d.injecting = late.mode == LateEchoModeState::BURST_ON;
+            d.currentAmp = 0;
+            d.blockedReason = late.blockedReason;
+            d.cooldownRemainMs = late.cooldownRemainMs;
+            d.phaseRemainMs = late.phaseRemainMs;
+            d.abortBlocks = late.abortBlocks;
+            d.gateBlocks = late.gateBlocks;
+            d.txFailures = late.txFailures;
+            d.lastApState = late.lastApState;
+            d.lastHandsOnState = late.lastHos;
+            d.cadenceStable = late.cadenceStable;
+            d.lateEchoEligible = late.lateEchoEligible;
+            d.pendingEcho = late.pendingEcho;
+            d.periodMs = late.periodMs;
+            d.jitterMs = late.jitterMs;
+            d.counterStep = late.counterStep;
+            d.expectedNextCounter = late.expectedNextCounter;
+            d.predictedNextRxMs = late.predictedNextRxMs;
+            d.pendingSendAtMs = late.pendingSendAtMs;
+            d.scheduledEchoes = late.scheduledEchoes;
+            d.sentLateEchoes = late.sentLateEchoes;
+            d.droppedLateEchoes = late.droppedLateEchoes;
+            d.lateWindowMissed = late.lateWindowMissed;
+            d.lastRxToTxMs = late.lastRxToTxMs;
+            d.lastLeadMs = DashEpasLateEcho::kLateEchoLeadMs;
+            d.preserveHandsOnLevel = late.preserveHandsOnLevel;
+            d.lastSourceHandsOnLevel = late.lastSourceHandsOnLevel;
+            d.lastTxHandsOnLevel = late.lastTxHandsOnLevel;
+        }
+        return d;
+    }
+    void resetReactiveCounters() override { nag.resetCounters(); }
+    void setReactiveCounters(uint32_t ns, uint32_t rb, uint32_t pw, uint32_t es) override
+    {
+        nag.setCounters(ns, rb, pw, es);
+    }
+    void bumpReactiveCounters() override { nag.bumpCounters(); }
+
     const uint32_t *filterIds() const override
     {
         // 1080 added for UI_driverAssistAnonDebugParams visionSpeedSlider override.
@@ -304,11 +454,112 @@ struct LegacyHandler : public CarManagerBase
     }
     uint8_t filterIdCount() const override { return 10; }
 
+    void tick(uint32_t nowMs, CanDriver &driver) override
+    {
+        refreshLateNagEnabled();
+        if (!lateEchoSelected())
+            return;
+
+        bool checkAdAllowed = !(checkAD && !checkAD());
+        const char *gateReason = nullptr;
+        if (!(bool)bionicSteering)
+            gateReason = "toggle";
+        else if (!APActive)
+            gateReason = "apInactive";
+        else if (!checkAdAllowed)
+            gateReason = "checkAD";
+        bool gatesActive = gateReason == nullptr;
+
+        CanFrame echo;
+        DashEpasLateEchoTxToken token;
+        if (!lateNag.buildDueFrame(nowMs, echo, gatesActive, lastNagApState, lastNagHos, gateReason, token))
+            return;
+        if (!abortGuard.allowsInjection())
+        {
+            abortGuard.recordBlock(DashAbortGuardBlockPath::Nag);
+            lateNag.notifyTxResult(token, false, nowMs);
+            return;
+        }
+        bool ok = driver.send(echo);
+        if (ok)
+            framesSent++;
+        lateNag.notifyTxResult(token, ok, nowMs);
+    }
+
+    void tick(CanDriver &driver) { tick(dashDiagNowMs(), driver); }
+
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         if (onFrame)
             onFrame(frame);
         updateHwDetectedFrom920(frame);
+        if (frame.id == 880)
+        {
+            // TSL6P Burst NAG v4 (opt-in via bionicSteering; default OFF): bounded 0x370 echo burst.
+            unsigned long nowMs = dashDiagNowMs();
+            bool checkAdAllowed = !(checkAD && !checkAD());
+            const char *gateReason = nullptr;
+            if (!(bool)bionicSteering)
+                gateReason = "toggle";
+            else if (!APActive)
+                gateReason = "apInactive";
+            else if (!checkAdAllowed)
+                gateReason = "checkAD";
+            bool active = gateReason == nullptr;
+            refreshLateNagEnabled();
+            if (lateEchoSelected())
+            {
+                lateNag.onEpasFrame(frame, nowMs, active);
+                return;
+            }
+            if (!legacyTsl6pSelected() || frame.dlc < 8)
+                return;
+            nag.advance(nowMs, active, gateReason);
+            bool replayPending = nag.shouldEcho(nowMs);
+            bool useReplay = replayPending && active;
+            if (useReplay && !abortGuard.allowsInjection())
+            {
+                abortGuard.recordBlock(DashAbortGuardBlockPath::Nag);
+                useReplay = false;
+            }
+            if (useReplay)
+            {
+                CanFrame echo;
+                echo.id = 880;
+                echo.dlc = 8;
+                echo.data[0] = frame.data[0];
+                echo.data[1] = frame.data[1];
+
+                uint8_t d2lo = frame.data[2] & 0x0F;
+                uint8_t d3 = frame.data[3];
+                int signedBase = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
+                nag.noteBaseTorqueRaw(signedBase);
+                int target = nag.peekReplayDelta(nowMs);
+                nag.applyToFrame(d2lo, d3, target);
+                echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) | d2lo);
+                echo.data[3] = d3;
+
+                echo.data[4] = static_cast<uint8_t>((frame.data[4] & 0x3F) | 0x40);
+                echo.data[5] = frame.data[5];
+                uint8_t cnt = static_cast<uint8_t>(frame.data[6] & 0x0F);
+                cnt = static_cast<uint8_t>((cnt + 1) & 0x0F);
+                echo.data[6] = static_cast<uint8_t>((frame.data[6] & 0xF0) | cnt);
+                uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] +
+                               echo.data[4] + echo.data[5] + echo.data[6];
+                echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+                bool ok = driver.send(echo);
+                if (ok)
+                {
+                    nag.commitReplayDelta(target);
+                    framesSent++;
+                    nag.notifyEchoSent();
+                }
+                else
+                {
+                    nag.failReplayTx(nowMs);
+                }
+            }
+        }
         // STW_ACTN_RQ (0x045 = 69): Follow-Distance-Stalk as Source for Profile Mapping
         // byte[1]: 0x00=Pos1, 0x21=Pos2, 0x42=Pos3, 0x64=Pos4, 0x85=Pos5, 0xA6=Pos6, 0xC8=Pos7
         if (frame.id == 69)
@@ -332,21 +583,81 @@ struct LegacyHandler : public CarManagerBase
         // so the offset unit follows the car's setting.
         if (frame.id == 760)
         {
+            uint32_t nowMs = dashDiagNowMs();
+            legacySpeedDiag.gpsSpeedSeen = true;
+            legacySpeedDiag.gpsSpeedFresh = true;
+            if (frame.dlc >= 6)
+            {
+                legacySpeedDiag.gpsUserOffsetRaw = frame.data[5] & 0x3F;
+                legacySpeedDiag.gpsUserOffsetKph = static_cast<int>(legacySpeedDiag.gpsUserOffsetRaw) - 30;
+            }
+            if (frame.dlc >= 7)
+            {
+                const uint8_t *bytes = frame.data;
+                legacySpeedDiag.gpsMppLimitRaw = bytes[6] & 0x1F;
+                legacySpeedDiag.gpsMppLimitKph = static_cast<uint16_t>(legacySpeedDiag.gpsMppLimitRaw) * 5U;
+            }
+            if (legacySpeedDiag.gpsSpeedLastMs != 0)
+                legacySpeedDiag.gpsSpeedPeriodMs = nowMs - legacySpeedDiag.gpsSpeedLastMs;
+            legacySpeedDiag.gpsSpeedLastMs = nowMs;
+            ++legacySpeedDiag.gpsSpeedCount;
+            legacySpeedDiag.blockedReason = "none";
             if (checkAD && !checkAD())
+            {
+                legacySpeedDiag.blockedReason = "checkAD";
                 return;
+            }
             if (frame.dlc < 6)
                 return;
-            uint8_t effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
+
+            LegacySmartOffsetMode smartMode = dashClampLegacySmartMode(static_cast<int>(legacySmartOffsetConfig.mode));
+            uint8_t effectiveOffset = 0;
+            if (smartMode == LegacySmartOffsetMode::Off)
+            {
+                legacySpeedDiag.result = LegacySmartOffsetResult{};
+                legacySpeedDiag.result.mode = LegacySmartOffsetMode::Off;
+                legacySpeedDiag.result.speedLimitRaw = fusedSpeedLimitRaw;
+                legacySpeedDiag.result.lastUpdateMs = nowMs;
+                effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
+            }
+            else
+            {
+                legacySpeedDiag.result = legacySmartOffsetEngine.compute(legacySmartOffsetConfig,
+                                                                         fusedSpeedLimitRaw,
+                                                                         nowMs,
+                                                                         (bool)APActive || (bool)ADEnabled);
+                effectiveOffset = legacySpeedDiag.result.outputOffsetKph;
+            }
+
             if (effectiveOffset == 0)
                 return;
-            uint8_t raw = (uint8_t)(effectiveOffset + 30);
+            if (!abortGuard.allowsInjection())
+            {
+                legacySpeedDiag.blockedReason = "abortGuard";
+                abortGuard.recordBlock(DashAbortGuardBlockPath::LegacySpeed0x2f8);
+                return;
+            }
+
+            uint8_t raw = (uint8_t)(dashClampLegacySimpleOffsetKph(effectiveOffset) + 30);
             legacyFsdDiag.aux760.recordBefore(frame.data);
             frame.data[5] = (frame.data[5] & 0xC0) | (raw & 0x3F);
             legacyFsdDiag.aux760.recordAfter(frame.data);
             legacyFsdDiag.aux760.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
-            framesSent++;
             bool ok = driver.send(frame);
-            legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux760, ok, dashDiagNowMs());
+            legacySpeedDiag.lastSentOffsetRaw = static_cast<uint8_t>(raw & 0x3F);
+            legacySpeedDiag.lastSentOffsetKph = effectiveOffset;
+            if (ok)
+            {
+                framesSent++;
+                legacySpeedDiag.txOk++;
+                legacySpeedDiag.blockedReason = "none";
+            }
+            else
+            {
+                legacySpeedDiag.txFail++;
+                legacySpeedDiag.blockedReason = "txFail";
+            }
+            legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux760, ok, nowMs);
             if (onSend)
                 onSend(0, ok);
             return;
@@ -360,6 +671,11 @@ struct LegacyHandler : public CarManagerBase
                 return;
             if (checkAD && !checkAD())
                 return;
+            if (!abortGuard.allowsInjection())
+            {
+                abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyVisionSlider0x438);
+                return;
+            }
             legacyFsdDiag.aux1080.recordBefore(frame.data);
             frame.data[7] = (frame.data[7] & 0x80) | 100;
             legacyFsdDiag.aux1080.recordAfter(frame.data);
@@ -379,9 +695,53 @@ struct LegacyHandler : public CarManagerBase
         {
             if (frame.dlc < 1)
                 return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            uint8_t apState = readDASAutopilotStatus(frame);
+            if (isPrimaryDasFrame(frame))
+                abortGuard.onApState(apState, dashDiagNowMs());
+            APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
+            if (frame.dlc >= 6)
+            {
+                uint8_t hos = static_cast<uint8_t>((frame.data[5] >> 2) & 0x0F);
+                bool checkAdAllowed = !(checkAD && !checkAD());
+                const char *gateReason = nullptr;
+                if (!(bool)bionicSteering)
+                    gateReason = "toggle";
+                else if (!APActive)
+                    gateReason = "apInactive";
+                else if (!checkAdAllowed)
+                    gateReason = "checkAD";
+                bool active = gateReason == nullptr;
+                uint32_t nowMs = dashDiagNowMs();
+                lastNagApState = apState;
+                lastNagHos = hos;
+                lastNagGateReason = gateReason;
+                lastNagGatesActive = active;
+                refreshLateNagEnabled();
+                if (lateEchoSelected())
+                    lateNag.onDasStatus(apState, hos, nowMs, active, gateReason);
+                else if (legacyTsl6pSelected())
+                    nag.onNagSample(hos, nowMs, active, apState, gateReason);
+            }
+            else if (lateEchoSelected() && (apState == 8 || apState == 9))
+            {
+                bool checkAdAllowed = !(checkAD && !checkAD());
+                const char *gateReason = nullptr;
+                if (!(bool)bionicSteering)
+                    gateReason = "toggle";
+                else if (!APActive)
+                    gateReason = "apInactive";
+                else if (!checkAdAllowed)
+                    gateReason = "checkAD";
+                bool active = gateReason == nullptr;
+                uint32_t nowMs = dashDiagNowMs();
+                lastNagApState = apState;
+                lastNagGateReason = gateReason;
+                lastNagGatesActive = active;
+                refreshLateNagEnabled();
+                lateNag.onDasStatus(apState, lastNagHos, nowMs, active, gateReason);
+            }
             return;
         }
         // 0x3EE (1006) — FSD activation frame (mux 0/1)
@@ -412,6 +772,14 @@ struct LegacyHandler : public CarManagerBase
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::NotTriggered;
                     legacyFsdDiag.health = FsdHealthState::NotTriggered;
+                    return;
+                }
+                if (!abortGuard.allowsInjection())
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ApGate;
+                    abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux0);
                     return;
                 }
                 bool legacyActivationAllowed = legacyFsdActivationAllowed
@@ -467,6 +835,14 @@ struct LegacyHandler : public CarManagerBase
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::NotTriggered;
                     legacyFsdDiag.health = FsdHealthState::NotTriggered;
+                    return;
+                }
+                if (!abortGuard.allowsInjection())
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ApGate;
+                    abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux1);
                     return;
                 }
                 if (!injectionAllowed())
@@ -565,14 +941,17 @@ struct HW3Handler : public CarManagerBase
         {
             if (frame.dlc < 1)
                 return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            uint8_t apState = readDASAutopilotStatus(frame);
+            abortGuard.onApState(apState, dashDiagNowMs());
+            APActive = isDASAutopilotActive(apState);
             // Capture ISA fused speed limit from byte1[4:0]. raw*5 = kph;
             // 0 = SNA, 31 = NONE-broadcast — both treated as "unknown" by the
             // HW3 mux-2 override path. Used by dashComputeHw3OffsetRaw().
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
             // ISA chime suppress — runtime gate (spec Task 2, 对齐 HW4Handler:856-864)
-            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed())
+            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3DasStatus921))
             {
                 frame.data[1] |= 0x20;
                 frame.data[7] = computeVehicleChecksum(frame);
@@ -627,7 +1006,9 @@ struct HW3Handler : public CarManagerBase
                 fsdTriggered = fsdRequested;
                 ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 0 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux0))
             {
                 speedOffset = std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
                 hw3StockOffsetKph = (int)speedOffset;
@@ -642,7 +1023,9 @@ struct HW3Handler : public CarManagerBase
             }
 
             // ── Mux 1: Nag suppression (bit-19 clear, legacy baseline) ──
-            if (index == 1 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux1))
             {
                 setBit(frame, 19, false);
                 framesSent++;
@@ -652,7 +1035,9 @@ struct HW3Handler : public CarManagerBase
             }
 
             // ── Mux 2: Speed offset (three-layer + slew limiter) ──────────
-            if (index == 2 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 2 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux2))
             {
                 uint8_t stockRaw = static_cast<uint8_t>(((frame.data[0] >> 6) & 0x03) |
                                                         ((frame.data[1] & 0x3F) << 2));
@@ -845,6 +1230,37 @@ struct NagHandler : public CarManagerBase
 
 struct HW4Handler : public CarManagerBase
 {
+    bool hw4Das923Byte1Moved = false;
+    bool hw4Das923UseByte0 = false;
+    uint8_t hw4Das923Byte0PinCount = 0;
+
+    uint8_t readHw4Das923ApState(const CanFrame &frame)
+    {
+        uint8_t hw4State = static_cast<uint8_t>((frame.data[1] >> 4) & 0x0F);
+        uint8_t byte0State = static_cast<uint8_t>(frame.data[0] & 0x0F);
+        if (hw4State != 1U)
+        {
+            hw4Das923Byte1Moved = true;
+            hw4Das923UseByte0 = false;
+            hw4Das923Byte0PinCount = 0;
+        }
+        else if (!hw4Das923UseByte0 && !hw4Das923Byte1Moved)
+        {
+            if (byte0State >= 2U)
+            {
+                if (hw4Das923Byte0PinCount < 3U)
+                    hw4Das923Byte0PinCount++;
+                if (hw4Das923Byte0PinCount >= 3U)
+                    hw4Das923UseByte0 = true;
+            }
+            else
+            {
+                hw4Das923Byte0PinCount = 0;
+            }
+        }
+        return hw4Das923UseByte0 ? byte0State : hw4State;
+    }
+
     const uint32_t *filterIds() const override
     {
         // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
@@ -866,11 +1282,14 @@ struct HW4Handler : public CarManagerBase
         {
             if (frame.dlc < 1)
                 return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            uint8_t apState = readDASAutopilotStatus(frame);
+            abortGuard.onApState(apState, dashDiagNowMs());
+            APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
             // ISA chime suppress — runtime gate (all build modes)
-            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed())
+            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4DasStatus921))
             {
                 frame.data[1] |= 0x20;
                 frame.data[7] = computeVehicleChecksum(frame);
@@ -883,16 +1302,26 @@ struct HW4Handler : public CarManagerBase
             return;
         }
         // ISA override — rewrite fused/vision speed limit to NONE (spec Task 3, 对齐 tesla handleDASStatusISAOverride)
-        if (frame.id == 923 && frame.dlc >= 8 &&
-            (bool)isaOverride && injectionAllowed())
+        if (frame.id == 923)
         {
-            frame.data[1] |= 0x1F; // DAS_fusedSpeedLimit = 31 (NONE)
-            frame.data[2] |= 0x1F; // DAS_visionOnlySpeedLimit = 31 (NONE)
-            frame.data[7] = computeVehicleChecksum(frame);
-            framesSent++;
-            driver.send(frame);
-            if (onSend)
-                onSend(0, true);
+            if (frame.dlc < 2)
+                return;
+            uint8_t apState = readHw4Das923ApState(frame);
+            abortGuard.onApState(apState, dashDiagNowMs());
+            APActive = isDASAutopilotActive(apState);
+            if (frame.dlc >= 2)
+                fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
+            if (frame.dlc >= 8 && (bool)isaOverride && injectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4DasStatus923))
+            {
+                frame.data[1] |= 0x1F; // DAS_fusedSpeedLimit = 31 (NONE)
+                frame.data[2] |= 0x1F; // DAS_visionOnlySpeedLimit = 31 (NONE)
+                frame.data[7] = computeVehicleChecksum(frame);
+                framesSent++;
+                driver.send(frame);
+                if (onSend)
+                    onSend(0, true);
+            }
             return;
         }
         if (frame.id == 1016)
@@ -966,7 +1395,9 @@ struct HW4Handler : public CarManagerBase
                 fsdTriggered = fsdRequested;
                 ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 0 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux0))
             {
                 setBit(frame, 46, true);
                 setBit(frame, 60, true);
@@ -981,7 +1412,9 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 1: FSD-ready signal (bit 47) + nag suppression (bit 19).
-            if (index == 1 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux1))
             {
                 setBit(frame, 47, true);
                 setBit(frame, 19, false);
@@ -992,7 +1425,9 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 2: Speed profile + offset
-            if (index == 2 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
+            if (index == 2 && (bool)fsdTriggered && injectionAllowed() &&
+                builtInFsdInjectionAllowed() &&
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux2))
             {
                 // Speed profile
                 frame.data[7] &= static_cast<uint8_t>(~(0x07 << 4));

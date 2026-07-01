@@ -289,8 +289,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .overlay { display: none !important; }
   .mobile-toggle { display: none !important; }
   .mobile-theme-toggle { display: inline-flex; align-items: center; justify-content: center; order: 7; box-shadow: 0 1px 4px rgba(0,0,0,0.18); }
-  .mob-tabs { display: flex; min-height: 68px; padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); }
-  .mob-tab { min-height: 58px; padding: 7px 2px; font-size: 12px; gap: 2px; }
+  .mob-tabs { display: flex; min-height: 68px; padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); transform: translateZ(0); -webkit-backface-visibility: hidden; }
+  .mob-tab { flex: 1 1 0; min-width: 0; min-height: 58px; padding: 7px 2px; font-size: 12px; gap: 2px; overflow: hidden; }
   .mob-tab .mob-icon { font-size: 29px; margin-bottom: 2px; }
   .mob-more-panel { bottom: 72px; padding: 16px 18px; }
   .mob-more-item { padding: 14px 0; font-size: 15px; }
@@ -1019,6 +1019,41 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 
+<div class="card cockpit-card" id="legacy-smart-speed-card">
+  <div class="card-title">Legacy 智能速度偏移 <span class="exp-badge" id="legacy-speed-chip">0x2F8 未检测到</span></div>
+  <div class="card-subtitle">仅写 0x2F8 / 760 UI_userSpeedOffset；读取 GPS 限速后自动计算目标，降速平滑避免突然回落。</div>
+  <div class="setting-row">
+    <div><div class="setting-name">智能速度偏移模式</div><div class="setting-desc">默认关闭；手动模式使用固定 km/h 偏移。</div></div>
+    <label class="field"><select id="legacy-offset-mode" onchange="saveLegacySmartSpeed()"><option value="off">关闭</option><option value="manual">手动</option><option value="auto">自动</option><option value="custom">自定义百分比</option></select></label>
+  </div>
+  <div class="setting-row">
+    <div><div class="setting-name">手动偏移</div><div class="setting-desc">仅 manual 模式生效，范围 0-33 km/h。</div></div>
+    <input class="inp" type="number" min="0" max="33" id="legacy-offset-manual" value="0" style="width:86px" onchange="saveLegacySmartSpeed()">
+  </div>
+  <div class="setting-row">
+    <div><div class="setting-name">降速平滑</div><div class="setting-desc">目标限速下降时按速率缓慢回落。</div></div>
+    <label class="tgl"><input type="checkbox" id="legacy-smooth-down" onchange="saveLegacySmartSpeed()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div><div class="setting-name">平滑速率</div><div class="setting-desc">km/h 每秒，越小越保守。</div></div>
+    <input class="inp" type="number" min="1" max="20" id="legacy-smooth-rate" value="5" style="width:86px" onchange="saveLegacySmartSpeed()">
+  </div>
+  <div class="diag-grid" id="legacy-custom-pct-panel">
+    <div class="diag-item"><span class="lbl">低速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-low" value="50" onchange="saveLegacySmartSpeed()"></div>
+    <div class="diag-item"><span class="lbl">中速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-mid" value="30" onchange="saveLegacySmartSpeed()"></div>
+    <div class="diag-item"><span class="lbl">高速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-high" value="20" onchange="saveLegacySmartSpeed()"></div>
+    <div class="diag-item"><span class="lbl">超高速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-vhigh" value="10" onchange="saveLegacySmartSpeed()"></div>
+  </div>
+  <div class="diag-grid" style="margin-top:12px">
+    <div class="diag-item"><span class="lbl">GPS 限速</span><span class="v-info" id="legacy-limit-kph">--</span></div>
+    <div class="diag-item"><span class="lbl">目标限速</span><span class="v-acc" id="legacy-target-kph">--</span></div>
+    <div class="diag-item"><span class="lbl">平滑限速</span><span class="v-dim" id="legacy-smooth-kph">--</span></div>
+    <div class="diag-item"><span class="lbl">输出限速</span><span class="v-info" id="legacy-output-kph">--</span></div>
+    <div class="diag-item"><span class="lbl">0x2F8 状态</span><span class="v-warn" id="legacy-gps-seen">0x2F8 未检测到</span></div>
+    <div class="diag-item"><span class="lbl">最后原始值</span><span class="v-dim" id="legacy-last-raw">--</span></div>
+  </div>
+</div>
+
 <div class="card" id="speed-panel-fixed">
   <div class="card-title">固定百分比</div>
   <div class="card-subtitle">所有速度限制统一使用同一个偏移百分比</div>
@@ -1316,12 +1351,21 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
-      <div class="setting-name">仿生方向盘 <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">0x370 正弦波随机扭矩，模拟人手握持</div>
+      <div class="setting-name">NAG 抑制 <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">检测到握方向盘警告(0x399)时，反应式爆发扭矩抑制 NAG（实车验证中，故障即关）</div>
       <div class="setting-desc" id="def-bionic-warn" style="color:#ef4444;display:none">⚠ 已自动回退至echo（连续帧异常）</div>
+      <div class="setting-desc" id="def-bionic-risk" style="color:#ef4444;display:none">⚠ 反应式扭矩注入 · 实车验证中 / 故障立即关闭</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
+  <div class="row">
+    <label>NAG 模式</label>
+    <select id="nag-mode-select" onchange="saveDefenseConfig()">
+      <option value="0">Off</option>
+      <option value="2">EPAS Late Echo 实验</option>
+    </select>
+  </div>
+  <div class="hint warn">EPAS Late Echo 为封闭环境研究模式：默认关闭，只发送 0x370，保留 handsOnLevel，cadence/timing 不满足时自动不发。</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">扭矩篡改(1.80Nm) <span class="exp-badge">高危</span></div>
@@ -1371,6 +1415,25 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="setting-desc">保留 AP/EAP 兼容策略位</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-apeap-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+</div>
+
+<div class="card cockpit-card" id="abort-guard-card">
+  <div class="card-title">Abort Guard <span class="exp-badge">实验</span></div>
+  <div class="card-subtitle">默认关闭。检测 AP state 8/9 abort 后锁止注入路径，直到 AP 退出后自动解除。</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">启用 Abort Guard</div>
+      <div class="setting-desc">AP state 8/9 latch/lock until AP exits，避免 abort 后继续注入。</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="abort-guard-toggle" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="diag-grid">
+    <div class="diag-item"><span class="lbl">Guard 状态</span><span class="v-dim" id="abort-guard-state">关闭</span></div>
+    <div class="diag-item"><span class="lbl">AP state</span><span class="v-dim" id="abort-guard-ap">--</span></div>
+    <div class="diag-item"><span class="lbl">Abort state</span><span class="v-dim" id="abort-guard-abort">--</span></div>
+    <div class="diag-item"><span class="lbl">阻止次数</span><span class="v-warn" id="abort-guard-blocks">0</span></div>
+    <div class="diag-item"><span class="lbl">阻止路径</span><span class="v-dim" id="abort-guard-path">--</span></div>
   </div>
 </div>
 
@@ -1844,6 +1907,8 @@ var OLD_DNS_BLACKLIST = 'tesla.cn\ntesla.com\nteslamotors.com\ntesla.services';
 
 // ── Utilities ──────────────────────────────────────────────
 function $(id){return document.getElementById(id)}
+function val(id){var e=$(id);return e?e.value:''}
+function setVal(id,v){var e=$(id);if(e)e.value=v}
 function setText(id,txt){var e=$(id);if(e)e.textContent=txt}
 function setFsdVisualState(on){
   var stateText=on?'ON':'OFF';
@@ -2392,6 +2457,19 @@ function showSpeedMode(strategy){
   setText('st-speed-pill',speedStrategyState);
 }
 
+function legacySmartModeValue(v){
+  if(v==='off'||v===0)return 'off';
+  if(v==='manual'||v===1)return 'manual';
+  if(v==='auto'||v===2)return 'auto';
+  if(v==='custom'||v===3)return 'custom';
+  return 'auto';
+}
+function clampNum(id,def,min,max){
+  var el=$(id);var v=el?parseInt(el.value,10):def;
+  if(isNaN(v))v=def;if(v<min)v=min;if(v>max)v=max;
+  if(el)el.value=String(v);
+  return v;
+}
 function updateSpeedPage(d){
   var enc=$('hw3-enc');
   if(enc)enc.value=String(d.hw3WireEncoding||0);
@@ -2402,6 +2480,17 @@ function updateSpeedPage(d){
   setText('sp-wire',d.hw3WireEncoding!==undefined?d.hw3WireEncoding:'--');
   setText('sp-stock',d.hw3StockOffset!==undefined?d.hw3StockOffset+' kph':'--');
   setText('sp-raw',d.fusedSpeedLimitRaw!==undefined?d.fusedSpeedLimitRaw:'--');
+  var ls=d.legacySpeed||{};
+  var seen=!!ls.gpsSpeedSeen;
+  var gpsText=seen?'已检测 0x2F8':'0x2F8 未检测到';
+  setText('legacy-speed-chip',gpsText);
+  setText('legacy-gps-seen',gpsText);
+  setCls('legacy-gps-seen','v-'+(seen?'ok':'warn'));
+  setText('legacy-limit-kph',ls.speedLimitKph!==undefined?ls.speedLimitKph+' kph':'--');
+  setText('legacy-target-kph',ls.rawTargetKph!==undefined?ls.rawTargetKph+' kph':'--');
+  setText('legacy-smooth-kph',ls.smoothedTargetKph!==undefined?ls.smoothedTargetKph+' kph':'--');
+  setText('legacy-output-kph',ls.outputOffsetKph!==undefined?ls.outputOffsetKph+' kph':'--');
+  setText('legacy-last-raw',ls.lastSentOffsetRaw!==undefined?('raw '+ls.lastSentOffsetRaw+' / '+(ls.lastSentOffsetKph!==undefined?ls.lastSentOffsetKph+' kph':'--')):'--');
 }
 
 function updateDefensePage(d){
@@ -2411,6 +2500,13 @@ function updateDefensePage(d){
   setText('def-min',d.hw3OffsetTarget!==undefined?d.hw3OffsetTarget:'--');
   setText('def-cnt',d.hw3SlewCount||0);
   setText('def-cur',d.hw3OffsetLast!==undefined?d.hw3OffsetLast:'--');
+  var ag=d.abortGuard||{};
+  var agState=ag.enabled?(ag.latched?'已锁止':'已武装'):'关闭';
+  setText('abort-guard-state',agState);
+  setText('abort-guard-ap',ag.lastApState!==undefined?ag.lastApState:'--');
+  setText('abort-guard-abort',ag.lastAbortState!==undefined?ag.lastAbortState:'--');
+  setText('abort-guard-blocks',ag.blocks||0);
+  setText('abort-guard-path',ag.lastBlockedPath||ag.lastClearReason||'--');
   var dot=$('def-dot');
   var statusEl=$('def-status');
   if(d.hw3OffsetSlew){
@@ -2428,9 +2524,13 @@ async function loadDefenseConfig(){
   var tgl=$('hw3-slew-tgl');
   if(tgl)tgl.checked=!!d.enabled;
   var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
+  var bioRisk=$('def-bionic-risk');if(bioRisk)bioRisk.style.display=!!d.bionic_steering?'block':'none';
+  var conf=(d&&d.defense)?d:{defense:{nagMode:(d&&d.nagMode!=null)?d.nagMode:((d&&d.nag_mode!=null)?d.nag_mode:0)}};
+  setVal('nag-mode-select', String((d&&d.nag_mode!=null)?d.nag_mode:((conf&&conf.defense&&conf.defense.nagMode!=null)?conf.defense.nagMode:0)));
   var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
   var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
   var se=$('def-soft-engage-tgl');if(se)se.checked=!!d.soft_engage;
+  var ag=$('abort-guard-toggle');if(ag)ag.checked=!!d.abort_guard;
   // Bionic auto-disabled warning
   var bioWarn=$('def-bionic-warn');
   if(bioWarn)bioWarn.style.display=!!d.bionic_disabled?'block':'none';
@@ -2442,7 +2542,7 @@ async function loadDefenseConfig(){
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
-  var exp=(d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
+  var exp=(d.abort_guard||d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
   setStatusTriplet('defense',d.enabled?'防御 ON':'防御 OFF',
     'NVS '+(d.enabled?'ON':'OFF')+(exp?' / 含实验项':''),
     exp?'实验项需实车验证':'等待 /status 运行确认',
@@ -2751,6 +2851,7 @@ async function saveDefenseConfig(){
   var bio=$('def-bionic-tgl');
   var ntt=$('def-ntt-tgl');
   var se=$('def-soft-engage-tgl');
+  var ag=$('abort-guard-toggle');
   var sound=$('def-sound-tgl');
   var isaOvr=$('def-isa-override-tgl');
   var dndVol=$('def-dnd-vol-tgl');
@@ -2760,8 +2861,10 @@ async function saveDefenseConfig(){
   var data={
     enabled:tgl&&tgl.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
+    nagMode: parseInt(val('nag-mode-select')||'0',10),
     nag_torque_tamper:ntt&&ntt.checked?'1':'0',
     soft_engage:se&&se.checked?'1':'0',
+    abort_guard:ag&&ag.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
     isa_override:isaOvr&&isaOvr.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
@@ -3654,6 +3757,14 @@ async function loadLegacyFsdConfig(){
     var override=document.getElementById('legacy-override-tgl');
     if(offset&&conf.fsdRuntime.legacyOffset!==undefined)offset.value=conf.fsdRuntime.legacyOffset;
     if(override)override.checked=!!conf.fsdRuntime.overrideSpeedLimit;
+    setVal('legacy-offset-mode',legacySmartModeValue(conf.fsdRuntime.legacyOffsetMode));
+    setVal('legacy-offset-manual',conf.fsdRuntime.legacyOffset!==undefined?conf.fsdRuntime.legacyOffset:0);
+    var smooth=$('legacy-smooth-down');if(smooth)smooth.checked=!!conf.fsdRuntime.legacySmoothDown;
+    setVal('legacy-smooth-rate',conf.fsdRuntime.legacySmoothRateKphS!==undefined?conf.fsdRuntime.legacySmoothRateKphS:5);
+    setVal('legacy-pct-low',conf.fsdRuntime.legacyCustomPctLow!==undefined?conf.fsdRuntime.legacyCustomPctLow:50);
+    setVal('legacy-pct-mid',conf.fsdRuntime.legacyCustomPctMid!==undefined?conf.fsdRuntime.legacyCustomPctMid:30);
+    setVal('legacy-pct-high',conf.fsdRuntime.legacyCustomPctHigh!==undefined?conf.fsdRuntime.legacyCustomPctHigh:20);
+    setVal('legacy-pct-vhigh',conf.fsdRuntime.legacyCustomPctVeryHigh!==undefined?conf.fsdRuntime.legacyCustomPctVeryHigh:10);
   }
   legacyFsdConfigLoaded=true;
   return true;
@@ -3685,8 +3796,38 @@ async function postConfigJson(data){
   if(!r.ok)throw new Error('HTTP '+r.status);
   return r;
 }
+function syncLegacyOffsetInputs(sourceId){
+  var src=$(sourceId), legacy=$('legacy-offset-inp'), manual=$('legacy-offset-manual');
+  if(!src)return;
+  var v=parseInt(src.value,10)||0;
+  if(v<0)v=0;if(v>33)v=33;src.value=String(v);
+  if(legacy&&legacy!==src)legacy.value=String(v);
+  if(manual&&manual!==src)manual.value=String(v);
+}
+async function saveLegacySmartSpeed(){
+  syncLegacyOffsetInputs('legacy-offset-manual');
+  var modeVal=val('legacy-offset-mode');
+  var mode=(modeVal==='off')?0:((modeVal==='manual')?1:((modeVal==='auto')?2:3));
+  var smooth=$('legacy-smooth-down');
+  var data={fsdRuntime:{
+    legacyOffsetMode:mode,
+    legacyOffset:clampNum('legacy-offset-inp',0,0,33),
+    legacySmoothDown:!!(smooth&&smooth.checked),
+    legacySmoothRateKphS:clampNum('legacy-smooth-rate',5,1,20),
+    legacyCustomPctLow:clampNum('legacy-pct-low',50,0,63),
+    legacyCustomPctMid:clampNum('legacy-pct-mid',30,0,63),
+    legacyCustomPctHigh:clampNum('legacy-pct-high',20,0,63),
+    legacyCustomPctVeryHigh:clampNum('legacy-pct-vhigh',10,0,63)
+  }};
+  try{
+    await postConfigJson(data);
+    showToast('Legacy 智能速度偏移已保存',true);
+    poll();
+  }catch(e){showToast('保存失败');}
+}
 // 功能1：Legacy 速度偏移（0x2F8 UI_userSpeedOffset，0-33 km/h）
 async function saveLegacyOffset(){
+  syncLegacyOffsetInputs('legacy-offset-inp');
   var el=document.getElementById('legacy-offset-inp');
   if(!el)return;
   var v=parseInt(el.value)||0;
@@ -3884,6 +4025,7 @@ function restartPoll(ms){
   <button class="mob-tab" data-mobile-page="hardware" onclick="showMobilePage('hardware')"><div class="mob-icon">◇</div><div>硬件</div></button>
   <button class="mob-tab" data-mobile-page="speed" onclick="showMobilePage('speed')"><div class="mob-icon">↗</div><div>速度</div></button>
   <button class="mob-tab" data-mobile-page="network" onclick="showMobilePage('network')"><div class="mob-icon">◎</div><div>网络</div></button>
+  <button class="mob-tab" data-mobile-page="defense" onclick="showMobilePage('defense')"><div class="mob-icon">◈</div><div>防护</div></button>
   <button class="mob-tab" data-mobile-page="more" onclick="toggleMobMore('mob-more-single')"><div class="mob-icon">···</div><div>更多</div></button>
 </div>
 <div class="mob-more-panel" id="mob-more-single" data-dual-hide="1">

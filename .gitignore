@@ -43,6 +43,9 @@ Temporary Items
 .platformio-ci
 index.html
 
+# Local git worktrees
+.worktrees/
+
 ### Python ###
 # Byte-compiled / optimized / DLL files
 __pycache__/

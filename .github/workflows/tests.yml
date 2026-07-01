@@ -67,7 +67,8 @@ jobs:
           - native_legacy
           - native_helpers
           - native_twai
-          - native_bionic_steer
+          - native_reactive_nag
+          - native_epas_late_echo
           - native_wheel_dnd
     steps:
       - uses: actions/checkout@v6

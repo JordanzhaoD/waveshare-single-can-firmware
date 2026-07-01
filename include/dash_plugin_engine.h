@@ -36,6 +36,7 @@ struct DashPluginContext
     bool otaAllowed = false;
     bool apGateAllowed = false;
     bool fsdMasterEnabled = false;
+    bool abortGuardAllowed = true;
     uint8_t defaultBus = CAN_BUS_DEFAULT;
 };
 
@@ -495,6 +496,12 @@ public:
             clearPeriodicCache();
             return result;
         }
+        if (!ctx.abortGuardAllowed)
+        {
+            result.blockedBy = "abort_guard";
+            clearPeriodicCache();
+            return result;
+        }
 
         std::vector<DashPlugin *> ordered;
         ordered.reserve(plugins_.size());
@@ -566,7 +573,7 @@ public:
     {
         if (!periodicValid_)
             return;
-        if (!ctx.canActive || !ctx.otaAllowed || !ctx.apGateAllowed || !ctx.fsdMasterEnabled)
+        if (!ctx.canActive || !ctx.otaAllowed || !ctx.apGateAllowed || !ctx.fsdMasterEnabled || !ctx.abortGuardAllowed)
         {
             clearPeriodicCache();
             return;

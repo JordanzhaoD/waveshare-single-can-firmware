@@ -163,6 +163,141 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("var map=[3,0,1,2];", self.ui)
         self.assertIn("if (v <= 3 && v != hwMode)", self.dash)
 
+    def test_ap_auto_restore_is_gated_by_abort_guard(self) -> None:
+        """Post-process AP auto-restore is a CAN write path and must honor Abort Guard."""
+        fn_start = self.dash.index("static void dashTryApAutoRestore")
+        fn_end = self.dash.index("static void dashPostProcessFrame", fn_start)
+        fn = self.dash[fn_start:fn_end]
+        send_idx = fn.index("driver.send(modified)")
+        guard_idx = fn.find("abortGuard.allowsInjection()")
+        self.assertNotEqual(guard_idx, -1, "AP auto-restore must check Abort Guard before sending")
+        self.assertLess(guard_idx, send_idx, "Abort Guard check must happen before AP auto-restore driver.send")
+        self.assertIn(
+            "DashAbortGuardBlockPath::ApAutoRestore",
+            fn[:send_idx],
+            "blocked AP auto-restore attempts should be recorded in Abort Guard diagnostics",
+        )
+
+    def test_hw3_hw4_das_status_feeds_abort_guard(self) -> None:
+        """Active HW3/HW4 handlers must latch Abort Guard from DAS AP abort states."""
+        for handler_name in ["HW3Handler", "HW4Handler"]:
+            with self.subTest(handler=handler_name):
+                handler_start = self.handlers.index(f"struct {handler_name}")
+                handler_end = self.handlers.find("struct ", handler_start + 1)
+                if handler_end == -1:
+                    handler_end = len(self.handlers)
+                handler = self.handlers[handler_start:handler_end]
+                status_start = handler.index("if (frame.id == 921)")
+                status_end = handler.find("if (frame.id ==", status_start + 1)
+                if status_end == -1:
+                    status_end = len(handler)
+                status_block = handler[status_start:status_end]
+                ap_read_idx = status_block.index("readDASAutopilotStatus(frame)")
+                latch_idx = status_block.find("abortGuard.onApState")
+                self.assertNotEqual(latch_idx, -1, f"{handler_name} DAS status must feed Abort Guard")
+                self.assertGreater(latch_idx, ap_read_idx)
+                self.assertIn("dashDiagNowMs()", status_block[latch_idx:])
+
+        hw4_start = self.handlers.index("struct HW4Handler")
+        hw4 = self.handlers[hw4_start:]
+        status923_start = hw4.index("if (frame.id == 923")
+        status923_end = hw4.index("if (frame.id == 1016)", status923_start)
+        status923_block = hw4[status923_start:status923_end]
+        ap_read_idx = status923_block.find("readHw4Das923ApState(frame)")
+        latch_idx = status923_block.find("abortGuard.onApState")
+        gate_idx = status923_block.find("abortGuardAllowsInjection")
+        self.assertNotEqual(ap_read_idx, -1, "HW4 923 DAS status must use the dedicated safe AP-state decoder")
+        self.assertNotIn("readDASAutopilotStatus(frame)", status923_block)
+        self.assertIn("(frame.data[1] >> 4) & 0x0F", hw4)
+        self.assertIn("hw4Das923UseByte0", hw4)
+        self.assertNotEqual(latch_idx, -1, "HW4 923 DAS status must feed Abort Guard")
+        self.assertGreater(latch_idx, ap_read_idx)
+        self.assertNotEqual(gate_idx, -1, "HW4 923 write path must remain Abort Guard gated")
+        self.assertLess(latch_idx, gate_idx, "HW4 923 must latch Abort Guard before injection gating")
+        self.assertIn("dashDiagNowMs()", status923_block[latch_idx:])
+
+    def test_hw3_hw4_send_paths_are_gated_by_abort_guard(self) -> None:
+        """HW3/HW4 built-in CAN injection sends must stop while Abort Guard is latched."""
+        self.assertIn("abortGuardAllowsInjection", self.handlers)
+        self.assertIn("abortGuard.recordBlock", self.handlers)
+        for handler_name in ["HW3Handler", "HW4Handler"]:
+            with self.subTest(handler=handler_name):
+                handler_start = self.handlers.index(f"struct {handler_name}")
+                handler_end = self.handlers.find("struct ", handler_start + 1)
+                if handler_end == -1:
+                    handler_end = len(self.handlers)
+                handler = self.handlers[handler_start:handler_end]
+                for match in re.finditer(r"driver\.send\(frame\)", handler):
+                    prefix = handler[:match.start()]
+                    self.assertIn(
+                        "abortGuardAllowsInjection(",
+                        prefix,
+                        f"{handler_name} send at offset {match.start()} must check Abort Guard before sending",
+                    )
+
+    def test_epas_late_echo_status_and_config_contract(self) -> None:
+        for token in [
+            '"lateEchoMode"',
+            '"cadenceStable"',
+            '"lateEchoEligible"',
+            '"pendingEcho"',
+            '"periodMs"',
+            '"jitterMs"',
+            '"counterStep"',
+            '"expectedNextCounter"',
+            '"pendingSendAtMs"',
+            '"scheduledEchoes"',
+            '"sentLateEchoes"',
+            '"droppedLateEchoes"',
+            '"lateWindowMissed"',
+            '"lastRxToTxMs"',
+            '"preserveHandsOnLevel"',
+            '"lastSourceHandsOnLevel"',
+            '"lastTxHandsOnLevel"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        self.assertIn('def_nag_mode', self.dash)
+        self.assertIn('setNagMode', self.dash)
+        self.assertIn('virtual void setNagMode(uint8_t', self.handlers)
+        self.assertIn('void setNagMode(uint8_t mode) override', self.handlers)
+        self.assertIn('bool effectiveBionic = dashDefenseEnabled && dashBionicSteering;', self.dash)
+        self.assertIn('uint8_t effectiveNagMode = dashDefenseEnabled ? dashNagMode : 0;', self.dash)
+        self.assertIn('reactive->bionicSteering = effectiveBionic', self.dash)
+        self.assertIn('reactive->setNagMode(effectiveNagMode)', self.dash)
+        self.assertIn('reactive && reactive != dashHandler', self.dash)
+        self.assertIn('reactive->resetBionic(resetSeed)', self.dash)
+        self.assertNotIn('static_cast<LegacyHandler *>(reactive)->setNagMode', self.dash)
+        self.assertIn('dashParseNagMode(raw, 0)', self.dash)
+        self.assertNotIn('int mode = raw.toInt();', self.dash)
+        self.assertIn('p.putUChar("def_nag_mode", dashClampNagMode(mode));', self.dash)
+        status_idx = self.dash.find('static void handleStatus()')
+        self.assertNotEqual(status_idx, -1)
+        reactive_idx = self.dash.find(',\\"reactiveNag\\":{', status_idx)
+        self.assertNotEqual(reactive_idx, -1)
+        status_prefix = self.dash[status_idx:reactive_idx]
+        self.assertIn(',\\"nagMode\\":', status_prefix)
+        self.assertIn('String(dashNagMode <= 2 ? dashNagMode : 0)', status_prefix)
+        self.assertIn('=== EPAS-faithful Late Echo ===', self.dash)
+
+    def test_epas_late_echo_ui_selector_contract(self) -> None:
+        for token in [
+            "nag-mode-select",
+            "EPAS Late Echo",
+            "实验",
+            "nagMode",
+            "defense.nagMode",
+            "nag_mode",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+        load_fn = re.search(r"async function loadDefenseConfig\(\)\{.*?setText\('tb-exp'", self.ui, re.S)
+        self.assertIsNotNone(load_fn)
+        load_body = load_fn.group(0)
+        self.assertIn("setVal('nag-mode-select'", load_body)
+        self.assertIn("d.nag_mode", load_body)
+
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
         """Device status must show which firmware/UI and handler mode are running."""
         for token in [
@@ -435,6 +570,27 @@ class DashboardApiContractTests(unittest.TestCase):
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, plugin)
+
+    def test_plugin_engine_injection_is_gated_by_abort_guard(self) -> None:
+        """Compiled-in plugins must stop sending while Abort Guard is latched."""
+        plugin = (ROOT / "include" / "dash_plugin_engine.h").read_text(encoding="utf-8")
+        self.assertIn("abortGuardAllowed", plugin)
+        self.assertRegex(
+            plugin,
+            r"if \(!ctx\.abortGuardAllowed\)\s*\{[^}]*blockedBy = \"abort_guard\"",
+        )
+        self.assertRegex(
+            plugin,
+            r"if \([^)]*!ctx\.abortGuardAllowed[^)]*\)\s*\{\s*clearPeriodicCache\(\);",
+        )
+
+        context_start = self.dash.find("static DashPluginContext dashPluginContext()")
+        self.assertNotEqual(context_start, -1)
+        context_end = self.dash.find("return ctx;", context_start)
+        self.assertNotEqual(context_end, -1)
+        context_block = self.dash[context_start:context_end]
+        self.assertIn("ctx.abortGuardAllowed", context_block)
+        self.assertIn("abortGuard.allowsInjection()", context_block)
 
     def test_single_can_docs_are_present(self) -> None:
         building = (ROOT / "docs" / "building.md").read_text(encoding="utf-8")
@@ -766,6 +922,11 @@ class DashboardApiContractTests(unittest.TestCase):
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, body)
+        defense = re.search(r'if \(doc\["defense"\]\.is<JsonObject>\(\)\).*?if \(doc\["power"\]', body, re.S)
+        self.assertIsNotNone(defense)
+        defense_body = defense.group(0)
+        self.assertIn('if (defense["nagMode"].is<int>())', defense_body)
+        self.assertNotRegex(defense_body, r'else\s*\{\s*p\.putUChar\("def_nag_mode",\s*0\);\s*\}')
 
     def test_fsd_injection_control_lives_in_module_page(self) -> None:
         """FSD injection controls belong to Module Config, not Driving Mode."""
@@ -1115,7 +1276,12 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(can921)
         body = can921.group(0)
         self.assertIn('fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);', body)
-        self.assertIn('APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));', body)
+        self.assertIn('uint8_t apState = readDASAutopilotStatus(frame);', body)
+        self.assertIn('APActive = isDASAutopilotActive(apState);', body)
+        self.assertIn('uint32_t nowMs = dashDiagNowMs();', body)
+        self.assertIn('if (lateEchoSelected())', body)
+        self.assertIn('lateNag.onDasStatus(apState, hos, nowMs, active, gateReason);', body)
+        self.assertIn('nag.onNagSample(hos, nowMs, active, apState, gateReason);', body)
 
     def test_legacy_simple_offset_helper_reuses_three_mode_state(self) -> None:
         """Legacy simple offset should reuse the speed page algorithm and clamp to byte5 wire range."""
@@ -1177,6 +1343,90 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn(',\\"speedLimit\\":', self.dash)
         self.assertIn('(fusedSpeedLimitRaw == 0 || fusedSpeedLimitRaw == 31)', self.dash)
         self.assertIn('(uint16_t)fusedSpeedLimitRaw * 5', self.dash)
+
+    def test_legacy_smart_speed_api_contract(self) -> None:
+        """config/status/export must expose Legacy Smart Offset fields."""
+        for token in [
+            '"legacyOffsetMode"',
+            '"legacySmoothDown"',
+            '"legacySmoothRateKphS"',
+            '"legacyCustomPctLow"',
+            '"legacyCustomPctMid"',
+            '"legacyCustomPctHigh"',
+            '"legacyCustomPctVeryHigh"',
+            '"legacySpeed"',
+            '"gpsSpeedSeen"',
+            '"lastSentOffsetRaw"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+        self.assertIn('"lo_mode"', self.dash)
+        self.assertIn('"lo_smooth"', self.dash)
+        self.assertIn('"lo_rate"', self.dash)
+        self.assertIn('"lo_p1"', self.dash)
+        self.assertIn('"lo_p2"', self.dash)
+        self.assertIn('"lo_p3"', self.dash)
+        self.assertIn('"lo_p4"', self.dash)
+
+    def test_abort_guard_api_contract(self) -> None:
+        """Abort Guard must be default-off defense config plus status diagnostics."""
+        for token in [
+            '"def_ag"',
+            '"abort_guard"',
+            '"abortGuard"',
+            '"latched"',
+            '"lastAbortState"',
+            '"lastBlockedPath"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        self.assertIn('prefs.getBool("def_ag", false)', self.dash)
+
+    def test_legacy_speed_ui_mentions_smart_offset_and_0x2f8_absence(self) -> None:
+        """UI must explain smart speed and frame visibility."""
+        for token in [
+            '智能速度偏移',
+            '0x2F8 未检测到',
+            '降速平滑',
+            'Abort Guard',
+            '实验',
+            '默认关闭',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_legacy_smart_speed_ui_matches_backend_contract(self) -> None:
+        """Legacy smart speed UI must match backend enum/range/status contracts."""
+        for token in [
+            "if(v==='off'||v===0)return 'off'",
+            "if(v==='manual'||v===1)return 'manual'",
+            "if(v==='auto'||v===2)return 'auto'",
+            "if(v==='custom'||v===3)return 'custom'",
+            "mode=(modeVal==='off')?0:((modeVal==='manual')?1:((modeVal==='auto')?2:3))",
+            'min="1" max="20" id="legacy-smooth-rate"',
+            'min="0" max="63" id="legacy-pct-low"',
+            'min="0" max="63" id="legacy-pct-mid"',
+            'min="0" max="63" id="legacy-pct-high"',
+            'min="0" max="63" id="legacy-pct-vhigh"',
+            "clampNum('legacy-smooth-rate',5,1,20)",
+            "clampNum('legacy-pct-low',50,0,63)",
+            "clampNum('legacy-pct-mid',30,0,63)",
+            "clampNum('legacy-pct-high',20,0,63)",
+            "clampNum('legacy-pct-vhigh',10,0,63)",
+            "ls.lastSentOffsetRaw!==undefined",
+            "syncLegacyOffsetInputs('legacy-offset-manual')",
+            "syncLegacyOffsetInputs('legacy-offset-inp')",
+            "legacyOffset:clampNum('legacy-offset-inp',0,0,33)",
+            "d.abort_guard||d.bionic_steering||d.speed_no_disturb",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+        self.assertNotIn('max="30" id="legacy-smooth-rate"', self.ui)
+        self.assertNotIn('max="50" id="legacy-pct-low"', self.ui)
+        self.assertNotIn("clampNum('legacy-smooth-rate',5,1,30)", self.ui)
+        self.assertNotIn("clampNum('legacy-pct-low',50,0,50)", self.ui)
+        self.assertNotIn("ls.gpsUserOffsetRaw!==undefined", self.ui)
 
     def test_phase2_speed_offset_ui_uses_new_three_mode_contract(self) -> None:
         """Speed page must use the fixed/auto/custom UI and sync the Phase 2 APIs."""
@@ -1284,34 +1534,6 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('",\\"mode\\":\\""', self.dash)
 
     # ── Phase 3: Bionic Steering + Wheel DND ──────────────────
-
-    def test_phase3_bionic_steer_header_exists(self) -> None:
-        """dash_bionic_steer.h must exist with core API surface."""
-        bionic = (ROOT / "include" / "dash_bionic_steer.h").read_text(encoding="utf-8")
-        for symbol in ["DashBionicSteer", "DashBionicPRNG", "computePerturbation",
-                        "applyToFrame", "beginPhase", "reportFailure", "reportSuccess",
-                        "isDisabled", "reset", "kPerturbCap", "kMaxConsecutiveFails"]:
-            with self.subTest(symbol=symbol):
-                self.assertIn(symbol, bionic)
-        # Safety cap
-        self.assertIn("kPerturbCap{60}", bionic)
-        # Amplitude range
-        self.assertIn("kAmplitudeLo{30}", bionic)
-        self.assertIn("kAmplitudeHi{55}", bionic)
-
-    def test_phase3_bionic_steer_xorshift32(self) -> None:
-        """xorshift32 PRNG must produce deterministic sequence from seed."""
-        bionic = (ROOT / "include" / "dash_bionic_steer.h").read_text(encoding="utf-8")
-        self.assertIn("s ^= s << 13", bionic)
-        self.assertIn("s ^= s >> 17", bionic)
-        self.assertIn("s ^= s << 5", bionic)
-
-    def test_phase3_bionic_failure_disables_after_3(self) -> None:
-        """3 consecutive failures must auto-disable bionic."""
-        bionic = (ROOT / "include" / "dash_bionic_steer.h").read_text(encoding="utf-8")
-        self.assertIn("kMaxConsecutiveFails{3}", bionic)
-        self.assertIn("consecutiveFails++", bionic)
-        self.assertIn("disabled = true", bionic)
 
     def test_phase3_wheel_dnd_header_exists(self) -> None:
         """dash_wheel_dnd.h must exist with four-step sequence state machine."""
@@ -1509,7 +1731,8 @@ class DashboardApiContractTests(unittest.TestCase):
     def test_phase3_defense_runtime_and_persistence_are_wired(self) -> None:
         """Defense config should drive Nag/Bionic runtime and persist DND switches."""
         self.assertIn("nagKillerRuntime = canActive && dashDefenseEnabled", self.dash)
-        self.assertIn("dashHandler->resetBionic((uint32_t)millis())", self.dash)
+        self.assertIn("uint32_t resetSeed = (uint32_t)millis();", self.dash)
+        self.assertIn("dashHandler->resetBionic(resetSeed)", self.dash)
         self.assertIn('prefs.putBool("def_dv", dashDndVolume);', self.dash)
         self.assertIn('prefs.putBool("def_ds", dashDndSpeed);', self.dash)
         self.assertIn('dashDndVolume = prefs.getBool("def_dv", false);', self.dash)
@@ -1518,9 +1741,130 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(status)
         self.assertIn("dashDndSpeed ? \"true\" : \"false\"", status.group(0))
 
-    def test_phase3_handlers_includes_bionic_header(self) -> None:
-        """handlers.h must include dash_bionic_steer.h."""
-        self.assertIn('#include "dash_bionic_steer.h"', self.handlers)
+    def test_handlers_includes_reactive_nag_header(self) -> None:
+        """handlers.h must include dash_reactive_nag.h (reactive NAG suppression)."""
+        self.assertIn('#include "dash_reactive_nag.h"', self.handlers)
+
+    def test_reactive_nag_v4_status_exposes_tsl6p_burst_diagnostics(self) -> None:
+        """TSL6P Burst NAG v4 must expose phase/timing/clear diagnostics."""
+        status = re.search(r'j \+= ",\\"reactiveNag\\":\{";.*?j \+= "\}";', self.dash, re.S)
+        self.assertIsNotNone(status)
+        body = status.group(0)
+        required = [
+            '"nagSamples"',
+            '"reactiveBursts"',
+            '"proactiveWiggles"',
+            '"echoSent"',
+            '"replayAttempts"',
+            '"replaySuccesses"',
+            '"replayFailures"',
+            '"lastProfileId"',
+            '"lastProfileDir"',
+            '"lastPeakRaw"',
+            '"lastBaseRaw"',
+            '"lastOutDeltaRaw"',
+            '"profileIndex"',
+            '"lastHosBefore"',
+            '"lastHosAfter"',
+            '"cooldownRemainMs"',
+            '"burstSessions"',
+            '"burstOnEntries"',
+            '"burstOffEntries"',
+            '"burstFramesSent"',
+            '"burstCyclesCompleted"',
+            '"hosClearEvents"',
+            '"hosClearDuringOn"',
+            '"hosClearDuringOff"',
+            '"hosClearWhileIdle"',
+            '"hosClearWhileCooldown"',
+            '"abortBlocks"',
+            '"gateBlocks"',
+            '"txFailures"',
+            '"lastApState"',
+            '"phaseRemainMs"',
+            '"lastTorqueRaw"',
+            '"lastTorqueNmX100"',
+            '"blockedReason"',
+        ]
+        for token in required:
+            self.assertIn(token, body)
+        self.assertIn("jsonEscape", body)
+        self.assertIn("d.blockedReason && d.blockedReason[0]", body)
+        self.assertIn('"none"', body)
+        self.assertIn("dashReactiveNagHandler()", body)
+        self.assertIn("reactive->reactiveDiag()", body)
+        self.assertNotIn("dashHandler->reactiveDiag()", body)
+
+    def test_reactive_nag_serial_command_prints_v4_burst_fields(self) -> None:
+        """Serial reactive_nag output should distinguish ON/OFF clears and aborts."""
+        serial = re.search(r'else if \(strcmp\(start, "reactive_nag"\) == 0\).*?else if \(strcmp\(start, "reactive_nag_reset"\)', self.dash, re.S)
+        self.assertIsNotNone(serial)
+        body = serial.group(0)
+        required = [
+            "=== TSL6P Burst NAG v4 ===",
+            "0=IDLE 1=BURST_ON 2=BURST_OFF 3=COOLDOWN",
+            "replayAttempts=",
+            "replaySuccesses=",
+            "replayFailures=",
+            "lastProfileId=",
+            "lastProfileDir=",
+            "lastPeakRaw=",
+            "lastBaseRaw=",
+            "lastOutDeltaRaw=",
+            "profileIndex=",
+            "hosBefore=",
+            "hosAfter=",
+            "cooldownRemainMs=",
+            "burstSessions=",
+            "burstOnEntries=",
+            "burstOffEntries=",
+            "burstFramesSent=",
+            "burstCyclesCompleted=",
+            "hosClearEvents=",
+            "hosClearDuringOn=",
+            "hosClearDuringOff=",
+            "hosClearWhileIdle=",
+            "hosClearWhileCooldown=",
+            "abortBlocks=",
+            "gateBlocks=",
+            "txFailures=",
+            "lastApState=",
+            "phaseRemainMs=",
+            "lastTorqueRaw=",
+            "lastTorqueNmX100=",
+            "blockedReason=",
+        ]
+        for token in required:
+            self.assertIn(token, body)
+        self.assertIn("d.blockedReason && d.blockedReason[0]", body)
+        self.assertIn('"none"', body)
+
+    def test_reactive_nag_persistence_uses_legacy_handler_and_fixed_nvs_keys(self) -> None:
+        """Reactive replay counters must persist only Legacy-engine counters with stable NVS keys."""
+        helper = re.search(r"static CarManagerBase \*dashReactiveNagHandler\(\)\n\{.*?\n\}\n", self.dash, re.S)
+        self.assertIsNotNone(helper)
+        helper_body = helper.group(0)
+        self.assertRegex(helper_body, r"if \(handlerPool\[0\]\)\s*return handlerPool\[0\];\s*return dashHandler;")
+
+        maintenance = re.search(r"static void dashReactiveCountersMaintenance\(\).*?(?=static void mcpDashboardLoop\(\))", self.dash, re.S)
+        self.assertIsNotNone(maintenance)
+        body = maintenance.group(0)
+        self.assertIn("CarManagerBase *reactive = dashReactiveNagHandler();", body)
+        self.assertIn("reactive->setReactiveCounters", body)
+        self.assertIn("reactive->reactiveDiag()", body)
+        self.assertIn("Preferences p;", body)
+        self.assertIn("if (!p.begin(PREFS_NS, false))", body)
+        self.assertIn("return;", body)
+        self.assertNotIn("dashHandler->setReactiveCounters", body)
+        self.assertNotIn("dashHandler->reactiveDiag", body)
+
+        serial_reset = re.search(r'else if \(strcmp\(start, "reactive_nag_reset"\) == 0\).*?else if \(strcmp\(start, "reactive_nag_bump"\)', self.dash, re.S)
+        self.assertIsNotNone(serial_reset)
+        self.assertIn("dashReactiveNagHandler()", serial_reset.group(0))
+        self.assertIn("Preferences p;", serial_reset.group(0))
+
+        rn_keys = set(re.findall(r'"(rn_[a-z]+)"', self.dash))
+        self.assertEqual({"rn_ns", "rn_rb", "rn_pw", "rn_es"}, rn_keys)
 
     # ── Phase 4: Light Stunt System ───────────────────────────
 
