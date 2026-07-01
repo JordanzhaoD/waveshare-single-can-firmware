@@ -780,7 +780,7 @@ python3 scripts/minify_dashboard.py --check
 pio run -e waveshare_single_can_standalone
 ```
 
-Also run source searches proving forbidden paths were not added.
+Also run source searches proving forbidden paths were not added. These searches must be block-scoped or contract-test backed: a whole-file regex such as `frame.id == 921.*?driver.send(frame)` is too broad because it can match a read-only `0x399 / 921` branch and then continue across unrelated branches to a later allowed send. The final audit should inspect individual `if (frame.id == ...) { ... }` blocks, or use the existing `frame_id_blocks()`-style contract tests, so read-only observations are not reported as forbidden writes.
 
 ## 10. On-Car Validation Plan
 
