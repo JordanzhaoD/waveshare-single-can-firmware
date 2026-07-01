@@ -1090,6 +1090,11 @@ static void dashTryApAutoRestore(const CanFrame &trigger, CanDriver &driver)
 {
     if (trigger.id != 0x389 || !apAutoRestore)
         return;
+    if (dashHandler && !dashHandler->abortGuard.allowsInjection())
+    {
+        dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::ApAutoRestore);
+        return;
+    }
 
     unsigned long now = millis();
     if (!apRestoreState.dasAccDropMs ||

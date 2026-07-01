@@ -210,6 +210,15 @@ class Tsl6pBurstNagV4Contract(unittest.TestCase):
         self.assertIn("nag.applyToFrame", block)
         self.assertIn("(frame.data[4] & 0x3F) | 0x40", block)
 
+    def test_v4_legacy_echo_is_abort_guard_gated_before_send(self) -> None:
+        block_start = self.legacy.index("if (frame.id == 880")
+        block_end = self.legacy.index("// STW_ACTN_RQ", block_start)
+        block = self.legacy[block_start:block_end]
+        send_idx = block.index("driver.send(echo)")
+        guard_idx = block.index("abortGuard.allowsInjection()")
+        self.assertLess(guard_idx, send_idx)
+        self.assertIn("DashAbortGuardBlockPath::Nag", block[:send_idx])
+
     def test_v4_abort_guard_blocks_states_8_and_9(self) -> None:
         self.assertIn("apState == 8 || apState == 9", self.reactive)
         self.assertIn("enterAbortCooldown", self.reactive)
@@ -244,6 +253,16 @@ class EpasLateEchoContract(unittest.TestCase):
         self.assertNotIn("driver.send", late_branch)
         self.assertIn("void tick(uint32_t nowMs, CanDriver &driver) override", self.legacy)
         self.assertIn("lateNag.buildDueFrame", self.legacy)
+
+    def test_late_echo_tick_is_abort_guard_gated_before_send(self) -> None:
+        tick_start = self.legacy.index("void tick(uint32_t nowMs, CanDriver &driver) override")
+        tick_end = self.legacy.index("void tick(CanDriver &driver)", tick_start)
+        tick = self.legacy[tick_start:tick_end]
+        send_idx = tick.index("driver.send(echo)")
+        guard_idx = tick.index("abortGuard.allowsInjection()")
+        self.assertLess(guard_idx, send_idx)
+        self.assertIn("DashAbortGuardBlockPath::Nag", tick[:send_idx])
+        self.assertIn("lateNag.notifyTxResult(token, false, nowMs)", tick[:send_idx])
 
     def test_late_echo_does_not_write_399_129_or_39b(self) -> None:
         mutation_pattern = r"frame\.data\[[^\]]+\]\s*[-+*/%&|^]?=(?!=)"

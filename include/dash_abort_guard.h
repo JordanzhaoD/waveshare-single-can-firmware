@@ -10,6 +10,7 @@ enum class DashAbortGuardBlockPath : uint8_t
     LegacySpeed0x2f8,
     LegacyVisionSlider0x438,
     Nag,
+    ApAutoRestore,
 };
 
 struct DashAbortGuardDiag
@@ -38,6 +39,8 @@ inline const char *dashAbortGuardBlockPathName(DashAbortGuardBlockPath path)
         return "legacy_vision_slider_0x438";
     case DashAbortGuardBlockPath::Nag:
         return "nag";
+    case DashAbortGuardBlockPath::ApAutoRestore:
+        return "ap_auto_restore";
     case DashAbortGuardBlockPath::None:
     default:
         return "none";

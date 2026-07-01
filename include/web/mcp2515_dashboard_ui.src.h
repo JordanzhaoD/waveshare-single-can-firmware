@@ -1023,7 +1023,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="card-title">Legacy 智能速度偏移 <span class="exp-badge" id="legacy-speed-chip">0x2F8 未检测到</span></div>
   <div class="card-subtitle">仅写 0x2F8 / 760 UI_userSpeedOffset；读取 GPS 限速后自动计算目标，降速平滑避免突然回落。</div>
   <div class="setting-row">
-    <div><div class="setting-name">智能速度偏移模式</div><div class="setting-desc">默认自动；手动模式使用固定 km/h 偏移。</div></div>
+    <div><div class="setting-name">智能速度偏移模式</div><div class="setting-desc">默认关闭；手动模式使用固定 km/h 偏移。</div></div>
     <label class="field"><select id="legacy-offset-mode" onchange="saveLegacySmartSpeed()"><option value="off">关闭</option><option value="manual">手动</option><option value="auto">自动</option><option value="custom">自定义百分比</option></select></label>
   </div>
   <div class="setting-row">

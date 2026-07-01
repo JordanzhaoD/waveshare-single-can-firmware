@@ -163,6 +163,21 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("var map=[3,0,1,2];", self.ui)
         self.assertIn("if (v <= 3 && v != hwMode)", self.dash)
 
+    def test_ap_auto_restore_is_gated_by_abort_guard(self) -> None:
+        """Post-process AP auto-restore is a CAN write path and must honor Abort Guard."""
+        fn_start = self.dash.index("static void dashTryApAutoRestore")
+        fn_end = self.dash.index("static void dashPostProcessFrame", fn_start)
+        fn = self.dash[fn_start:fn_end]
+        send_idx = fn.index("driver.send(modified)")
+        guard_idx = fn.find("abortGuard.allowsInjection()")
+        self.assertNotEqual(guard_idx, -1, "AP auto-restore must check Abort Guard before sending")
+        self.assertLess(guard_idx, send_idx, "Abort Guard check must happen before AP auto-restore driver.send")
+        self.assertIn(
+            "DashAbortGuardBlockPath::ApAutoRestore",
+            fn[:send_idx],
+            "blocked AP auto-restore attempts should be recorded in Abort Guard diagnostics",
+        )
+
     def test_epas_late_echo_status_and_config_contract(self) -> None:
         for token in [
             '"lateEchoMode"',
