@@ -1051,6 +1051,7 @@ static DashPluginContext dashPluginContext()
     ctx.otaAllowed = dashOtaGuardAllowInjection();
     ctx.apGateAllowed = dashApInjectionAllowed() && legacyFsdLastAllowed;
     ctx.fsdMasterEnabled = canActive;
+    ctx.abortGuardAllowed = dashHandler ? dashHandler->abortGuard.allowsInjection() : !dashAbortGuardEnabled;
     ctx.defaultBus = CAN_BUS_DEFAULT;
     return ctx;
 }

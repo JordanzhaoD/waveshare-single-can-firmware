@@ -499,6 +499,27 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, plugin)
 
+    def test_plugin_engine_injection_is_gated_by_abort_guard(self) -> None:
+        """Compiled-in plugins must stop sending while Abort Guard is latched."""
+        plugin = (ROOT / "include" / "dash_plugin_engine.h").read_text(encoding="utf-8")
+        self.assertIn("abortGuardAllowed", plugin)
+        self.assertRegex(
+            plugin,
+            r"if \(!ctx\.abortGuardAllowed\)\s*\{[^}]*blockedBy = \"abort_guard\"",
+        )
+        self.assertRegex(
+            plugin,
+            r"if \([^)]*!ctx\.abortGuardAllowed[^)]*\)\s*\{\s*clearPeriodicCache\(\);",
+        )
+
+        context_start = self.dash.find("static DashPluginContext dashPluginContext()")
+        self.assertNotEqual(context_start, -1)
+        context_end = self.dash.find("return ctx;", context_start)
+        self.assertNotEqual(context_end, -1)
+        context_block = self.dash[context_start:context_end]
+        self.assertIn("ctx.abortGuardAllowed", context_block)
+        self.assertIn("abortGuard.allowsInjection()", context_block)
+
     def test_single_can_docs_are_present(self) -> None:
         building = (ROOT / "docs" / "building.md").read_text(encoding="utf-8")
         self.assertIn("waveshare_single_can_standalone", building)
