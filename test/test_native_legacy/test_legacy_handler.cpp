@@ -124,6 +124,20 @@ static CanFrame makeDasFrame(uint8_t handsOnState)
     return f;
 }
 
+static CanFrame makeGpsSpeedFrame(uint8_t byte5 = 0x80, uint8_t byte6 = 0x0C)
+{
+    CanFrame f = {.id = 760, .dlc = 8};
+    f.data[0] = 0;
+    f.data[1] = 0;
+    f.data[2] = 0;
+    f.data[3] = 0;
+    f.data[4] = 0;
+    f.data[5] = byte5;
+    f.data[6] = byte6;
+    f.data[7] = 0;
+    return f;
+}
+
 void setUp()
 {
     mock.reset();
@@ -141,6 +155,9 @@ void setUp()
     forceActivateRuntime = false;
     handler.bionicSteering = false; // default = bionic OFF; bionic tests opt in explicitly
     handler.checkAD = nullptr;      // default: no AD gate; checkAD test opts in explicitly
+    handler.abortGuard.setEnabled(false);
+    handler.legacySmartOffsetConfig = LegacySmartOffsetConfig{};
+    handler.legacySmartOffsetEngine.resetSmoothing();
 }
 
 void tearDown() {}
@@ -795,6 +812,98 @@ void test_legacy_health_gate_blocked_when_last_blocked()
     TEST_ASSERT_EQUAL(FsdHealthState::GateBlocked, s);
 }
 
+void test_legacy_0x2f8_preserves_upper_bits_and_writes_smart_offset()
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Manual;
+    handler.legacySmartOffsetConfig.manualOffsetKph = 12;
+
+    CanFrame f = makeGpsSpeedFrame(0xC0, 0x0C);
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(760, mock.sent[0].id);
+    TEST_ASSERT_EQUAL_HEX8(0xC0 | 42, mock.sent[0].data[5]);
+    TEST_ASSERT_TRUE(handler.legacySpeedDiag.gpsSpeedSeen);
+    TEST_ASSERT_EQUAL_UINT8(42, handler.legacySpeedDiag.lastSentOffsetRaw);
+    TEST_ASSERT_EQUAL_UINT8(12, handler.legacySpeedDiag.lastSentOffsetKph);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.txOk);
+}
+
+void test_legacy_0x2f8_output_zero_sends_nothing_but_sniffs()
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Off;
+
+    CanFrame f = makeGpsSpeedFrame(0x80, 0x0C);
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_TRUE(handler.legacySpeedDiag.gpsSpeedSeen);
+    TEST_ASSERT_EQUAL_UINT8(0, handler.legacySpeedDiag.lastSentOffsetRaw);
+}
+
+void test_legacy_0x399_updates_smart_limit_and_auto_0x2f8_output()
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Auto;
+    CanFrame das = makeDasFrameWithState(0, 6);
+    das.data[1] = 12; // 60 km/h -> cap 90 -> +30
+    handler.handleMessage(das, mock);
+
+    CanFrame gps = makeGpsSpeedFrame(0x80, 0x0C);
+    handler.handleMessage(gps, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x80 | 60, mock.sent[0].data[5]);
+    TEST_ASSERT_EQUAL_UINT8(30, handler.legacySpeedDiag.lastSentOffsetKph);
+    TEST_ASSERT_EQUAL_UINT16(60, handler.legacySpeedDiag.result.speedLimitKph);
+}
+
+void test_abort_guard_latched_blocks_legacy_0x2f8()
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Manual;
+    handler.legacySmartOffsetConfig.manualOffsetKph = 10;
+    handler.abortGuard.setEnabled(true);
+    CanFrame das = makeDasFrameWithState(0, 8);
+    handler.handleMessage(das, mock);
+    mock.sent.clear();
+
+    CanFrame gps = makeGpsSpeedFrame(0x80, 0x0C);
+    handler.handleMessage(gps, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_STRING("abortGuard", handler.legacySpeedDiag.blockedReason);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.abortGuard.diag().blocks);
+    TEST_ASSERT_EQUAL_STRING("legacy_speed_0x2f8", handler.abortGuard.diag().lastBlockedPath);
+}
+
+void test_abort_guard_latched_blocks_legacy_mux0_activation()
+{
+    handler.abortGuard.setEnabled(true);
+    CanFrame das = makeDasFrameWithState(0, 8);
+    handler.handleMessage(das, mock);
+    mock.sent.clear();
+
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(FsdSkipReason::GateBlocked, handler.legacyFsdDiag.mux0.lastSkip);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.abortGuard.diag().blocks);
+    TEST_ASSERT_EQUAL_STRING("legacy_fsd_mux0", handler.abortGuard.diag().lastBlockedPath);
+}
+
+void test_abort_guard_default_off_preserves_mux0_activation()
+{
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
+}
+
 // ============================================================
 // TSL6P Mode B v4 — opt-in 0x370 echo burst, LegacyHandler only.
 // ============================================================
@@ -1247,6 +1356,13 @@ int main()
     RUN_TEST(test_legacy_can1080_records_tx_fail);
 
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
+
+    RUN_TEST(test_legacy_0x2f8_preserves_upper_bits_and_writes_smart_offset);
+    RUN_TEST(test_legacy_0x2f8_output_zero_sends_nothing_but_sniffs);
+    RUN_TEST(test_legacy_0x399_updates_smart_limit_and_auto_0x2f8_output);
+    RUN_TEST(test_abort_guard_latched_blocks_legacy_0x2f8);
+    RUN_TEST(test_abort_guard_latched_blocks_legacy_mux0_activation);
+    RUN_TEST(test_abort_guard_default_off_preserves_mux0_activation);
 
     RUN_TEST(test_legacy_tsl6p_off_no_echo);
     RUN_TEST(test_legacy_tsl6p_default_mode_off_no_echo_even_when_bionic_enabled);
