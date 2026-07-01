@@ -989,7 +989,6 @@ void test_legacy_tsl6p_burst_off_suppresses_echo()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
-
 void test_legacy_tsl6p_370_path_advances_cycle_without_fresh_399()
 {
     handler.bionicSteering = true;

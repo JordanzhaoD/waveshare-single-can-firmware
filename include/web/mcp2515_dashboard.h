@@ -191,8 +191,8 @@ static bool dashSoftEngage = kSoftEngageDefaultEnabled; // opt-in toggle (UI/NVS
 static bool legacySoftEngageSent = false;               // per-episode latch: first bit46 release
 static bool dashSpeedProfileAuto = true;
 static uint8_t dashManualSpeedProfile = 1;
-static uint8_t dashDriveProfile = 0;  // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
-static uint8_t dashSpeedStrategy = 1; // 0=fixed, 1=auto, 2=custom
+static uint8_t dashDriveProfile = 0;     // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
+static uint8_t dashSpeedStrategy = 1;    // 0=fixed, 1=auto, 2=custom
 static uint8_t dashLegacyOffsetMode = 0; // 0=off, 1=manual, 2=auto, 3=custom
 static bool dashLegacySmoothDown = true;
 static uint8_t dashLegacySmoothRateKphS = 5;
@@ -1458,10 +1458,10 @@ static void dashSavePrefs()
     prefs.putUChar("lo_p2", dashLegacyCustomPctMid);
     prefs.putUChar("lo_p3", dashLegacyCustomPctHigh);
     prefs.putUChar("lo_p4", dashLegacyCustomPctVeryHigh);
-    prefs.putUChar("cp0", customPct[0]);          // Zone ≤50 km/h  (HTTP: cp1)
-    prefs.putUChar("cp1", customPct[1]);          // Zone ≤70 km/h  (HTTP: cp2)
-    prefs.putUChar("cp2", customPct[2]);          // Zone ≤100 km/h (HTTP: cp3)
-    prefs.putUChar("cp3", customPct[3]);          // Zone >100 km/h (HTTP: cp4)
+    prefs.putUChar("cp0", customPct[0]); // Zone ≤50 km/h  (HTTP: cp1)
+    prefs.putUChar("cp1", customPct[1]); // Zone ≤70 km/h  (HTTP: cp2)
+    prefs.putUChar("cp2", customPct[2]); // Zone ≤100 km/h (HTTP: cp3)
+    prefs.putUChar("cp3", customPct[3]); // Zone >100 km/h (HTTP: cp4)
     prefs.putBool("lt_en", dashLightingEnabled);
     prefs.putUChar("lt_cnt", dashLightingCount);
     prefs.putUChar("lt_freq", dashLightingFrequency);

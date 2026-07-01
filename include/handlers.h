@@ -338,7 +338,6 @@ struct CarManagerBase
     virtual ~CarManagerBase() = default;
 };
 
-
 struct LegacyHandler : public CarManagerBase
 {
     enum class NagMode : uint8_t
