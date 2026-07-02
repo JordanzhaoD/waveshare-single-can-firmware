@@ -1949,17 +1949,17 @@ function stepStepper(id,dir){
   v=v+dir; if(!isNaN(min)&&v<min)v=min; if(!isNaN(max)&&v>max)v=max;
   inp.value=String(v);
   syncStepperVisual(id);
+  // Fire change: prefer inline onchange (saveXxx attribute pattern); else dispatch for addEventListener listeners.
   if(typeof inp.onchange==='function'){try{inp.onchange()}catch(e){}}
   else{inp.dispatchEvent(new Event('change'));}
 }
 function initStepper(id){ syncStepperVisual(id); }
-// long-press accelerate
+// long-press accelerate (per-button timers to support concurrent presses)
 (function(){
-  var lpTimer=null,lpInterval=null;
   function bind(btn){
-    var id=btn.getAttribute('data-for'), dir=parseInt(btn.getAttribute('data-dir'),10);
-    function start(){lpTimer=setTimeout(function(){lpInterval=setInterval(function(){stepStepper(id,dir)},90)},420)}
-    function stop(){if(lpTimer){clearTimeout(lpTimer);lpTimer=null} if(lpInterval){clearInterval(lpInterval);lpInterval=null}}
+    var id=btn.getAttribute('data-for'), dir=btn.getAttribute('data-dir')==='-'?-1:1;
+    function start(){btn._lpT=setTimeout(function(){btn._lpI=setInterval(function(){stepStepper(id,dir)},90)},420)}
+    function stop(){if(btn._lpT){clearTimeout(btn._lpT);btn._lpT=null} if(btn._lpI){clearInterval(btn._lpI);btn._lpI=null}}
     btn.addEventListener('pointerdown',function(){stepStepper(id,dir);start()});
     btn.addEventListener('pointerup',stop); btn.addEventListener('pointerleave',stop);
     btn.addEventListener('pointercancel',stop);
