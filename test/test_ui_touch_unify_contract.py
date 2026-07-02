@@ -129,5 +129,19 @@ class DefenseMasterSwitchTests(TouchUnifyTests):
         self.assert_present("def-master-tgl")
 
 
+class DisclaimerPopupTests(TouchUnifyTests):
+    def test_overlay_present(self):
+        self.assert_id_present("disclaimer-overlay")
+        self.assert_present("showDisclaimerIfNeeded")
+    def test_confirm_button(self):
+        self.assert_id_present("disclaimer-confirm")
+    def test_channels(self):
+        self.assert_present('https://t.me/+PKsCVABYQTdkZGQ1')
+        self.assert_present("@Jordanjordan88")
+        self.assert_present("ATLAS")
+    def test_invoked_on_load(self):
+        self.assert_present("showDisclaimerIfNeeded()")
+
+
 if __name__ == "__main__":
     unittest.main()

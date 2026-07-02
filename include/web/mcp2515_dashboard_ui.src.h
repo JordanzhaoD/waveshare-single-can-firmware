@@ -587,6 +587,21 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .stepper-btn { width:34px; height:34px; font-size:20px; }
   .stepper-val { font-size:16px; }
 }
+/* === Disclaimer overlay === */
+#disclaimer-overlay { position:fixed; inset:0; background:rgba(0,0,0,.58); backdrop-filter:blur(3px); z-index:9999; display:flex; align-items:center; justify-content:center; padding:18px; }
+#disclaimer-overlay.hidden { display:none; }
+.disclaimer-card { width:100%; max-width:380px; background:rgba(20,26,38,.96); border:1px solid rgba(124,58,237,.42); border-radius:16px; padding:18px; box-shadow:0 14px 44px rgba(0,0,0,.65); font-family:-apple-system,system-ui,sans-serif; }
+.disclaimer-title { display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:15px; font-weight:800; color:#fff; }
+.disclaimer-body { font-size:11px; color:#cbd5e1; line-height:1.65; margin-bottom:12px; }
+.disclaimer-body b { color:#fca5a5; }
+.disclaimer-sep { height:1px; background:#2a2f3a; margin:0 0 10px; }
+.disclaimer-channels-lbl { font-size:9.5px; color:#7c8aa5; letter-spacing:.6px; margin-bottom:6px; }
+.disclaimer-channels { display:flex; gap:6px; margin-bottom:14px; }
+.disclaimer-channels a { flex:1; font-size:10px; padding:8px 4px; border-radius:9px; text-align:center; text-decoration:none; font-weight:600; }
+.disclaimer-channels .tg { background:linear-gradient(90deg,rgba(34,158,244,.2),rgba(34,158,244,.08)); border:1px solid rgba(34,158,244,.45); color:#7dd3fc; }
+.disclaimer-channels .x { background:rgba(0,0,0,.35); border:1px solid #2a2f3a; color:#cbd5e1; }
+.disclaimer-confirm { background:linear-gradient(90deg,#0ea5e9,#6366f1); color:#fff; font-size:14px; font-weight:700; text-align:center; padding:12px; border-radius:11px; cursor:pointer; }
+@media (max-width:560px){ .disclaimer-card{ max-width:100%; } }
 </style>
 </head>
 <body>
@@ -4105,6 +4120,19 @@ function showStandaloneMorePage(name){
   showMobilePage(name);
 }
 
+// === Disclaimer popup: force on every page load (car + phone) ===
+function showDisclaimerIfNeeded(){
+  try{ if(sessionStorage.getItem('disclaimer_ack')==='1') return; }catch(e){}
+  var ov=$('disclaimer-overlay'); if(ov)ov.classList.remove('hidden');
+}
+function hideDisclaimer(){
+  try{ sessionStorage.setItem('disclaimer_ack','1'); }catch(e){}
+  var ov=$('disclaimer-overlay'); if(ov)ov.classList.add('hidden');
+}
+(function(){
+  var c=$('disclaimer-confirm'); if(c)c.addEventListener('click',hideDisclaimer);
+})();
+
 document.addEventListener('DOMContentLoaded',function(){
   // Desktop sidebar nav
   var navs=document.querySelectorAll('.nav-item');
@@ -4150,6 +4178,8 @@ document.addEventListener('DOMContentLoaded',function(){
     }
   };
   pollTimer=setInterval(pollTick,pollMs);
+
+  showDisclaimerIfNeeded();
 
   // Visibility handling
   document.addEventListener('visibilitychange',function(){
@@ -4209,6 +4239,19 @@ function restartPoll(ms){
   <div class="mob-more-item" data-page="pg-defense" data-mob="1">◈ FSD 防护</div>
   <div class="mob-more-item" data-page="pg-can" data-mob="1">⌘ CAN 诊断</div>
   <div class="mob-more-item" data-page="pg-shift" data-cap="shift" data-single-hide="1">⚙ 自动换挡</div>
+</div>
+<div id="disclaimer-overlay" class="hidden">
+  <div class="disclaimer-card">
+    <div class="disclaimer-title"><span style="font-size:20px;">⚠️</span><span>免责声明 · Disclaimer</span></div>
+    <div class="disclaimer-body">本项目仅限研究与教学用途，<b>严禁在公共道路使用</b>。使用可能违反当地交通法规与车辆制造商条款，可能导致 <b>车辆故障、安全事故、保修失效、保险拒赔</b>。使用者自行承担一切法律与安全风险，作者不承担任何责任。</div>
+    <div class="disclaimer-sep"></div>
+    <div class="disclaimer-channels-lbl">交流频道 · 作者 ATLAS</div>
+    <div class="disclaimer-channels">
+      <a class="tg" href="https://t.me/+PKsCVABYQTdkZGQ1" target="_blank" rel="noopener">✈ Telegram</a>
+      <a class="x" href="https://x.com/Jordanjordan88" target="_blank" rel="noopener">𝕏 @Jordanjordan88</a>
+    </div>
+    <div id="disclaimer-confirm" class="disclaimer-confirm">确认 · 我已知晓</div>
+  </div>
 </div>
 </body>
 </html>)HTML";
