@@ -835,14 +835,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">默认开：等 AP 稳定再注入（防 8.3.6 猛甩）。非 8.3.6 车型可关闭以直接注入</div></div>
             <label class="tgl"><input id="ap-core-gate-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
           <div class="ctl-row"><div><div class="cn">延迟注入</div><div class="cd">AP 激活后等待再注入（推荐 2000ms）</div></div>
-            <label class="field"><select id="ap-delay-select" class="ap-delay-select" style="display:none" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select>
+            <select id="ap-delay-select" class="ap-delay-select" style="display:none" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select>
 <div class="sel-cards c4 ap-delay-cards" data-for="ap-delay-select">
   <div class="sel-card" data-value="0" onclick="setApDelayCards(0)"><div class="sel-lbl">立即</div><div class="sel-name">0</div></div>
   <div class="sel-card" data-value="1000" onclick="setApDelayCards(1000)"><div class="sel-lbl">秒</div><div class="sel-name">1.0</div></div>
   <div class="sel-card" data-value="2000" onclick="setApDelayCards(2000)"><div class="sel-lbl">推荐</div><div class="sel-name">2.0</div></div>
   <div class="sel-card" data-value="3000" onclick="setApDelayCards(3000)"><div class="sel-lbl">保守</div><div class="sel-name">3.0</div></div>
-</div>
-</label></div>
+</div></div>
           <div class="ctl-row"><div><div class="cn">AP 自动恢复</div><div class="cd">重启后恢复上次 AP 配置</div></div>
             <label class="tgl"><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
           <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
@@ -1350,14 +1349,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="setting-name">延迟注入时间</div>
       <div class="setting-desc">AP 激活后等待再注入（推荐 2000ms，0=立即）</div>
     </div>
-    <label class="field"><select class="ap-delay-select" style="display:none" onchange="saveApDelay(this)"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select>
+    <select class="ap-delay-select" style="display:none" onchange="saveApDelay(this)"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select>
 <div class="sel-cards c4 ap-delay-cards" data-for="ap-delay-select">
   <div class="sel-card" data-value="0" onclick="setApDelayCards(0)"><div class="sel-lbl">立即</div><div class="sel-name">0</div></div>
   <div class="sel-card" data-value="1000" onclick="setApDelayCards(1000)"><div class="sel-lbl">秒</div><div class="sel-name">1.0</div></div>
   <div class="sel-card" data-value="2000" onclick="setApDelayCards(2000)"><div class="sel-lbl">推荐</div><div class="sel-name">2.0</div></div>
   <div class="sel-card" data-value="3000" onclick="setApDelayCards(3000)"><div class="sel-lbl">保守</div><div class="sel-name">3.0</div></div>
 </div>
-</label>
   </div>
   <div class="setting-row">
     <div>
