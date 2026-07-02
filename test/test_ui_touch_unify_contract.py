@@ -70,5 +70,14 @@ class ApDelayCardsTests(TouchUnifyTests):
         self.assert_present('class="ap-delay-select"')
 
 
+class LegacyOffsetModeCardsTests(TouchUnifyTests):
+    def test_mode_cards_present(self):
+        self.assert_present('data-for="legacy-offset-mode"')
+        self.assert_present("onclick=\"selectCard('legacy-offset-mode','off')\"")
+        self.assert_present("onclick=\"selectCard('legacy-offset-mode','custom')\"")
+    def test_mode_hidden_select_kept(self):
+        self.assertRegex(SRC, r'<select[^>]*id="legacy-offset-mode"[^>]*display:none')
+
+
 if __name__ == "__main__":
     unittest.main()

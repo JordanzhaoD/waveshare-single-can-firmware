@@ -1048,7 +1048,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="card-subtitle">仅写 0x2F8 / 760 UI_userSpeedOffset；读取 GPS 限速后自动计算目标，降速平滑避免突然回落。</div>
   <div class="setting-row">
     <div><div class="setting-name">智能速度偏移模式</div><div class="setting-desc">默认关闭；手动模式使用固定 km/h 偏移。</div></div>
-    <label class="field"><select id="legacy-offset-mode" onchange="saveLegacySmartSpeed()"><option value="off">关闭</option><option value="manual">手动</option><option value="auto">自动</option><option value="custom">自定义百分比</option></select></label>
+    <select id="legacy-offset-mode" style="display:none" onchange="saveLegacySmartSpeed()"><option value="off">关闭</option><option value="manual">手动</option><option value="auto">自动</option><option value="custom">自定义百分比</option></select>
+    <div class="sel-cards c4" data-for="legacy-offset-mode" style="margin-bottom:8px">
+      <div class="sel-card" data-value="off" onclick="selectCard('legacy-offset-mode','off')"><div class="sel-lbl">默认</div><div class="sel-name">Off</div></div>
+      <div class="sel-card" data-value="manual" onclick="selectCard('legacy-offset-mode','manual')"><div class="sel-lbl">固定</div><div class="sel-name">手动</div></div>
+      <div class="sel-card" data-value="auto" onclick="selectCard('legacy-offset-mode','auto')"><div class="sel-lbl">推荐</div><div class="sel-name">自动</div></div>
+      <div class="sel-card" data-value="custom" onclick="selectCard('legacy-offset-mode','custom')"><div class="sel-lbl">高级</div><div class="sel-name">自定义</div></div>
+    </div>
   </div>
   <div class="setting-row">
     <div><div class="setting-name">手动偏移</div><div class="setting-desc">仅 manual 模式生效，范围 0-33 km/h。</div></div>
