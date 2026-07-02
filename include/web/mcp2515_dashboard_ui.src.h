@@ -3895,7 +3895,7 @@ async function loadLegacyFsdConfig(){
   if(conf&&conf.fsdRuntime){
     var offset=document.getElementById('legacy-offset-inp');
     var override=document.getElementById('legacy-override-tgl');
-    if(offset&&conf.fsdRuntime.legacyOffset!==undefined)offset.value=conf.fsdRuntime.legacyOffset;
+    if(offset&&conf.fsdRuntime.legacyOffset!==undefined)setVal('legacy-offset-inp',conf.fsdRuntime.legacyOffset);
     if(override)override.checked=!!conf.fsdRuntime.overrideSpeedLimit;
     setVal('legacy-offset-mode',legacySmartModeValue(conf.fsdRuntime.legacyOffsetMode));
     setVal('legacy-offset-manual',conf.fsdRuntime.legacyOffset!==undefined?conf.fsdRuntime.legacyOffset:0);
@@ -3941,7 +3941,7 @@ function syncLegacyOffsetInputs(sourceId){
   if(!src)return;
   var v=parseInt(src.value,10)||0;
   if(v<0)v=0;if(v>33)v=33;src.value=String(v);
-  if(legacy&&legacy!==src)legacy.value=String(v);
+  if(legacy&&legacy!==src)setVal('legacy-offset-inp',String(v));
   if(manual&&manual!==src)manual.value=String(v);
 }
 async function saveLegacySmartSpeed(){
