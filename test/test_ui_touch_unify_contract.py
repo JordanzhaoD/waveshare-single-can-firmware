@@ -34,5 +34,16 @@ class StepperPrimitiveTests(TouchUnifyTests):
         self.assert_present(".stepper-btn.disabled")
 
 
+class SelCardsBindingTests(TouchUnifyTests):
+    def test_selcard_helpers_defined(self):
+        self.assert_present("function selectCard(")
+        self.assert_present("function syncSelCardsVisual(")
+
+    def test_setVal_syncs_visual(self):
+        # setVal 必须同时刷新绑定的 stepper / sel-cards 视觉
+        self.assertRegex(SRC, r"function setVal\([^)]*\)\{[^}]*syncStepperVisual")
+        self.assertRegex(SRC, r"function setVal\([^)]*\)\{[^}]*syncSelCardsVisual")
+
+
 if __name__ == "__main__":
     unittest.main()

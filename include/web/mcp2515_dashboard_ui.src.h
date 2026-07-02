@@ -1926,7 +1926,7 @@ var OLD_DNS_BLACKLIST = 'tesla.cn\ntesla.com\nteslamotors.com\ntesla.services';
 // ── Utilities ──────────────────────────────────────────────
 function $(id){return document.getElementById(id)}
 function val(id){var e=$(id);return e?e.value:''}
-function setVal(id,v){var e=$(id);if(e)e.value=v}
+function setVal(id,v){var e=$(id);if(e)e.value=v; syncStepperVisual(id); syncSelCardsVisual(id);}
 // === Touch Stepper primitives ===
 function syncStepperVisual(id){
   var wrap=document.querySelector('.stepper[data-for="'+id+'"]');
@@ -1966,6 +1966,24 @@ function initStepper(id){ syncStepperVisual(id); }
   }
   window._bindStepperBtn=bind;
 })();
+// === sel-cards binding for <select> (hidden select keeps .value) ===
+function syncSelCardsVisual(id){
+  var sel=$(id); if(!sel)return;
+  var wrap=document.querySelector('.sel-cards[data-for="'+id+'"]'); if(!wrap)return;
+  var cur=String(sel.value);
+  var cards=wrap.querySelectorAll('.sel-card');
+  for(var i=0;i<cards.length;i++){
+    var on=String(cards[i].getAttribute('data-value'))===cur;
+    cards[i].classList.toggle('active',on);
+  }
+}
+function selectCard(id,value){
+  var sel=$(id); if(!sel)return;
+  sel.value=String(value);
+  syncSelCardsVisual(id);
+  if(typeof sel.onchange==='function'){try{sel.onchange()}catch(e){}}
+  else{sel.dispatchEvent(new Event('change'));}
+}
 function setText(id,txt){var e=$(id);if(e)e.textContent=txt}
 function setFsdVisualState(on){
   var stateText=on?'ON':'OFF';
