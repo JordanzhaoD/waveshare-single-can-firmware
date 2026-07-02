@@ -59,5 +59,16 @@ class NagModeCardsTests(TouchUnifyTests):
         self.assert_absent('<select id="nag-mode-select" onchange="saveDefenseConfig()">')
 
 
+class ApDelayCardsTests(TouchUnifyTests):
+    def test_ap_delay_cards_present(self):
+        self.assert_present('data-for="ap-delay-select"')
+        self.assert_present("function setApDelayCards(")
+        self.assert_present("function updateApDelayCards(")
+    def test_ap_delay_hidden_select_kept(self):
+        # 两处 select 都保留 hidden 作为 .value / class sync 载体
+        self.assertRegex(SRC, r'<select[^>]*id="ap-delay-select"[^>]*display:none')
+        self.assert_present('class="ap-delay-select"')
+
+
 if __name__ == "__main__":
     unittest.main()
