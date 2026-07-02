@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-07-03
+
+### Added
+- **触摸 UI 统一（车机/手机触摸屏可用）**：FSD 防护 / 速度策略 / 驾驶状态页里 4 个桌面 `<select>`（NAG 模式、AP 延迟注入×2、Legacy 智能速度偏移模式）改为 `sel-cards` 大卡片；7 个 `<input type=number>`（手动偏移、平滑速率、Legacy 速度偏移、4 个自定义百分比）改为 Stepper 步进器（含长按加速、min/max 钳位变灰、紧凑变体适配 4 列网格）。退化衔接：保留隐藏原生控件承载数值，外裹触摸 UI，按钮改值后派发 `change` → 现有 `saveXxx()/loadXxx()` 零改动。
+- **强制免责声明弹窗**：每次打开车机/手机 UI 强制弹出，含研究/教学用途与风险告知（车辆故障、安全事故、保修失效、保险拒赔）+ Telegram 频道（`t.me/+PKsCVABYQTdkZGQ1`）+ X（`@Jordanjordan88`）+ 作者 ATLAS，点「确认」关闭（`sessionStorage` 本会话不重弹）。
+- i18n：新增总开关 / 免责声明的英文条目。
+- 契约测试 `test_ui_touch_unify_contract.py`（23 用例）锁防 UI 转换回退。
+
+### Fixed
+- **FSD 防护总开关 wiring bug**：`saveDefenseConfig()` 的 POST `enabled` 字段原误接 `hw3-slew-tgl`（"启用 slew rate 限制"开关），导致 slew 开关被错误兼用为防护总开关。新增独立 `def-master-tgl` 总开关（FSD 防护卡顶部），拨正 `enabled` 来源到它；`loadDefenseConfig` 从 `/defense_config` 的 `enabled` 字段回填总开关状态。
+- 审查发现的 4 个转换 bug：Stepper `data-dir` 单字符符号解析（原 `parseInt` 致 NaN）、AP 延迟卡片 `<label class=field>` 无效嵌套、Legacy 速度偏移 stepper 视觉不同步（改走 `setVal`）、免责弹窗确认按钮必须在 `DOMContentLoaded` 内绑定（顶层 IIFE 在 overlay DOM 解析前执行，监听绑不上导致弹窗关不掉）。
+
+### 安全
+- 后端 C++ 零改动（纯前端 UI 重构，`include/web/mcp2515_dashboard.h` 等后端文件未触及）。
+- EPAS 注入事故禁令、`0x370` 回声/伪造注入禁令、所有 v1.0.5 硬约束（无新增 `0x399/0x331/0x3F8` 写、未扩大 `0x370`）完全不变。
+
 ## [1.0.5] - 2026-07-02
 
 ### Added
