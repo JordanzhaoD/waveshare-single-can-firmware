@@ -564,6 +564,24 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   #pg-overview > .status-triplet { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #pg-overview > .status-triplet .status-chip:nth-child(3) { grid-column: 1 / -1; }
 }
+/* === Touch Stepper (replaces visible <input type=number>) === */
+.stepper { display:inline-flex; align-items:center; gap:8px; }
+.stepper-btn {
+  width:38px; height:38px; border-radius:11px; border:2px solid var(--border);
+  background:var(--card-bg-alt); color:var(--accent-light, #a78bfa);
+  font-size:22px; font-weight:300; line-height:1; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  user-select:none; -webkit-user-select:none; touch-action:manipulation;
+  transition:border-color .15s, opacity .15s;
+}
+.stepper-btn:active { transform:scale(.94); }
+.stepper-btn.disabled { opacity:.32; cursor:not-allowed; }
+.stepper-val { min-width:30px; text-align:center; font-size:18px; font-weight:800; color:var(--tx1,#fff); line-height:1; }
+.stepper-unit { font-size:9px; color:var(--tx3,#64748b); margin-top:1px; }
+@media (max-width:560px){
+  .stepper-btn { width:34px; height:34px; font-size:20px; }
+  .stepper-val { font-size:16px; }
+}
 </style>
 </head>
 <body>
@@ -1909,6 +1927,45 @@ var OLD_DNS_BLACKLIST = 'tesla.cn\ntesla.com\nteslamotors.com\ntesla.services';
 function $(id){return document.getElementById(id)}
 function val(id){var e=$(id);return e?e.value:''}
 function setVal(id,v){var e=$(id);if(e)e.value=v}
+// === Touch Stepper primitives ===
+function syncStepperVisual(id){
+  var wrap=document.querySelector('.stepper[data-for="'+id+'"]');
+  if(!wrap)return;
+  var inp=$(id); if(!inp)return;
+  var v=parseInt(inp.value,10); if(isNaN(v))v=0;
+  var min=parseInt(inp.getAttribute('min'),10), max=parseInt(inp.getAttribute('max'),10);
+  var valEl=wrap.querySelector('.stepper-val');
+  if(valEl)valEl.textContent=String(v);
+  var minus=wrap.querySelector('.stepper-btn[data-dir="-"]');
+  var plus=wrap.querySelector('.stepper-btn[data-dir="+"]');
+  if(minus)minus.classList.toggle('disabled',!isNaN(min)&&v<=min);
+  if(plus)plus.classList.toggle('disabled',!isNaN(max)&&v>=max);
+}
+function stepStepper(id,dir){
+  var inp=$(id); if(!inp)return;
+  var min=parseInt(inp.getAttribute('min'),10), max=parseInt(inp.getAttribute('max'),10);
+  var def=parseInt(inp.getAttribute('data-def')||'0',10);
+  var v=parseInt(inp.value,10); if(isNaN(v))v=def;
+  v=v+dir; if(!isNaN(min)&&v<min)v=min; if(!isNaN(max)&&v>max)v=max;
+  inp.value=String(v);
+  syncStepperVisual(id);
+  if(typeof inp.onchange==='function'){try{inp.onchange()}catch(e){}}
+  else{inp.dispatchEvent(new Event('change'));}
+}
+function initStepper(id){ syncStepperVisual(id); }
+// long-press accelerate
+(function(){
+  var lpTimer=null,lpInterval=null;
+  function bind(btn){
+    var id=btn.getAttribute('data-for'), dir=parseInt(btn.getAttribute('data-dir'),10);
+    function start(){lpTimer=setTimeout(function(){lpInterval=setInterval(function(){stepStepper(id,dir)},90)},420)}
+    function stop(){if(lpTimer){clearTimeout(lpTimer);lpTimer=null} if(lpInterval){clearInterval(lpInterval);lpInterval=null}}
+    btn.addEventListener('pointerdown',function(){stepStepper(id,dir);start()});
+    btn.addEventListener('pointerup',stop); btn.addEventListener('pointerleave',stop);
+    btn.addEventListener('pointercancel',stop);
+  }
+  window._bindStepperBtn=bind;
+})();
 function setText(id,txt){var e=$(id);if(e)e.textContent=txt}
 function setFsdVisualState(on){
   var stateText=on?'ON':'OFF';
