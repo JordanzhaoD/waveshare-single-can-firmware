@@ -141,6 +141,13 @@ class DisclaimerPopupTests(TouchUnifyTests):
         self.assert_present("ATLAS")
     def test_invoked_on_load(self):
         self.assert_present("showDisclaimerIfNeeded()")
+    def test_confirm_binding_not_top_level_iife(self):
+        # The confirm-button listener must NOT be bound via a top-level IIFE
+        # (which runs before the overlay DOM exists). It must live inside DOMContentLoaded.
+        self.assert_absent("(function(){\n  var c=$('disclaimer-confirm')")
+        self.assert_absent("var c=$('disclaimer-confirm'); if(c)c.addEventListener('click',hideDisclaimer);\n})();")
+        # And the binding must still exist somewhere (inside DOMContentLoaded)
+        self.assert_present("addEventListener('click',hideDisclaimer)")
 
 
 if __name__ == "__main__":

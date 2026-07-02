@@ -4129,9 +4129,6 @@ function hideDisclaimer(){
   try{ sessionStorage.setItem('disclaimer_ack','1'); }catch(e){}
   var ov=$('disclaimer-overlay'); if(ov)ov.classList.add('hidden');
 }
-(function(){
-  var c=$('disclaimer-confirm'); if(c)c.addEventListener('click',hideDisclaimer);
-})();
 
 document.addEventListener('DOMContentLoaded',function(){
   // Desktop sidebar nav
@@ -4180,6 +4177,7 @@ document.addEventListener('DOMContentLoaded',function(){
   pollTimer=setInterval(pollTick,pollMs);
 
   showDisclaimerIfNeeded();
+  var dc=$('disclaimer-confirm'); if(dc)dc.addEventListener('click',hideDisclaimer);
 
   // Visibility handling
   document.addEventListener('visibilitychange',function(){
