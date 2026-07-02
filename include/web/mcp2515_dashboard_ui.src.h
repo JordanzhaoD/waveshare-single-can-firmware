@@ -578,6 +578,11 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .stepper-btn.disabled { opacity:.32; cursor:not-allowed; }
 .stepper-val { min-width:30px; text-align:center; font-size:18px; font-weight:800; color:var(--tx1,#fff); line-height:1; }
 .stepper-unit { font-size:9px; color:var(--tx3,#64748b); margin-top:1px; }
+/* compact variant for narrow diag-grid cells (4-col pct inputs) */
+.stepper.compact { gap:4px; }
+.stepper.compact .stepper-btn { width:24px; height:24px; font-size:14px; border-radius:7px; }
+.stepper.compact .stepper-val { font-size:13px; min-width:18px; }
+.stepper.compact .stepper-unit { font-size:8px; }
 @media (max-width:560px){
   .stepper-btn { width:34px; height:34px; font-size:20px; }
   .stepper-val { font-size:16px; }
@@ -800,7 +805,12 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           </div>
           <div class="setting-row">
             <div><div class="setting-name">Legacy 速度偏移</div><div class="setting-desc">0x2F8 UI_userSpeedOffset，0-33 km/h（0=关）</div></div>
-            <input class="inp" type="number" min="0" max="33" id="legacy-offset-inp" value="0" style="width:86px" onchange="saveLegacyOffset()">
+            <input class="inp" type="number" min="0" max="33" id="legacy-offset-inp" value="0" data-def="0" style="display:none" onchange="saveLegacyOffset()">
+            <div class="stepper" data-for="legacy-offset-inp">
+              <div class="stepper-btn" data-for="legacy-offset-inp" data-dir="-">−</div>
+              <div><div class="stepper-val">0</div><div class="stepper-unit">km/h</div></div>
+              <div class="stepper-btn" data-for="legacy-offset-inp" data-dir="+">+</div>
+            </div>
           </div>
           <div class="setting-row">
             <div><div class="setting-name">重写限速 <span class="exp-badge">Legacy</span></div><div class="setting-desc">0x438 visionSpeedSlider=100 覆盖限速</div></div>
@@ -1058,7 +1068,12 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div><div class="setting-name">手动偏移</div><div class="setting-desc">仅 manual 模式生效，范围 0-33 km/h。</div></div>
-    <input class="inp" type="number" min="0" max="33" id="legacy-offset-manual" value="0" style="width:86px" onchange="saveLegacySmartSpeed()">
+    <input class="inp" type="number" min="0" max="33" id="legacy-offset-manual" value="0" data-def="0" style="display:none" onchange="saveLegacySmartSpeed()">
+    <div class="stepper" data-for="legacy-offset-manual">
+      <div class="stepper-btn" data-for="legacy-offset-manual" data-dir="-">−</div>
+      <div><div class="stepper-val">0</div><div class="stepper-unit">km/h</div></div>
+      <div class="stepper-btn" data-for="legacy-offset-manual" data-dir="+">+</div>
+    </div>
   </div>
   <div class="setting-row">
     <div><div class="setting-name">降速平滑</div><div class="setting-desc">目标限速下降时按速率缓慢回落。</div></div>
@@ -1066,13 +1081,18 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div><div class="setting-name">平滑速率</div><div class="setting-desc">km/h 每秒，越小越保守。</div></div>
-    <input class="inp" type="number" min="1" max="20" id="legacy-smooth-rate" value="5" style="width:86px" onchange="saveLegacySmartSpeed()">
+    <input class="inp" type="number" min="1" max="20" id="legacy-smooth-rate" value="5" data-def="5" style="display:none" onchange="saveLegacySmartSpeed()">
+    <div class="stepper" data-for="legacy-smooth-rate">
+      <div class="stepper-btn" data-for="legacy-smooth-rate" data-dir="-">−</div>
+      <div><div class="stepper-val">5</div><div class="stepper-unit">km/h/s</div></div>
+      <div class="stepper-btn" data-for="legacy-smooth-rate" data-dir="+">+</div>
+    </div>
   </div>
   <div class="diag-grid" id="legacy-custom-pct-panel">
-    <div class="diag-item"><span class="lbl">低速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-low" value="50" onchange="saveLegacySmartSpeed()"></div>
-    <div class="diag-item"><span class="lbl">中速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-mid" value="30" onchange="saveLegacySmartSpeed()"></div>
-    <div class="diag-item"><span class="lbl">高速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-high" value="20" onchange="saveLegacySmartSpeed()"></div>
-    <div class="diag-item"><span class="lbl">超高速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-vhigh" value="10" onchange="saveLegacySmartSpeed()"></div>
+    <div class="diag-item"><span class="lbl">低速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-low" value="50" data-def="50" style="display:none" onchange="saveLegacySmartSpeed()"><div class="stepper compact" data-for="legacy-pct-low"><div class="stepper-btn" data-for="legacy-pct-low" data-dir="-">−</div><div><div class="stepper-val">50</div><div class="stepper-unit">%</div></div><div class="stepper-btn" data-for="legacy-pct-low" data-dir="+">+</div></div></div>
+    <div class="diag-item"><span class="lbl">中速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-mid" value="30" data-def="30" style="display:none" onchange="saveLegacySmartSpeed()"><div class="stepper compact" data-for="legacy-pct-mid"><div class="stepper-btn" data-for="legacy-pct-mid" data-dir="-">−</div><div><div class="stepper-val">30</div><div class="stepper-unit">%</div></div><div class="stepper-btn" data-for="legacy-pct-mid" data-dir="+">+</div></div></div>
+    <div class="diag-item"><span class="lbl">高速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-high" value="20" data-def="20" style="display:none" onchange="saveLegacySmartSpeed()"><div class="stepper compact" data-for="legacy-pct-high"><div class="stepper-btn" data-for="legacy-pct-high" data-dir="-">−</div><div><div class="stepper-val">20</div><div class="stepper-unit">%</div></div><div class="stepper-btn" data-for="legacy-pct-high" data-dir="+">+</div></div></div>
+    <div class="diag-item"><span class="lbl">超高速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-vhigh" value="10" data-def="10" style="display:none" onchange="saveLegacySmartSpeed()"><div class="stepper compact" data-for="legacy-pct-vhigh"><div class="stepper-btn" data-for="legacy-pct-vhigh" data-dir="-">−</div><div><div class="stepper-val">10</div><div class="stepper-unit">%</div></div><div class="stepper-btn" data-for="legacy-pct-vhigh" data-dir="+">+</div></div></div>
   </div>
   <div class="diag-grid" style="margin-top:12px">
     <div class="diag-item"><span class="lbl">GPS 限速</span><span class="v-info" id="legacy-limit-kph">--</span></div>
@@ -4098,6 +4118,10 @@ document.addEventListener('DOMContentLoaded',function(){
 
   // OTA drag-drop
   setupOtaDrop();
+
+  // Bind long-press on all stepper buttons + init clamp/disabled state
+  document.querySelectorAll('.stepper-btn').forEach(function(btn){ if(window._bindStepperBtn)window._bindStepperBtn(btn); });
+  document.querySelectorAll('.stepper[data-for]').forEach(function(w){ var id=w.getAttribute('data-for'); if(id)syncStepperVisual(id); });
 
   // Load initial data
   loadFirmwareInfo();

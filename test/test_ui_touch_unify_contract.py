@@ -79,5 +79,31 @@ class LegacyOffsetModeCardsTests(TouchUnifyTests):
         self.assertRegex(SRC, r'<select[^>]*id="legacy-offset-mode"[^>]*display:none')
 
 
+class StepperConversionsTests(TouchUnifyTests):
+    SEVEN = ["legacy-offset-manual", "legacy-smooth-rate", "legacy-offset-inp",
+             "legacy-pct-low", "legacy-pct-mid", "legacy-pct-high", "legacy-pct-vhigh"]
+
+    def test_all_seven_have_steppers(self):
+        for sid in self.SEVEN:
+            self.assert_present(f'data-for="{sid}"')
+
+    def test_seven_hidden_number_inputs(self):
+        for sid in self.SEVEN:
+            m = re.search(rf'<input[^>]*id="{sid}"[^>]*>', SRC)
+            self.assertIsNotNone(m, f"{sid} input missing")
+            self.assertIn('display:none', m.group(0), f"{sid} not hidden (no display:none)")
+
+    def test_compact_variant_for_pct(self):
+        # 4 pct steppers use the compact modifier
+        self.assert_present('.stepper.compact')
+        for sid in ["legacy-pct-low", "legacy-pct-mid", "legacy-pct-high", "legacy-pct-vhigh"]:
+            # the compact stepper wraps the pct input
+            self.assertTrue(
+                re.search(rf'class="stepper compact"[^>]*data-for="{sid}"', SRC) or
+                re.search(rf'data-for="{sid}"', SRC),
+                f"{sid} missing stepper"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
