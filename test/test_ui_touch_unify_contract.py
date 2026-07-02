@@ -105,5 +105,29 @@ class StepperConversionsTests(TouchUnifyTests):
             )
 
 
+class DefenseMasterSwitchTests(TouchUnifyTests):
+    def test_master_tgl_added(self):
+        self.assert_id_present("def-master-tgl")
+        self.assert_present("FSD 防护总开关")
+
+    def test_stale_comment_removed(self):
+        self.assert_absent("<!-- Master switch + 5 defense toggles -->")
+
+    def test_wiring_uses_master_not_slew(self):
+        # saveDefenseConfig 的 enabled 字段必须读取 def-master-tgl（通过 master 变量）
+        m = re.search(r"async function saveDefenseConfig\(\)\{.*?\n\}", SRC, re.S)
+        self.assertIsNotNone(m, "saveDefenseConfig 未找到")
+        body = m.group(0)
+        # master 变量从 def-master-tgl 取值
+        self.assertRegex(body, r"var master=\$\('def-master-tgl'\)")
+        # enabled: 读 master（不读 hw3-slew-tgl）
+        self.assertRegex(body, r"enabled:master&&master\.checked")
+        # 不允许再把 hw3-slew-tgl 用作 enabled 源
+        self.assertNotRegex(body, r"enabled:.*hw3-slew-tgl")
+
+    def test_load_writes_master(self):
+        self.assert_present("def-master-tgl")
+
+
 if __name__ == "__main__":
     unittest.main()

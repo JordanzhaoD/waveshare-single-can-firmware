@@ -1391,10 +1391,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <label class="tgl"><input type="checkbox" id="def-soft-engage-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
 </div>
-<!-- Master switch + 5 defense toggles -->
 <div class="card cockpit-card">
   <div class="card-title">FSD 防护状态</div>
   <div class="card-subtitle">仿生扭矩替代固定echo，轮DND消除提示音</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">FSD 防护总开关</div>
+      <div class="setting-desc">启用全部防护子项（NAG 抑制 / DND / slew / BanShield 等）。关闭即全部失效。</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-master-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
   <div class="setting-row">
     <div>
       <div class="setting-name">启用 slew rate 限制</div>
@@ -2661,6 +2667,7 @@ async function loadDefenseConfig(){
   if(!d)return;
   var tgl=$('hw3-slew-tgl');
   if(tgl)tgl.checked=!!d.enabled;
+  var master=$('def-master-tgl'); if(master)master.checked=!!d.enabled;
   var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
   var bioRisk=$('def-bionic-risk');if(bioRisk)bioRisk.style.display=!!d.bionic_steering?'block':'none';
   var conf=(d&&d.defense)?d:{defense:{nagMode:(d&&d.nagMode!=null)?d.nagMode:((d&&d.nag_mode!=null)?d.nag_mode:0)}};
@@ -2988,6 +2995,7 @@ async function saveHw3Slew(){
 
 async function saveDefenseConfig(){
   var tgl=$('hw3-slew-tgl');
+  var master=$('def-master-tgl');
   var bio=$('def-bionic-tgl');
   var ntt=$('def-ntt-tgl');
   var se=$('def-soft-engage-tgl');
@@ -2999,7 +3007,7 @@ async function saveDefenseConfig(){
   var dndSpd=$('def-dnd-spd-tgl');
   var apeap=$('def-apeap-tgl');
   var data={
-    enabled:tgl&&tgl.checked?'1':'0',
+    enabled:master&&master.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
     nagMode: parseInt(val('nag-mode-select')||'0',10),
     nag_torque_tamper:ntt&&ntt.checked?'1':'0',
