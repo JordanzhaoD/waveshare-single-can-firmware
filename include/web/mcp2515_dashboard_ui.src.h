@@ -1376,12 +1376,19 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
-  <div class="row">
-    <label>NAG 模式</label>
-    <select id="nag-mode-select" onchange="saveDefenseConfig()">
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">NAG 模式</div>
+      <div class="setting-desc">Off=关闭；EPAS Late Echo=封闭研究模式（默认关，仅 0x370，保留 handsOnLevel）</div>
+    </div>
+    <select id="nag-mode-select" style="display:none" onchange="saveDefenseConfig()">
       <option value="0">Off</option>
       <option value="2">EPAS Late Echo 实验</option>
     </select>
+    <div class="sel-cards c2" data-for="nag-mode-select" style="max-width:240px">
+      <div class="sel-card" data-value="0" onclick="selectCard('nag-mode-select',0)"><div class="sel-lbl">默认</div><div class="sel-name">Off</div></div>
+      <div class="sel-card" data-value="2" onclick="selectCard('nag-mode-select',2)"><div class="sel-lbl">研究</div><div class="sel-name">Late Echo</div></div>
+    </div>
   </div>
   <div class="hint warn">EPAS Late Echo 为封闭环境研究模式：默认关闭，只发送 0x370，保留 handsOnLevel，cadence/timing 不满足时自动不发。</div>
   <div class="setting-row">

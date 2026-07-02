@@ -45,5 +45,19 @@ class SelCardsBindingTests(TouchUnifyTests):
         self.assertRegex(SRC, r"function setVal\([^)]*\)\{[^}]*syncSelCardsVisual")
 
 
+class NagModeCardsTests(TouchUnifyTests):
+    def test_nag_mode_converted_to_cards(self):
+        # 裸 row+label+select 已替换为 setting-row + sel-cards
+        self.assert_absent('<div class="row">\n    <label>NAG 模式</label>')
+        self.assert_present('data-for="nag-mode-select"')
+        # 隐藏 select 保留作 .value 载体
+        self.assertRegex(SRC, r'<select[^>]*id="nag-mode-select"[^>]*display:none')
+        # 两张卡片
+        self.assert_present('onclick="selectCard(\'nag-mode-select\',0)"')
+        self.assert_present('onclick="selectCard(\'nag-mode-select\',2)"')
+        # 旧裸 select（无 display:none）不应再存在为可见控件
+        self.assert_absent('<select id="nag-mode-select" onchange="saveDefenseConfig()">')
+
+
 if __name__ == "__main__":
     unittest.main()
