@@ -2166,6 +2166,9 @@ var I18N={
   '持续时间 (ms)':'Duration (ms)','状态':'Status','空闲':'Idle',
   '启用 0x339 持续注入 CAN2':'Enable 0x339 continuous CAN2 injection',
   // Defense
+  'FSD 防护总开关':'FSD Defense Master Switch',
+  '启用全部防护子项（NAG 抑制 / DND / slew / BanShield 等）。关闭即全部失效。':'Enable all defense sub-items (NAG suppression / DND / slew / BanShield). Off = all disabled.',
+  '免责声明 · Disclaimer':'Disclaimer','确认 · 我已知晓':'Confirm · I Understand',
   '偏移速率保护':'Slew Rate Protection','防止速度偏移突变被检测':'Prevent sudden offset detection',
   '启用 slew rate 限制':'Enable slew rate limit','限制偏移值下降速率':'Limit offset drop rate',
   '保护参数':'Protection Params',

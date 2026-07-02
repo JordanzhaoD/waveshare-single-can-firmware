@@ -150,5 +150,18 @@ class DisclaimerPopupTests(TouchUnifyTests):
         self.assert_present("addEventListener('click',hideDisclaimer)")
 
 
+class I18nTests(TouchUnifyTests):
+    def test_new_strings_have_en(self):
+        # I18N dict uses single-quoted keys followed by a colon: 'zh':'en'
+        # Keys must match the EXACT zh strings as they appear in the markup.
+        for zh in [
+            "FSD 防护总开关",
+            "启用全部防护子项（NAG 抑制 / DND / slew / BanShield 等）。关闭即全部失效。",
+            "免责声明 · Disclaimer",
+            "确认 · 我已知晓",
+        ]:
+            self.assert_present(f"'{zh}':")
+
+
 if __name__ == "__main__":
     unittest.main()
