@@ -78,15 +78,42 @@ void test_invalid_json_is_rejected_without_installing()
     TEST_ASSERT_TRUE(result.message.length() > 0);
 }
 
-void test_name_longer_than_31_chars_is_rejected()
+void test_name_at_limit_is_accepted()
 {
+    // Names up to kDashPluginMaxNameLen (63) are accepted — descriptive names
+    // like "Bypass TLSSC + FSD HW4 v2" must install without being mistaken for
+    // an oversized filename.
     DashPluginEngine engine;
-    const char *json = R"json({"name":"abcdefghijklmnopqrstuvwxyzabcdef","rules":[{"id":921,"ops":[{"type":"checksum"}]}]})json";
+    char name[64];
+    memset(name, 'a', 63);
+    name[63] = '\0';
+    char json[256];
+    snprintf(json, sizeof(json),
+             R"json({"name":"%s","rules":[{"id":921,"ops":[{"type":"checksum"}]}]})json", name);
+
+    DashPluginResult result = engine.installJson(json, false);
+
+    TEST_ASSERT_TRUE(result.ok);
+    TEST_ASSERT_EQUAL(1, engine.pluginCount());
+}
+
+void test_name_longer_than_max_chars_is_rejected()
+{
+    // Names exceeding kDashPluginMaxNameLen (63) are rejected with a clear
+    // message that names the JSON "name" field (not the upload filename).
+    DashPluginEngine engine;
+    char name[66];
+    memset(name, 'a', 65);
+    name[65] = '\0';
+    char json[256];
+    snprintf(json, sizeof(json),
+             R"json({"name":"%s","rules":[{"id":921,"ops":[{"type":"checksum"}]}]})json", name);
 
     DashPluginResult result = engine.installJson(json, false);
 
     TEST_ASSERT_FALSE(result.ok);
     TEST_ASSERT_EQUAL(0, engine.pluginCount());
+    TEST_ASSERT_TRUE(result.message.find("\"name\"") != std::string::npos);
 }
 
 void test_installing_same_name_replaces_existing_plugin_disabled()
@@ -439,7 +466,8 @@ int main(int, char **)
     UNITY_BEGIN();
     RUN_TEST(test_valid_official_plugin_installs_disabled_by_default);
     RUN_TEST(test_invalid_json_is_rejected_without_installing);
-    RUN_TEST(test_name_longer_than_31_chars_is_rejected);
+    RUN_TEST(test_name_at_limit_is_accepted);
+    RUN_TEST(test_name_longer_than_max_chars_is_rejected);
     RUN_TEST(test_installing_same_name_replaces_existing_plugin_disabled);
     RUN_TEST(test_disabled_plugin_does_not_send);
     RUN_TEST(test_enabled_plugin_applies_set_bit_and_sends_once);

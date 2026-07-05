@@ -113,7 +113,7 @@ class PluginRedesignTests(UiV11RedesignTests):
 
 class MobileNavTests(UiV11RedesignTests):
     def _standalone_tabs_block(self) -> str:
-        match = re.search(r'<div class="mob-tabs" id="mob-tabs">[\s\S]*?</div>\s*<div class="mob-more-panel" id="mob-more-single"', SRC)
+        match = re.search(r'<div class="mob-tabs" id="mob-tabs"(?:\s+[^>]*)?>[\s\S]*?</div>\s*<div class="mob-more-panel" id="mob-more-single"', SRC)
         self.assertIsNotNone(match, "缺少 #mob-tabs 单 CAN 导航块")
         return match.group(0) if match else ""
 

@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-07-05
+
+### Fixed
+- **手机底部标签栏切换后空白**：在硬件 / 速度 / 网络 / 防护页（长内容滚动页）切换后，底部标签栏图标与文字消失只剩空栏，无法准确切换。根因是 `#mob-tabs` 等 `position:fixed` 元素嵌套在 `.content`（`overflow-y:auto` 滚动容器）内，移动端浏览器（iOS Safari 等）在 momentum scroll 时无法重绘 fixed 后代。修复：`DOMContentLoaded` 调用新增的 `hoistMobileChrome()`，把 `mob-tabs / mob-more-single / mob-tabs-dual / mob-more / disclaimer-overlay` 五个 fixed 元素提升为 `<body>` 直接子级（fixed 底部导航的 canonical 模式），并给 `#mob-tabs` 补 `data-dual-hide="1"` 使其脱离原 wrapper 后仍由 `applyProductMode` 自洽控制显隐。驾驶页（短内容不滚动）原本就不触发，故一直正常。新增契约测试 `test_mobile_tab_bar_hoist_contract.py`（5 用例）。
+- **插件上传误报「文件名过长」**：上传 `bypass-tlssc+fsd-hw4.json` 等插件时报 "plugin name too long"，实际并非文件名——后端限制的是插件 JSON 内的 `"name"` 字段长度（原上限 31 字符，描述性名称易超）。前端发 `application/octet-stream` 不传输文件名，错误信息与文件名拼在一起 `安装失败：{文件名} plugin name too long` 造成误解。修复：`kDashPluginMaxNameLen` 常量化并放宽到 63（`std::string` 无固定 buffer，可安全提高）；错误信息改为 `plugin "name" too long (max 63 chars, got N)` 明确指向 JSON name 字段并显示实际长度；`/plugins/status` 的 `limits` 增加 `maxNameLen`。native 测试更新为边界覆盖（63 接受 / 65 拒绝）。
+
+### 安全
+- 标签栏修复为纯前端（HTML/JS），后端零改动；插件名长度修复仅触及 `dash_plugin_engine.h` 的校验逻辑（`name` 字段长度上限），不涉及 CAN 帧写入、`0x370` 注入或任何安全约束。所有 v1.0.6 硬约束（EPAS 注入事故禁令、`0x370` 回声/伪造注入禁令等）完全不变。
+
 ## [1.0.6] - 2026-07-03
 
 ### Added
