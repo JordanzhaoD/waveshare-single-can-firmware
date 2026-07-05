@@ -19,6 +19,11 @@ static constexpr uint8_t kDashPluginMaxRules = 16;
 static constexpr uint8_t kDashPluginMaxOps = 16;
 static constexpr uint8_t kDashPluginMaxFilterIds = 32;
 static constexpr size_t kDashPluginMaxJsonBytes = 8192;
+// Plugin "name" field length cap. Stored as std::string (heap) and persisted in
+// the SPIFFS state JSON, so the bound is a sanity guard — not a fixed buffer.
+// 63 chars accommodates descriptive names like "Bypass TLSSC + FSD HW4 v2"
+// while keeping the persisted document compact.
+static constexpr size_t kDashPluginMaxNameLen = 63;
 static constexpr uint8_t kDashPluginReplayMin = 1;
 static constexpr uint8_t kDashPluginReplayMax = 5;
 
@@ -433,6 +438,7 @@ public:
         limits["maxOpsPerRule"] = kDashPluginMaxOps;
         limits["maxFilterIdsPerPlugin"] = kDashPluginMaxFilterIds;
         limits["maxJsonBytes"] = kDashPluginMaxJsonBytes;
+        limits["maxNameLen"] = (uint32_t)kDashPluginMaxNameLen;
 
 #ifndef PLUGIN_GTW_UDS_CUSTOM_KEY
         if (hasUnavailableGtwSilentPlugin())
@@ -813,8 +819,16 @@ private:
         const std::string name = dashPluginString(obj["name"]);
         if (name.empty())
             return DashPluginResult::fail("plugin name required");
-        if (name.size() > 31)
-            return DashPluginResult::fail("plugin name too long");
+        if (name.size() > kDashPluginMaxNameLen)
+        {
+            // Reject oversized names. The error spells out the JSON "name" field so
+            // users do not confuse it with the uploaded filename (which is not even
+            // transmitted on the octet-stream upload path).
+            std::string m = "plugin \"name\" too long (max " +
+                            std::to_string(kDashPluginMaxNameLen) + " chars, got " +
+                            std::to_string(name.size()) + ")";
+            return DashPluginResult::fail(m.c_str());
+        }
 
         plugin.name = name;
         plugin.version = dashPluginString(obj["version"], "1.0");

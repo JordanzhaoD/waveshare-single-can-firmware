@@ -4133,7 +4133,22 @@ function hideDisclaimer(){
   var ov=$('disclaimer-overlay'); if(ov)ov.classList.add('hidden');
 }
 
+// === Hoist fixed mobile chrome to <body> ===
+// The bottom tab bars, "more" panels and disclaimer overlay use position:fixed
+// but are emitted inside .content (overflow-y:auto scroll container). On mobile
+// browsers (notably iOS Safari), a position:fixed element nested inside a scroll
+// container fails to repaint during momentum scroll on long pages, so the tab bar
+// renders blank after switching to 硬件/速度/网络/防护. Moving them to be direct
+// children of <body> anchors position:fixed to the viewport reliably.
+function hoistMobileChrome(){
+  ['mob-tabs','mob-more-single','mob-tabs-dual','mob-more','disclaimer-overlay'].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el&&el.parentNode!==document.body)document.body.appendChild(el);
+  });
+}
+
 document.addEventListener('DOMContentLoaded',function(){
+  hoistMobileChrome();
   // Desktop sidebar nav
   var navs=document.querySelectorAll('.nav-item');
   for(var i=0;i<navs.length;i++){
@@ -4203,7 +4218,7 @@ function restartPoll(ms){
 <!-- Mobile Standalone Pages (single-CAN product) -->
 <div data-dual-hide="1">
 <!-- Mobile Bottom Tab Bar (standalone) -->
-<div class="mob-tabs" id="mob-tabs">
+<div class="mob-tabs" id="mob-tabs" data-dual-hide="1">
   <button class="mob-tab active" data-mobile-page="driving" onclick="showMobilePage('driving')"><div class="mob-icon">▣</div><div>驾驶</div></button>
   <button class="mob-tab" data-mobile-page="hardware" onclick="showMobilePage('hardware')"><div class="mob-icon">◇</div><div>硬件</div></button>
   <button class="mob-tab" data-mobile-page="speed" onclick="showMobilePage('speed')"><div class="mob-icon">↗</div><div>速度</div></button>
