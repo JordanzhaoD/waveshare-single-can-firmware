@@ -1,0 +1,6 @@
+# GitHub Pages / Jekyll configuration.
+# docs/superpowers contains internal implementation specs/plans with code snippets
+# such as C++ aggregate literals (`{{...}}`) that Liquid interprets as templates.
+# They are not part of the public documentation site.
+exclude:
+  - docs/superpowers
