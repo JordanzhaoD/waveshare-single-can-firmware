@@ -70,6 +70,14 @@ static void activateAp(CarManagerBase &handler)
     mock.reset();
 }
 
+static void setDasApState(CarManagerBase &handler, uint8_t state)
+{
+    CanFrame f = {.id = 921, .dlc = 8};
+    f.data[0] = state & 0x0F;
+    handler.handleMessage(f, mock);
+    mock.reset();
+}
+
 static CanFrame legacyMux0Frame(bool fsdSelected = true)
 {
     CanFrame f = {.id = 1006, .dlc = 8};
@@ -398,6 +406,90 @@ void test_legacy_mux0_sends_immediately_when_ap_gate_disabled()
     TEST_ASSERT_TRUE((mock.sent[0].data[5] >> 6) & 0x01); // bit46 (FSD-enable) set
 }
 
+void test_legacy_mux0_blocks_when_das_state_is_available_not_engaged()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+
+    CanFrame drive = gearFrame(4);
+    handler.handleMessage(drive, mock);
+    TEST_ASSERT_FALSE(handler.Parked);
+
+    setDasApState(handler, 2); // AP available/off, not engaged
+    TEST_ASSERT_FALSE(handler.APActive);
+
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_TRUE(handler.ADEnabled);
+    TEST_ASSERT_TRUE(handler.fsdTriggered);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(FsdSkipReason::GateBlocked, handler.legacyFsdDiag.mux0.lastSkip);
+}
+
+void test_legacy_mux0_sends_when_das_state_is_engaged_3()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+
+    CanFrame drive = gearFrame(4);
+    handler.handleMessage(drive, mock);
+    TEST_ASSERT_FALSE(handler.Parked);
+
+    setDasApState(handler, 3); // AP engaged
+    TEST_ASSERT_TRUE(handler.APActive);
+
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_TRUE((mock.sent[0].data[5] >> 6) & 0x01);
+}
+
+void test_legacy_mux0_sends_when_das_state_is_engaged_6()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+
+    CanFrame drive = gearFrame(4);
+    handler.handleMessage(drive, mock);
+    TEST_ASSERT_FALSE(handler.Parked);
+
+    setDasApState(handler, 6); // CN 2026.8.3.6 engaged state
+    TEST_ASSERT_TRUE(handler.APActive);
+
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_TRUE((mock.sent[0].data[5] >> 6) & 0x01);
+}
+
+void test_legacy_mux0_blocks_when_das_state_is_abort_or_fault()
+{
+    for (uint8_t state : {static_cast<uint8_t>(8), static_cast<uint8_t>(9)})
+    {
+        mock.reset();
+        LegacyHandler handler;
+        handler.enablePrint = false;
+
+        CanFrame drive = gearFrame(4);
+        handler.handleMessage(drive, mock);
+        TEST_ASSERT_FALSE(handler.Parked);
+
+        setDasApState(handler, state);
+        TEST_ASSERT_FALSE(handler.APActive);
+
+        CanFrame mux0 = legacyMux0Frame();
+        handler.handleMessage(mux0, mock);
+
+        TEST_ASSERT_TRUE(handler.ADEnabled);
+        TEST_ASSERT_TRUE(handler.fsdTriggered);
+        TEST_ASSERT_EQUAL(0, mock.sent.size());
+        TEST_ASSERT_EQUAL(FsdSkipReason::GateBlocked, handler.legacyFsdDiag.mux0.lastSkip);
+    }
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -413,6 +505,10 @@ int main()
     RUN_TEST(test_legacy_mux0_waits_for_explicit_activation_gate_even_when_parked);
     RUN_TEST(test_legacy_mux0_sends_after_explicit_activation_gate_allows);
     RUN_TEST(test_legacy_mux0_sends_immediately_when_ap_gate_disabled);
+    RUN_TEST(test_legacy_mux0_blocks_when_das_state_is_available_not_engaged);
+    RUN_TEST(test_legacy_mux0_sends_when_das_state_is_engaged_3);
+    RUN_TEST(test_legacy_mux0_sends_when_das_state_is_engaged_6);
+    RUN_TEST(test_legacy_mux0_blocks_when_das_state_is_abort_or_fault);
 
     return UNITY_END();
 }
