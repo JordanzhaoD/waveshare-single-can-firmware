@@ -150,31 +150,32 @@ void test_readDASAutopilotStatus_extracts_lower_nibble()
     TEST_ASSERT_EQUAL_UINT8(5, readDASAutopilotStatus(f));
 }
 
-void test_isDASAutopilotActive_true_for_active_states()
+void test_isDASAutopilotActive_matches_beta15_engaged_only_semantics()
 {
-    TEST_ASSERT_TRUE(isDASAutopilotActive(3));
-    TEST_ASSERT_TRUE(isDASAutopilotActive(4));
-    TEST_ASSERT_TRUE(isDASAutopilotActive(5));
-}
+    struct Case
+    {
+        uint8_t state;
+        bool active;
+    };
 
-void test_isDASAutopilotActive_false_for_available_state()
-{
-    TEST_ASSERT_FALSE(isDASAutopilotActive(2));
-}
+    const Case cases[] = {
+        {0, false}, // unknown/off
+        {1, false}, // standby/off
+        {2, false}, // available is NOT engaged; upstream v2.16-beta.15 regression
+        {3, true},  // engaged
+        {4, true},  // engaged
+        {5, true},  // engaged
+        {6, true},  // engaged on CN 2026.8.3.6
+        {7, false}, // reserved/unknown must fail closed
+        {8, false}, // handover/warning must fail closed
+        {9, false}, // fault/aborted must fail closed
+        {15, false},
+    };
 
-void test_isDASAutopilotActive_true_for_state_6()
-{
-    // CN 2026.8.3.6 engages AP to DAS state 6; it must count as active so the
-    // AP-First settle gate arms. Regression for the steer-jerk root cause
-    // (docs/superpowers/specs/2026-06-23-steer-jerk-ap-injection-fix-design.md).
-    TEST_ASSERT_TRUE(isDASAutopilotActive(6));
-}
-
-void test_isDASAutopilotActive_false_for_fault_and_handover_states()
-{
-    // State 8 (handover/warning) and 9 (fault) must NOT count as active.
-    TEST_ASSERT_FALSE(isDASAutopilotActive(8));
-    TEST_ASSERT_FALSE(isDASAutopilotActive(9));
+    for (const auto &c : cases)
+    {
+        TEST_ASSERT_EQUAL_MESSAGE(c.active, isDASAutopilotActive(c.state), "DAS AP active state mismatch");
+    }
 }
 
 // --- Gear state ---
@@ -388,10 +389,7 @@ int main()
     RUN_TEST(test_readGTWAutopilot_extracts_bits_42_to_44);
     RUN_TEST(test_readGTWAutopilot_masks_other_bits);
     RUN_TEST(test_readDASAutopilotStatus_extracts_lower_nibble);
-    RUN_TEST(test_isDASAutopilotActive_true_for_active_states);
-    RUN_TEST(test_isDASAutopilotActive_false_for_available_state);
-    RUN_TEST(test_isDASAutopilotActive_true_for_state_6);
-    RUN_TEST(test_isDASAutopilotActive_false_for_fault_and_handover_states);
+    RUN_TEST(test_isDASAutopilotActive_matches_beta15_engaged_only_semantics);
     RUN_TEST(test_readVehicleGear_extracts_dif_gear_bits);
     RUN_TEST(test_isVehicleParked_true_for_park);
     RUN_TEST(test_isVehicleParked_false_for_drive);
