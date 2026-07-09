@@ -72,7 +72,7 @@ static void activateAp(CarManagerBase &handler)
 
 static void setDasApState(CarManagerBase &handler, uint8_t state)
 {
-    CanFrame f = {.id = 921, .dlc = 8};
+    CanFrame f = {.id = 921, .dlc = 1};
     f.data[0] = state & 0x0F;
     handler.handleMessage(f, mock);
     mock.reset();
@@ -476,6 +476,9 @@ void test_legacy_mux0_blocks_when_das_state_is_abort_or_fault()
         CanFrame drive = gearFrame(4);
         handler.handleMessage(drive, mock);
         TEST_ASSERT_FALSE(handler.Parked);
+
+        setDasApState(handler, 3);
+        TEST_ASSERT_TRUE(handler.APActive);
 
         setDasApState(handler, state);
         TEST_ASSERT_FALSE(handler.APActive);
