@@ -209,6 +209,16 @@ void test_twai_diag_state_names_are_stable()
     TEST_ASSERT_EQUAL_STRING("unknown", dashTwaiStateName(DashTwaiState::Unknown));
 }
 
+void test_twai_diag_age_for_missing_event_is_zero_not_wraparound()
+{
+    TEST_ASSERT_EQUAL_UINT32(0, dashAgeMs(12345, 0));
+}
+
+void test_twai_diag_age_for_recorded_event_uses_unsigned_delta()
+{
+    TEST_ASSERT_EQUAL_UINT32(345, dashAgeMs(12345, 12000));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -237,6 +247,8 @@ int main()
     RUN_TEST(test_twai_filter_empty_count_returns_zero);
     RUN_TEST(test_twai_diag_default_snapshot_is_safe);
     RUN_TEST(test_twai_diag_state_names_are_stable);
+    RUN_TEST(test_twai_diag_age_for_missing_event_is_zero_not_wraparound);
+    RUN_TEST(test_twai_diag_age_for_recorded_event_uses_unsigned_delta);
 
     return UNITY_END();
 }

@@ -51,5 +51,9 @@ struct DashTwaiDiag
 
 static inline uint32_t dashAgeMs(uint32_t nowMs, uint32_t eventMs)
 {
-    return eventMs == 0 ? static_cast<uint32_t>(0xFFFFFFFFUL) : nowMs - eventMs;
+    // eventMs == 0 means "never observed" in the dashboard diagnostics. Returning
+    // UINT32_MAX made callers that render seconds show values around 4294964s.
+    // Use a safe numeric age of 0 for missing events and preserve unsigned delta
+    // behavior for real timestamps.
+    return eventMs == 0 ? 0 : nowMs - eventMs;
 }
