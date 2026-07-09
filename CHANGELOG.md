@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-07-09
+
+### Fixed
+- **AP-First engaged-only 安全热修**：对齐上游 `flipper-tesla-fsd v2.16-beta.15` 的核心语义，补强 DAS AP state 回归测试：`0/1/2/7/8/9/15=false`，仅 `3/4/5/6=true`。Legacy `0x3EE` 在 AP available/off（state 2）时不注入；从 engaged 进入 abort/fault（8/9）会清除 stale `APActive` 并 fail-closed；state 3 与 CN 2026.8.3.6 的 state 6 正常通过既有门控。
+- **诊断时间戳 underflow**：`dashAgeMs(now, 0)` 现在返回安全数值 `0`，Dashboard `lastRecoveryAgeMs` 统一走该 helper，避免缺失事件显示 `4294964s` 或其它 unsigned wraparound 值。
+
+### 安全
+- 本次为最小热修移植：未引入上游 Black-box recorder、Tap Check、Signal Map、Nag Burst、Profile Suggest、Body-bus reachability 等大功能；未改变 UI 布局、NVS 设置、发布资产结构或任何 `0x370` 注入能力。
+
 ## [1.0.7] - 2026-07-05
 
 ### Fixed
