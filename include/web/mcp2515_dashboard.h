@@ -2140,7 +2140,7 @@ static void appendTwaiDiagJson(String &j, unsigned long now)
     j += R"JSON(,"recoveries":)JSON";
     j += d.recoveries;
     j += R"JSON(,"lastRecoveryAgeMs":)JSON";
-    j += d.lastRecoveryMs ? String(now - d.lastRecoveryMs) : String(-1);
+    j += dashAgeMs(now, d.lastRecoveryMs);
     j += R"JSON(,"framesRead":)JSON";
     j += d.framesRead;
     j += R"JSON(,"framesAccepted":)JSON";
