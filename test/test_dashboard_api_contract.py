@@ -268,7 +268,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('reactive && reactive != dashHandler', self.dash)
         self.assertIn('reactive->resetBionic(resetSeed)', self.dash)
         self.assertNotIn('static_cast<LegacyHandler *>(reactive)->setNagMode', self.dash)
-        self.assertIn('dashParseNagMode(raw, 0)', self.dash)
+        self.assertIn('dashTryParseNagMode(raw.c_str(), parsedNagMode)', self.dash)
         self.assertNotIn('int mode = raw.toInt();', self.dash)
         self.assertIn('p.putUChar("def_nag_mode", dashClampNagMode(mode));', self.dash)
         status_idx = self.dash.find('static void handleStatus()')
@@ -277,8 +277,87 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotEqual(reactive_idx, -1)
         status_prefix = self.dash[status_idx:reactive_idx]
         self.assertIn(',\\"nagMode\\":', status_prefix)
-        self.assertIn('String(dashNagMode <= 2 ? dashNagMode : 0)', status_prefix)
+        self.assertIn(
+            'String(dashNagModeIsValid(dashNagMode) ? dashNagMode : '
+            'dashNagModeToRaw(DashNagMode::Off))',
+            status_prefix,
+        )
         self.assertIn('=== EPAS-faithful Late Echo ===', self.dash)
+
+    def test_four_mode_nag_persistence_and_migration_contract(self) -> None:
+        load = re.search(
+            r"static void dashLoadPrefs\(\).*?dashNagTorqueTamper =",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(load)
+        load_body = load.group(0)
+        mode_load = re.search(
+            r'if \(prefs\.isKey\("def_nag_mode"\)\)\s*'
+            r'\{(?P<stored>.*?)\}\s*else\s*\{(?P<migrated>.*?)\}',
+            load_body,
+            re.S,
+        )
+        self.assertIsNotNone(mode_load)
+        stored_branch = mode_load.group("stored")
+        migrated_branch = mode_load.group("migrated")
+        self.assertIn('prefs.getUChar("def_nag_mode", 0)', stored_branch)
+        self.assertNotIn("dashBionicSteering", stored_branch)
+        self.assertIn("dashNagMode = dashBionicSteering", migrated_branch)
+        self.assertIn("DashNagMode::ReactiveHold", migrated_branch)
+        self.assertIn("DashNagMode::Off", migrated_branch)
+        self.assertIn('prefs.putUChar("def_nag_mode", dashNagMode);', migrated_branch)
+
+        handler = re.search(
+            r"static void handleDefenseConfig\(\).*?"
+            r"static void handleLegacyFsdConfig\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(handler)
+        handler_body = handler.group(0)
+        parse_call = "dashTryParseNagMode(raw.c_str(), parsedNagMode)"
+        assign_call = "dashNagMode = dashNagModeToRaw(parsedNagMode);"
+        self.assertIn(parse_call, handler_body)
+        self.assertIn('server.send(400, "application/json"', handler_body)
+        self.assertIn("nag_mode must be 0..3", handler_body)
+        self.assertIn("return;", handler_body)
+        self.assertLess(handler_body.index(parse_call), handler_body.index(assign_call))
+        self.assertLess(handler_body.index(parse_call), handler_body.index("bool prevDefenseEnabled"))
+        self.assertNotIn("raw.toInt()", handler_body)
+        self.assertNotIn("dashNagMode = 0", handler_body)
+        self.assertIn(
+            "uint8_t effectiveNagMode = dashDefenseEnabled ? dashNagMode : 0;",
+            self.dash,
+        )
+
+        export = re.search(
+            r"static void handleSettingsExport\(\).*?"
+            r"static void handleSettingsImport\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(export)
+        export_body = export.group(0)
+        self.assertIn('p.getUChar("def_nag_mode", dashNagMode)', export_body)
+        self.assertIn(',\\"nagMode\\":', export_body)
+
+        restore = re.search(
+            r"static void handleSettingsImport\(\).*?"
+            r'dashLog\("\[BACKUP\] Settings imported',
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(restore)
+        restore_body = restore.group(0)
+        self.assertIn('if (defense["nagMode"].is<int>())', restore_body)
+        self.assertIn('p.putUChar("def_nag_mode", dashClampNagMode(mode));', restore_body)
+        self.assertIn("DashNagMode::ReactiveHold", self.dash)
+        self.assertIn(',\\"nag_mode\\":', self.dash)
+        self.assertIn(',\\"nagMode\\":', self.dash)
+        self.assertNotIn('dashNagMode <= 2 ? dashNagMode : 0', self.dash)
+        self.assertNotIn('if (dashNagMode > 2)', self.dash)
+        self.assertNotIn('if (storedNagMode > 2)', self.dash)
 
     def test_epas_late_echo_ui_selector_contract(self) -> None:
         for token in [

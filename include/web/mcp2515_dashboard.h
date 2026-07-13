@@ -211,7 +211,7 @@ static bool dashFogOffRequested = false;  // one-shot fail-off/stop command owne
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
-static uint8_t dashNagMode = 0; // 0=off, 1=legacy_tsl6p, 2=epas_late_echo
+static uint8_t dashNagMode = 0; // 0=off, 1=legacy_tsl6p, 2=epas_late_echo, 3=reactive_hold
 static bool dashSpeedNoDisturb = false;
 static bool dashDndVolume = false;       // 音量消除DND（Phase 3实现执行逻辑）
 static bool dashDndSpeed = false;        // 速度滚轮DND（Phase 3实现执行逻辑）
@@ -1171,20 +1171,10 @@ static bool dashArgTruthy(const String &v)
 
 static uint8_t dashClampNagMode(int mode)
 {
-    return (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0;
-}
-
-static uint8_t dashParseNagMode(const String &raw, uint8_t fallback = 0)
-{
-    if (!raw.length())
-        return fallback;
-    for (size_t i = 0; i < raw.length(); i++)
-    {
-        char c = raw.charAt(i);
-        if (c < '0' || c > '9')
-            return fallback;
-    }
-    return dashClampNagMode(raw.toInt());
+    const int maxMode = static_cast<int>(dashNagModeToRaw(DashNagMode::ReactiveHold));
+    return (mode >= 0 && mode <= maxMode)
+               ? static_cast<uint8_t>(mode)
+               : dashNagModeToRaw(DashNagMode::Off);
 }
 
 // Clamp an AP settle delay (ms) parsed from /config into the valid range so a
@@ -1468,7 +1458,7 @@ static void dashSavePrefs()
     prefs.putUChar("lt_fog", dashRearFogStrategy);
     prefs.putBool("def_en", dashDefenseEnabled);
     prefs.putBool("def_bio", dashBionicSteering);
-    prefs.putUChar("def_nag_mode", dashNagMode <= 2 ? dashNagMode : 0);
+    prefs.putUChar("def_nag_mode", dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
     prefs.putBool("def_ntt", dashNagTorqueTamper);
     prefs.putBool("def_se", dashSoftEngage);
     prefs.putBool("def_ag", dashAbortGuardEnabled);
@@ -1675,9 +1665,18 @@ static void dashLoadPrefs()
         dashRearFogStrategy = 0;
     dashDefenseEnabled = prefs.getBool("def_en", false);
     dashBionicSteering = prefs.getBool("def_bio", false);
-    dashNagMode = prefs.getUChar("def_nag_mode", 0);
-    if (dashNagMode > 2)
-        dashNagMode = 0;
+    if (prefs.isKey("def_nag_mode"))
+    {
+        dashNagMode = dashNagModeToRaw(
+            dashNagModeFromRaw(prefs.getUChar("def_nag_mode", 0)));
+    }
+    else
+    {
+        dashNagMode = dashBionicSteering
+                          ? dashNagModeToRaw(DashNagMode::ReactiveHold)
+                          : dashNagModeToRaw(DashNagMode::Off);
+        prefs.putUChar("def_nag_mode", dashNagMode);
+    }
     dashNagTorqueTamper = prefs.getBool("def_ntt", false);
     nagTorqueTamperRuntime = dashNagTorqueTamper; // boot-sync opt-in to NagHandler
     dashSoftEngage = prefs.getBool("def_se", kSoftEngageDefaultEnabled);
@@ -2527,7 +2526,7 @@ static void handleStatus()
     j += ",\"overrideSpeedLimit\":";
     j += dashHandler ? ((bool)dashHandler->overrideSpeedLimit ? "true" : "false") : "false";
     j += ",\"nagMode\":";
-    j += String(dashNagMode <= 2 ? dashNagMode : 0);
+    j += String(dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
     j += ",\"reactiveNag\":{";
     CarManagerBase *reactive = dashReactiveNagHandler();
     DashReactiveDiag d = reactive ? reactive->reactiveDiag() : dashMakeDisabledNagDiag();
@@ -2796,7 +2795,7 @@ static void handleConfigGet()
     j += ",\"legacyCustomPctVeryHigh\":" + String(dashLegacyCustomPctVeryHigh);
     j += ",\"overrideSpeedLimit\":" + String(nvsOverrideSpeedLimit ? "true" : "false");
     j += "},\"defense\":{";
-    j += "\"nagMode\":" + String(dashNagMode <= 2 ? dashNagMode : 0);
+    j += "\"nagMode\":" + String(dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
     j += "}}";
     server.send(200, "application/json", j);
 }
@@ -3399,7 +3398,7 @@ static String dashDefenseConfigJson()
     j += ",\"bionic_steering\":";
     j += dashBionicSteering ? "true" : "false";
     j += ",\"nag_mode\":";
-    j += String(dashNagMode <= 2 ? dashNagMode : 0);
+    j += String(dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
     j += ",\"nag_torque_tamper\":";
     j += dashNagTorqueTamper ? "true" : "false";
     j += ",\"soft_engage\":";
@@ -3440,6 +3439,19 @@ static void handleDefenseConfig()
         server.hasArg("nag_torque_tamper") ||
         server.hasArg("soft_engage") || server.hasArg("abort_guard"))
     {
+        const bool hasNagModeArg = server.hasArg("nag_mode") || server.hasArg("nagMode");
+        DashNagMode parsedNagMode = dashNagModeFromRaw(dashNagMode);
+        if (hasNagModeArg)
+        {
+            String raw = server.hasArg("nag_mode") ? server.arg("nag_mode") : server.arg("nagMode");
+            if (!dashTryParseNagMode(raw.c_str(), parsedNagMode))
+            {
+                server.send(400, "application/json",
+                            "{\"ok\":false,\"error\":\"nag_mode must be 0..3\"}");
+                return;
+            }
+        }
+
         bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
         bool prevDndSpeed = dashDndSpeed;
@@ -3462,11 +3474,8 @@ static void handleDefenseConfig()
             if (CarManagerBase *reactive = dashReactiveNagHandler(); reactive && reactive != dashHandler)
                 reactive->resetBionic(resetSeed);
         }
-        if (server.hasArg("nag_mode") || server.hasArg("nagMode"))
-        {
-            String raw = server.hasArg("nag_mode") ? server.arg("nag_mode") : server.arg("nagMode");
-            dashNagMode = dashParseNagMode(raw, 0);
-        }
+        if (hasNagModeArg)
+            dashNagMode = dashNagModeToRaw(parsedNagMode);
         if (server.hasArg("nag_torque_tamper"))
         {
             // WARNING: torque-tamper is the documented primary-suspect vector of
@@ -6132,9 +6141,8 @@ static void handleSettingsExport()
         storedRearFogStrategy = p.getUChar("lt_fog", dashRearFogStrategy);
         storedDefenseEnabled = p.getBool("def_en", dashDefenseEnabled);
         storedBionicSteering = p.getBool("def_bio", dashBionicSteering);
-        storedNagMode = p.getUChar("def_nag_mode", dashNagMode);
-        if (storedNagMode > 2)
-            storedNagMode = 0;
+        storedNagMode = dashNagModeToRaw(
+            dashNagModeFromRaw(p.getUChar("def_nag_mode", dashNagMode)));
         storedNagTorqueTamper = p.getBool("def_ntt", dashNagTorqueTamper);
         storedSoftEngage = p.getBool("def_se", dashSoftEngage);
         storedAbortGuard = p.getBool("def_ag", dashAbortGuardEnabled);
