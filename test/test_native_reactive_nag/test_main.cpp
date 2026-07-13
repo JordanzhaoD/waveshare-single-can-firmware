@@ -1,4 +1,5 @@
 #include <unity.h>
+#include "dash_nag_mode.h"
 #include "dash_reactive_nag.h"
 
 void setUp() {}
@@ -8,6 +9,53 @@ static void startActiveNag(DashReactiveNagBurst &n, unsigned long nowMs = 100)
 {
     n.init(12345);
     n.onNagSample(3, nowMs, true, 6);
+}
+
+void test_dash_nag_mode_numeric_mapping_and_names()
+{
+    TEST_ASSERT_EQUAL_UINT8(0, dashNagModeToRaw(DashNagMode::Off));
+    TEST_ASSERT_EQUAL_UINT8(1, dashNagModeToRaw(DashNagMode::HumanReplayTsl6p));
+    TEST_ASSERT_EQUAL_UINT8(2, dashNagModeToRaw(DashNagMode::EpasLateEcho));
+    TEST_ASSERT_EQUAL_UINT8(3, dashNagModeToRaw(DashNagMode::ReactiveHold));
+
+    TEST_ASSERT_TRUE(dashNagModeIsValid(0));
+    TEST_ASSERT_TRUE(dashNagModeIsValid(3));
+    TEST_ASSERT_FALSE(dashNagModeIsValid(4));
+    TEST_ASSERT_FALSE(dashNagModeIsValid(255));
+
+    TEST_ASSERT_EQUAL(DashNagMode::Off, dashNagModeFromRaw(0));
+    TEST_ASSERT_EQUAL(DashNagMode::HumanReplayTsl6p, dashNagModeFromRaw(1));
+    TEST_ASSERT_EQUAL(DashNagMode::EpasLateEcho, dashNagModeFromRaw(2));
+    TEST_ASSERT_EQUAL(DashNagMode::ReactiveHold, dashNagModeFromRaw(3));
+    TEST_ASSERT_EQUAL(DashNagMode::Off, dashNagModeFromRaw(255));
+
+    TEST_ASSERT_EQUAL_STRING("off", dashNagModeName(DashNagMode::Off));
+    TEST_ASSERT_EQUAL_STRING("human_replay_tsl6p", dashNagModeName(DashNagMode::HumanReplayTsl6p));
+    TEST_ASSERT_EQUAL_STRING("late_echo", dashNagModeName(DashNagMode::EpasLateEcho));
+    TEST_ASSERT_EQUAL_STRING("reactive_hold", dashNagModeName(DashNagMode::ReactiveHold));
+    TEST_ASSERT_EQUAL_STRING("off", dashNagModeName(static_cast<DashNagMode>(255)));
+}
+
+void test_dash_nag_mode_parser_accepts_only_exact_numeric_modes()
+{
+    DashNagMode parsed = DashNagMode::ReactiveHold;
+
+    TEST_ASSERT_TRUE(dashTryParseNagMode("0", parsed));
+    TEST_ASSERT_EQUAL(DashNagMode::Off, parsed);
+    TEST_ASSERT_TRUE(dashTryParseNagMode("1", parsed));
+    TEST_ASSERT_EQUAL(DashNagMode::HumanReplayTsl6p, parsed);
+    TEST_ASSERT_TRUE(dashTryParseNagMode("2", parsed));
+    TEST_ASSERT_EQUAL(DashNagMode::EpasLateEcho, parsed);
+    TEST_ASSERT_TRUE(dashTryParseNagMode("3", parsed));
+    TEST_ASSERT_EQUAL(DashNagMode::ReactiveHold, parsed);
+
+    const char *invalid[] = {nullptr, "", "+1", "-1", "03", "3x", "4", "99", " 3", "3 ", "\t3", "3\n"};
+    for (const char *raw : invalid)
+    {
+        parsed = DashNagMode::EpasLateEcho;
+        TEST_ASSERT_FALSE(dashTryParseNagMode(raw, parsed));
+        TEST_ASSERT_EQUAL(DashNagMode::EpasLateEcho, parsed);
+    }
 }
 
 void test_hos_clear_does_not_start_burst()
@@ -468,6 +516,8 @@ void test_diag_reports_v4_burst_fields()
 int main()
 {
     UNITY_BEGIN();
+    RUN_TEST(test_dash_nag_mode_numeric_mapping_and_names);
+    RUN_TEST(test_dash_nag_mode_parser_accepts_only_exact_numeric_modes);
     RUN_TEST(test_hos_clear_does_not_start_burst);
     RUN_TEST(test_inactive_gate_records_toggle_and_stays_idle);
     RUN_TEST(test_idle_hos_clear_is_diagnosed_separately_from_on_off_clear);

@@ -11,6 +11,7 @@
 #include "dash_hw3_speed.h"
 #include "dash_legacy_speed.h"
 #include "dash_abort_guard.h"
+#include "dash_nag_mode.h"
 #include "dash_reactive_nag.h"
 #include "dash_epas_late_echo.h"
 #include "dash_fsd_diag.h"
@@ -340,24 +341,17 @@ struct CarManagerBase
 
 struct LegacyHandler : public CarManagerBase
 {
-    enum class NagMode : uint8_t
-    {
-        Off = 0,
-        LegacyTsl6p = 1,
-        EpasLateEcho = 2
-    };
-
     DashReactiveNagBurst nag; // reactive NAG-suppression burst state machine
     DashEpasLateEcho lateNag;
-    NagMode nagMode{NagMode::Off};
+    DashNagMode nagMode{DashNagMode::Off};
     uint8_t lastNagApState{0};
     uint8_t lastNagHos{0};
     const char *lastNagGateReason{"toggle"};
     bool lastNagGatesActive{false};
 
     bool bionicDisabled() const override { return false; } // reactive has no auto-disable
-    bool lateEchoSelected() const { return nagMode == NagMode::EpasLateEcho; }
-    bool legacyTsl6pSelected() const { return nagMode == NagMode::LegacyTsl6p; }
+    bool lateEchoSelected() const { return nagMode == DashNagMode::EpasLateEcho; }
+    bool legacyTsl6pSelected() const { return nagMode == DashNagMode::HumanReplayTsl6p; }
     bool isPrimaryDasFrame(const CanFrame &frame) const { return frame.bus != CAN_BUS_PARTY; }
 
     void refreshLateNagEnabled()
@@ -367,23 +361,23 @@ struct LegacyHandler : public CarManagerBase
 
     void setNagMode(uint8_t mode) override
     {
-        if (mode == static_cast<uint8_t>(NagMode::LegacyTsl6p))
-            nagMode = NagMode::LegacyTsl6p;
-        else if (mode == static_cast<uint8_t>(NagMode::EpasLateEcho))
-            nagMode = NagMode::EpasLateEcho;
+        if (mode == static_cast<uint8_t>(DashNagMode::HumanReplayTsl6p))
+            nagMode = DashNagMode::HumanReplayTsl6p;
+        else if (mode == static_cast<uint8_t>(DashNagMode::EpasLateEcho))
+            nagMode = DashNagMode::EpasLateEcho;
         else
-            nagMode = NagMode::Off;
+            nagMode = DashNagMode::Off;
         refreshLateNagEnabled();
     }
 
     void setNagModeForTest(const char *mode)
     {
         if (mode && std::strcmp(mode, "legacy_tsl6p") == 0)
-            setNagMode(static_cast<uint8_t>(NagMode::LegacyTsl6p));
+            setNagMode(static_cast<uint8_t>(DashNagMode::HumanReplayTsl6p));
         else if (mode && std::strcmp(mode, "late_echo") == 0)
-            setNagMode(static_cast<uint8_t>(NagMode::EpasLateEcho));
+            setNagMode(static_cast<uint8_t>(DashNagMode::EpasLateEcho));
         else
-            setNagMode(static_cast<uint8_t>(NagMode::Off));
+            setNagMode(static_cast<uint8_t>(DashNagMode::Off));
     }
 
     void resetBionic(uint32_t seed) override
@@ -400,7 +394,7 @@ struct LegacyHandler : public CarManagerBase
     {
         uint32_t nowMs = dashDiagNowMs();
         DashReactiveDiag d = nag.diag(nowMs);
-        d.enabled = (bool)bionicSteering && nagMode != NagMode::Off;
+        d.enabled = (bool)bionicSteering && nagMode != DashNagMode::Off;
         if (lateEchoSelected())
         {
             DashEpasLateEchoDiag late = lateNag.diag(nowMs);
