@@ -28,6 +28,11 @@ static bool denyAD()
     return false;
 }
 
+static bool allowLegacyActivation(uint32_t)
+{
+    return true;
+}
+
 static FsdGateBlockReason denyByApGate()
 {
     return FsdGateBlockReason::ApGate;
@@ -322,6 +327,22 @@ void test_legacy_checkAD_blocks_mux0_send()
     TEST_ASSERT_TRUE(handler.ADEnabled);
     TEST_ASSERT_TRUE(handler.fsdTriggered);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+void test_legacy_checkAD_still_blocks_when_ap_first_callback_allows()
+{
+    handler.checkAD = denyAD;
+    handler.legacyFsdActivationAllowed = allowLegacyActivation;
+
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_TRUE(handler.ADEnabled);
+    TEST_ASSERT_TRUE(handler.fsdTriggered);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(FsdSkipReason::GateBlocked, handler.legacyFsdDiag.mux0.lastSkip);
 }
 
 // --- fsdTriggered state tracking ---
@@ -1513,6 +1534,7 @@ int main()
     RUN_TEST(test_legacy_AD_sets_bit46);
     RUN_TEST(test_legacy_stable_mux0_sets_bit46_only);
     RUN_TEST(test_legacy_checkAD_blocks_mux0_send);
+    RUN_TEST(test_legacy_checkAD_still_blocks_when_ap_first_callback_allows);
     RUN_TEST(test_legacy_fsdTriggered_set_on_mux0);
 
     RUN_TEST(test_legacy_stable_mux1_is_disabled);

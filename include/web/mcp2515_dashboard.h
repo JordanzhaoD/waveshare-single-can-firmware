@@ -165,14 +165,15 @@ static String dashPluginUploadBuffer;
 // 当 true 时回到 3.0 早期行为：必须 Parked||APActive||Summoning 才允许注入。
 static bool apInjectionGate = DASH_AP_GATE_DEFAULT;
 static bool apAutoRestore = false;
+// Runtime-only until Tasks 12-14 add strict persistence, API, and UI wiring.
+static bool dashInstantEngage = false;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
 static volatile uint32_t lastInjectMs = 0;
-// Legacy FSD (0x3EE mux0) AP-settle activation gate — upstream beta3 parity.
-// Legacy injection must wait ~2 s after APActive first rises (and CAN must be
-// active, OTA not blocking, apInjectionGate open) before mux0 bit46 fires.
-// AP settle delay is configurable (0-3000 ms, default 2000) so the standalone
-// single-CAN build can expose it through /config and persist across reboots.
+// Legacy FSD (0x3EE mux0) AP-First activation gate — upstream beta3 parity.
+// DashApFirstGate owns the configurable debounce (0-3000 ms, default 2000).
+// The timestamp mirror below remains only for Soft Engage timeout/status output;
+// it no longer decides whether the AP debounce has elapsed.
 static constexpr uint32_t kLegacyFsdActivationSettleDefaultMs = 2000;
 static constexpr uint32_t kLegacyFsdActivationSettleMinMs = 0;
 static constexpr uint32_t kLegacyFsdActivationSettleMaxMs = 3000;
@@ -949,39 +950,57 @@ static bool dashApInjectionAllowed()
     return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
 }
 
-// Legacy FSD (0x3EE mux0) activation gate with a ~2 s AP-settle hold-off.
-// Mirrors upstream ev-open-can-tools v3.0.2-beta.3 safety parity: once AP
-// becomes active (and CAN/OTA/gate all allow), hold off legacy mux0 bit46
-// injection until APActive has been continuously asserted for
-// legacyFsdRequiredStableMs. Any loss of CAN / OTA / gate / APActive
-// resets the settle timer. nowMs is the same monotonically-increasing
-// millisecond counter the handler path uses (millis() in firmware,
-// dashDiagNowMs() in native tests) so the hold-off interval is consistent.
+static void dashClearLegacyApFirstTiming()
+{
+    if (dashHandler)
+        dashHandler->clearApFirstTiming();
+    legacyFsdApActiveSinceMs = 0;
+    legacySoftEngageSent = false;
+}
+
+// Legacy FSD (0x3EE mux0) activation gate. DashApFirstGate now owns AP engaged
+// observation, genuine-edge detection, and the configurable debounce. Instant
+// Engage may bypass only that debounce; CAN, OTA, parent AP gate, checkAD,
+// Abort Guard, Soft Engage, and feature/plugin gates remain independent.
 static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
 {
     if (!canActive)
     {
-        legacyFsdApActiveSinceMs = 0;
+        dashClearLegacyApFirstTiming();
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
     if (!dashOtaGuardAllowInjection())
     {
-        legacyFsdApActiveSinceMs = 0;
+        dashClearLegacyApFirstTiming();
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
+    if (!dashHandler)
+    {
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+
+    DashApFirstDecision ap = dashHandler->decideApFirst(
+        apInjectionGate,
+        dashInstantEngage,
+        legacyFsdRequiredStableMs,
+        nowMs);
     if (!apInjectionGate)
     {
+        legacyFsdApActiveSinceMs = 0;
+        legacySoftEngageSent = false;
         legacyFsdLastAllowed = true;
         return true;
     }
-    bool apActive = dashHandler && (bool)dashHandler->APActive;
-    if (!apActive)
+    if (!ap.engaged)
     {
         legacyFsdApActiveSinceMs = 0;
+        legacySoftEngageSent = false;
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
@@ -989,27 +1008,32 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
     if (legacyFsdApActiveSinceMs == 0)
     {
         legacyFsdApActiveSinceMs = nowMs;
-        legacySoftEngageSent = false; // new AP episode → re-arm soft-engage latch
+        legacySoftEngageSent = false;
     }
-    const bool stable = (nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs;
-    const bool timeout = (nowMs - legacyFsdApActiveSinceMs) >= (legacyFsdRequiredStableMs + SOFT_ENGAGE_TIMEOUT_MS);
+    if (!ap.allowed)
+    {
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+
+    const bool timeout = (nowMs - legacyFsdApActiveSinceMs) >=
+                         (legacyFsdRequiredStableMs + SOFT_ENGAGE_TIMEOUT_MS);
     const bool release = dashSoftEngageRelease(dashSoftEngage, legacySoftEngageSent,
                                                apRestoreState.steerSeen,
                                                apRestoreState.steerValidity,
                                                apRestoreState.steerAngleX10,
-                                               stable, timeout, SOFT_ENGAGE_ANGLE_THRESH_X10);
-    if (stable && !release)
+                                               true, timeout, SOFT_ENGAGE_ANGLE_THRESH_X10);
+    if (!release)
     {
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
-        return false; // Soft Engage hold: wheel off-centre, within timeout window
+        return false;
     }
-    if (stable)
-        legacySoftEngageSent = true; // latch: angle ignored for rest of episode
-    legacyFsdLastAllowed = stable;
-    if (!stable)
-        legacyFsdLastBlockedMs = nowMs;
-    return stable;
+
+    legacySoftEngageSent = true;
+    legacyFsdLastAllowed = true;
+    return true;
 }
 
 static FsdGateBlockReason dashCurrentGateBlockReason()
@@ -1411,6 +1435,8 @@ static void dashApplyRuntimeState()
         dashHandler->legacyFsdDiag.profileWriteEnable = dashLegacyFsdProfileWriteEnable;
         dashHandler->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
         dashApplySpeedProfileState();
+        if (!canActive || !apInjectionGate)
+            dashClearLegacyApFirstTiming();
         if (!canActive)
         {
             dashHandler->ADEnabled = false;
@@ -7293,6 +7319,7 @@ static void dashInitHandlers()
     for (int i = 0; i < 3; i++)
     {
         handlerPool[i]->onFrame = mcpDashOnFrame;
+        handlerPool[i]->resetApFirstRuntime();
         handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason;
         handlerPool[i]->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         handlerPool[i]->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
@@ -7308,6 +7335,15 @@ static void dashSwapHandler(uint8_t mode)
     CarManagerBase *next = handlerPool[effective];
     if (dashHandler)
         next->enablePrint = (bool)dashHandler->enablePrint;
+    if (dashHandler != next)
+    {
+        if (dashHandler)
+            dashHandler->clearApFirstTiming();
+        next->clearApFirstTiming();
+        legacyFsdApActiveSinceMs = 0;
+        legacySoftEngageSent = false;
+        legacyFsdLastAllowed = false;
+    }
     appActiveHandler = next;
     dashHandler = next;
     dashApplyRuntimeState();

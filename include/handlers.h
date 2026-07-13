@@ -17,6 +17,7 @@
 #include "dash_nag_diag.h"
 #include "dash_legacy_370_echo.h"
 #include "dash_epas_late_echo.h"
+#include "dash_ap_first_gate.h"
 #include "dash_fsd_diag.h"
 
 #ifndef DASH_FSD_252_COMPAT
@@ -332,6 +333,29 @@ struct CarManagerBase
     virtual uint8_t filterIdCount() const = 0;
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
+    virtual void observeApFirstState(uint8_t apState, uint32_t nowMs)
+    {
+        (void)apState;
+        (void)nowMs;
+    }
+    virtual DashApFirstDecision decideApFirst(bool gateEnabled,
+                                              bool instantEnabled,
+                                              uint32_t debounceMs,
+                                              uint32_t nowMs)
+    {
+        (void)gateEnabled;
+        (void)instantEnabled;
+        (void)debounceMs;
+        (void)nowMs;
+        return DashApFirstDecision{};
+    }
+    virtual void clearApFirstTiming() {}
+    virtual void resetApFirstRuntime() {}
+    virtual DashApFirstDiag apFirstDiag(uint32_t nowMs) const
+    {
+        (void)nowMs;
+        return DashApFirstDiag{};
+    }
     virtual void setNagMode(uint8_t mode) { (void)mode; }
     virtual DashReactiveDiag reactiveDiag() const { return dashMakeDisabledNagDiag(); }
     virtual DashReactiveDiag nagDiagForMode(DashNagMode /*mode*/) const
@@ -359,6 +383,7 @@ struct LegacyHandler : public CarManagerBase
     DashReactiveNagBurst nag; // TSL6P replay burst state machine
     DashReactiveHoldNag reactiveHoldNag;
     DashEpasLateEcho lateNag;
+    DashApFirstGate apFirstGate;
     DashNagMode nagMode{DashNagMode::Off};
     uint8_t lastNagApState{0};
     uint8_t lastNagHos{0};
@@ -370,6 +395,26 @@ struct LegacyHandler : public CarManagerBase
     bool lateEchoSelected() const { return nagMode == DashNagMode::EpasLateEcho; }
     bool reactiveHoldSelected() const { return nagMode == DashNagMode::ReactiveHold; }
     bool isPrimaryDasFrame(const CanFrame &frame) const { return frame.bus != CAN_BUS_PARTY; }
+
+    void observeApFirstState(uint8_t apState, uint32_t nowMs) override
+    {
+        apFirstGate.observe(apState, nowMs);
+    }
+
+    DashApFirstDecision decideApFirst(bool gateEnabled,
+                                      bool instantEnabled,
+                                      uint32_t debounceMs,
+                                      uint32_t nowMs) override
+    {
+        return apFirstGate.decide(gateEnabled, instantEnabled, debounceMs, nowMs);
+    }
+
+    void clearApFirstTiming() override { apFirstGate.clearTiming(); }
+    void resetApFirstRuntime() override { apFirstGate.resetRuntime(); }
+    DashApFirstDiag apFirstDiag(uint32_t nowMs) const override
+    {
+        return apFirstGate.diag(nowMs);
+    }
 
     void refreshLateNagEnabled()
     {
@@ -751,7 +796,11 @@ struct LegacyHandler : public CarManagerBase
                 return;
             uint8_t apState = readDASAutopilotStatus(frame);
             if (isPrimaryDasFrame(frame))
-                abortGuard.onApState(apState, dashDiagNowMs());
+            {
+                const uint32_t apNowMs = dashDiagNowMs();
+                abortGuard.onApState(apState, apNowMs);
+                observeApFirstState(apState, apNowMs);
+            }
             APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
@@ -848,6 +897,13 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.lastBlockedBy = legacyFsdActivationAllowed
                                                       ? FsdGateBlockReason::LegacyFsdSettle
                                                       : currentGateBlockReason();
+                    return;
+                }
+                if (checkAD && !checkAD())
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = currentGateBlockReason();
                     return;
                 }
 
