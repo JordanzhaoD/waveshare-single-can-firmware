@@ -144,6 +144,87 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(legacy)
         self.assertIn("(void)putBoolChecked(key, value);", legacy.group(0))
 
+    def test_instant_engage_config_persistence_contract(self) -> None:
+        self.assertIn('#include "dash_config_update.h"', self.dash)
+        self.assertEqual(self.dash.count('server.on("/config", HTTP_GET, handleConfigGet);'), 1)
+        self.assertEqual(self.dash.count('server.on("/config", HTTP_POST, handleConfig);'), 1)
+        self.assertNotIn('server.on("/ap_first_edge"', self.dash)
+
+        load = re.search(r"static void dashLoadPrefs\(\).*?prefs\.end\(\);", self.dash, re.S)
+        self.assertIsNotNone(load)
+        self.assertIn('dashInstantEngage = prefs.getBool("apfe", false);', load.group(0))
+
+        get_handler = re.search(r"static void handleConfigGet\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(get_handler)
+        self.assertIn('\\"ap_first_edge\\":', get_handler.group(0))
+        self.assertIn("dashInstantEngage", get_handler.group(0))
+
+        self.assertIn("static bool dashPutBoolChecked(const char *key, bool value)", self.dash)
+        wrapper = re.search(
+            r"static bool dashPutBoolChecked\(const char \*key, bool value\).*?\n\}",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(wrapper)
+        wrapper_body = wrapper.group(0)
+        self.assertIn("prefs.begin(PREFS_NS, false)", wrapper_body)
+        self.assertIn("prefs.putBoolChecked(key, value)", wrapper_body)
+        self.assertIn("prefs.end()", wrapper_body)
+        self.assertIn("return ok;", wrapper_body)
+
+        post = re.search(
+            r"static void handleConfig\(\).*?static void handleLoggingConfig\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(post)
+        post_body = post.group(0)
+        self.assertIn('server.hasArg("ap_first_edge")', post_body)
+        self.assertIn("dashPreparePersistedBoolUpdate", post_body)
+        self.assertIn('dashPutBoolChecked("apfe", value)', post_body)
+        self.assertIn('server.send(400, "application/json"', post_body)
+        self.assertIn('server.send(500, "application/json"', post_body)
+        self.assertNotIn('server.arg("ap_first_edge").toInt()', post_body)
+        parse_idx = post_body.index("dashPreparePersistedBoolUpdate")
+        invalid_idx = post_body.index("if (!update.valid)", parse_idx)
+        persist_idx = post_body.index("if (!update.persisted)", invalid_idx)
+        assign_idx = post_body.index("dashInstantEngage = update.value;", persist_idx)
+        apply_idx = post_body.index("dashApplyRuntimeState()", assign_idx)
+        self.assertLess(parse_idx, invalid_idx)
+        self.assertLess(invalid_idx, persist_idx)
+        self.assertLess(persist_idx, assign_idx)
+        self.assertLess(assign_idx, apply_idx)
+
+        export = re.search(
+            r"static void handleSettingsExport\(\).*?static void handleSettingsImport\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(export)
+        export_body = export.group(0)
+        self.assertIn('p.getBool("apfe", dashInstantEngage)', export_body)
+        self.assertIn('\\"apFirstEdge\\":', export_body)
+
+        restore = re.search(
+            r"static void handleSettingsImport\(\).*?dashLog\(\"\[BACKUP\] Settings imported",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(restore)
+        self.assertIn('if (device["apFirstEdge"].is<bool>())', restore.group(0))
+        self.assertIn('p.putBool("apfe", device["apFirstEdge"].as<bool>())', restore.group(0))
+
+        clear_timing = re.search(
+            r"static void dashClearLegacyApFirstTiming\(\).*?\n\}",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(clear_timing)
+        self.assertNotIn("dashInstantEngage", clear_timing.group(0))
+        declaration = "static bool dashInstantEngage = false;"
+        self.assertEqual(self.dash.count(declaration), 1)
+        self.assertNotIn("dashInstantEngage = false", self.dash.replace(declaration, "", 1))
+
     def test_dashboard_ui_generation_is_dependency_aware(self) -> None:
         """PlatformIO must rebuild firmware when the generated dashboard header changes."""
         build_script = (ROOT / "scripts" / "update_ota_build_timestamp.py").read_text(encoding="utf-8")

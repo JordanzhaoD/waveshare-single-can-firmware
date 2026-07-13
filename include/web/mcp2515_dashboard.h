@@ -37,6 +37,7 @@
 #endif
 #include "handlers.h"
 #include "can_helpers.h"
+#include "dash_config_update.h"
 #include <ArduinoJson.h>
 #if defined(DRIVER_ESP32_EXT_MCP2515)
 #include "drivers/esp32_mcp2515_driver.h"
@@ -109,6 +110,16 @@ static constexpr uint8_t kDashUnsetU8 = 0xFF;
 
 static Preferences prefs;
 
+static bool dashPutBoolChecked(const char *key, bool value)
+{
+    Preferences prefs;
+    if (!prefs.begin(PREFS_NS, false))
+        return false;
+    const bool ok = prefs.putBoolChecked(key, value);
+    prefs.end();
+    return ok;
+}
+
 static CarManagerBase *dashHandler = nullptr;
 static CarManagerBase *dashReactiveNagHandler();
 static CanDriver *dashDriver = nullptr;
@@ -165,7 +176,7 @@ static String dashPluginUploadBuffer;
 // 当 true 时回到 3.0 早期行为：必须 Parked||APActive||Summoning 才允许注入。
 static bool apInjectionGate = DASH_AP_GATE_DEFAULT;
 static bool apAutoRestore = false;
-// Runtime-only until Tasks 12-14 add strict persistence, API, and UI wiring.
+// Persisted as `apfe`; runtime reset clears only gate timing, not this preference.
 static bool dashInstantEngage = false;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
@@ -1459,6 +1470,7 @@ static void dashSavePrefs()
     prefs.putBool("force_act", forceActivate);
     prefs.putBool("boot_can", bootCanActive);
     prefs.putBool("ap_gate", apInjectionGate);
+    prefs.putBool("apfe", dashInstantEngage);
     prefs.putBool("ap_rst", apAutoRestore);
     prefs.putUInt("ap_dly", legacyFsdRequiredStableMs);
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
@@ -1659,6 +1671,7 @@ static void dashLoadPrefs()
         prefs.putBool("boot_can", bootCanActive);
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", DASH_AP_GATE_DEFAULT);
+    dashInstantEngage = prefs.getBool("apfe", false);
     apAutoRestore = prefs.getBool("ap_rst", false);
     legacyFsdRequiredStableMs = dashClampApDelayMs(static_cast<int>(prefs.getUInt("ap_dly", kLegacyFsdActivationSettleDefaultMs)));
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
@@ -2810,7 +2823,9 @@ static void handleStatus()
 // 返回的 fsdRuntime 块与 handleConfig POST 接收的 {fsdRuntime:{...}} 契约对齐。
 static void handleConfigGet()
 {
-    String j = "{\"fsdRuntime\":{";
+    String j = "{\"ap_first_edge\":";
+    j += dashInstantEngage ? "true" : "false";
+    j += ",\"fsdRuntime\":{";
     j += "\"legacyOffset\":" + String(nvsLegacyOffset);
     j += ",\"legacyOffsetMode\":" + String(dashLegacyOffsetMode);
     j += ",\"legacySmoothDown\":" + String(dashLegacySmoothDown ? "true" : "false");
@@ -2828,6 +2843,31 @@ static void handleConfigGet()
 
 static void handleConfig()
 {
+    if (server.hasArg("ap_first_edge"))
+    {
+        String raw = server.arg("ap_first_edge");
+        auto update = dashPreparePersistedBoolUpdate(
+            raw.c_str(),
+            dashInstantEngage,
+            [](bool value)
+            {
+                return dashPutBoolChecked("apfe", value);
+            });
+        if (!update.valid)
+        {
+            server.send(400, "application/json",
+                        "{\"ok\":false,\"error\":\"ap_first_edge must be boolean\"}");
+            return;
+        }
+        if (!update.persisted)
+        {
+            server.send(500, "application/json",
+                        "{\"ok\":false,\"error\":\"failed to persist ap_first_edge\"}");
+            return;
+        }
+        dashInstantEngage = update.value;
+    }
+
     // --- FSD runtime JSON body ({fsdRuntime:{legacyOffset,overrideSpeedLimit}}) ---
     // UI postConfigJson() posts here as application/json. Without this branch the
     // body was silently dropped and legacyOffset/overrideSpeedLimit never reached
@@ -6074,6 +6114,7 @@ static void handleSettingsExport()
     bool storedForce = forceActivate;
     bool storedBootCan = bootCanActive;
     bool storedApGate = apInjectionGate;
+    bool storedApFirstEdge = dashInstantEngage;
     bool storedApRestore = apAutoRestore;
     bool spAuto = dashSpeedProfileAuto;
     uint8_t spSel = dashManualSpeedProfile;
@@ -6143,6 +6184,7 @@ static void handleSettingsExport()
         storedForce = p.getBool("force_act", forceActivate);
         storedBootCan = p.getBool("boot_can", bootCanActive);
         storedApGate = p.getBool("ap_gate", apInjectionGate);
+        storedApFirstEdge = p.getBool("apfe", dashInstantEngage);
         storedApRestore = p.getBool("ap_rst", apAutoRestore);
         spAuto = p.getBool("sp_auto", dashSpeedProfileAuto);
         spSel = p.getUChar("sp_sel", dashManualSpeedProfile);
@@ -6253,6 +6295,7 @@ static void handleSettingsExport()
     j += ",\"force\":" + String(storedForce ? "true" : "false");
     j += ",\"bootCan\":" + String(storedBootCan ? "true" : "false");
     j += ",\"apGate\":" + String(storedApGate ? "true" : "false");
+    j += ",\"apFirstEdge\":" + String(storedApFirstEdge ? "true" : "false");
     j += ",\"apAutoRestore\":" + String(storedApRestore ? "true" : "false");
     j += ",\"speedProfileAuto\":" + String(spAuto ? "true" : "false") + ",\"speedProfile\":" + String(spSel);
     j += ",\"driveProfile\":" + String(storedDriveProfile);
@@ -6416,6 +6459,8 @@ static void handleSettingsImport()
             p.putBool("boot_can", device["bootCan"].as<bool>());
         if (device["apGate"].is<bool>())
             p.putBool("ap_gate", device["apGate"].as<bool>());
+        if (device["apFirstEdge"].is<bool>())
+            p.putBool("apfe", device["apFirstEdge"].as<bool>());
         if (device["apAutoRestore"].is<bool>())
             p.putBool("ap_rst", device["apAutoRestore"].as<bool>());
         if (device["speedProfileAuto"].is<bool>())
