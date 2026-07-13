@@ -55,6 +55,8 @@ class NoEpasNagContract(unittest.TestCase):
         self.helpers = (ROOT / "include" / "can_helpers.h").read_text()
         self.handlers = (ROOT / "include" / "handlers.h").read_text()
         self.reactive = (ROOT / "include" / "dash_reactive_nag.h").read_text()
+        self.reactive_hold = (ROOT / "include" / "dash_reactive_hold_nag.h").read_text()
+        self.echo_builder = (ROOT / "include" / "dash_legacy_370_echo.h").read_text()
         self.legacy = legacy_handler_block(self.handlers)
 
     def test_no_native_epas_nag_env(self) -> None:
@@ -135,18 +137,55 @@ class NoEpasNagContract(unittest.TestCase):
             "0x399 block must not mutate any frame.data byte",
         )
 
-        # data[4] handsOnLevel=1 is forged only inside the LegacyHandler 0x370 echo block.
+        # Shared 0x370 builder owns hands-on, counter, and checksum framing.
         echo_start = self.legacy.index("if (frame.id == 880")
         echo_end = self.legacy.index("// STW_ACTN_RQ", echo_start)
         echo_block = self.legacy[echo_start:echo_end]
-        self.assertIn(
-            "(frame.data[4] & 0x3F) | 0x40",
-            echo_block,
-            "data[4] handsOnLevel=1 must be forged on 0x370 echo",
-        )
+        self.assertIn("dashBuildLegacy370Echo(frame, d2lo, d3, true)", echo_block)
+        self.assertIn("(source.data[4] & 0x3F) | 0x40", self.echo_builder)
+
         self.assertIn("DashReactiveNagBurst", self.reactive)
         for token in ["kBurstOnMs{1000}", "kBurstOffMs{1500}", "kMaxSignedOutRaw{180}"]:
             self.assertIn(token, self.reactive, f"v4 hard bound missing: {token}")
+
+        # Mode 3 is explicit, opt-in, bounded, and only sampled from 0x399.
+        self.assertIn("DashReactiveHoldNag reactiveHoldNag", self.legacy)
+        self.assertIn("DashNagMode::ReactiveHold", self.legacy)
+        self.assertIn('std::strcmp(mode, "reactive_hold")', self.legacy)
+        self.assertIn("reactiveHoldNag.onNagSample(hos, nowMs, active)", block)
+        for token in [
+            "kReactiveAmp = 70",
+            "kReactiveJitter = 15",
+            "kProactiveAmp = 35",
+            "kProactiveJitter = 12",
+            "kReactiveCooldownMs = 800",
+            "kProactiveIntervalMinMs = 2000",
+            "kProactiveIntervalMaxMs = 5000",
+            "std::min(95, value)",
+            "std::min(0x0FFF, torque + kHumanWeight + clampHold(hold))",
+        ]:
+            self.assertIn(token, self.reactive_hold, f"Reactive Hold bound missing: {token}")
+        for token in [
+            "reactiveHoldNag.shouldEcho(nowMs)",
+            "reactiveHoldNag.computeHold(nowMs)",
+            "reactiveHoldNag.applyToFrame(d2lo, d3, hold)",
+            "reactiveHoldNag.notifyEchoSent()",
+        ]:
+            self.assertIn(token, echo_block)
+
+    def test_reactive_hold_send_is_abort_guarded_and_counts_only_success(self) -> None:
+        echo_start = self.legacy.index("if (frame.id == 880")
+        echo_end = self.legacy.index("// STW_ACTN_RQ", echo_start)
+        echo_block = self.legacy[echo_start:echo_end]
+        reactive_start = echo_block.index("if (reactiveHoldSelected())")
+        reactive_end = echo_block.index("if (!humanReplaySelected())", reactive_start)
+        reactive = echo_block[reactive_start:reactive_end]
+        guard_idx = reactive.index("abortGuard.allowsInjection()")
+        send_idx = reactive.index("if (driver.send(echo))")
+        notify_idx = reactive.index("reactiveHoldNag.notifyEchoSent()")
+        self.assertLess(guard_idx, send_idx)
+        self.assertGreater(notify_idx, send_idx)
+        self.assertIn("DashAbortGuardBlockPath::Nag", reactive[:send_idx])
 
     def test_legacy_speed_safety_v2_does_not_add_forbidden_writes(self) -> None:
         """Smart Legacy speed may only write 0x2F8; Abort Guard may not introduce new write paths."""
@@ -205,10 +244,10 @@ class Tsl6pBurstNagV4Contract(unittest.TestCase):
         block_start = self.legacy.index("if (frame.id == 880")
         block_end = self.legacy.index("// STW_ACTN_RQ", block_start)
         block = self.legacy[block_start:block_end]
-        for token in ["bionicSteering", "APActive", "checkAD", "gateReason", "nag.shouldEcho", "nag.peekReplayDelta", "nag.commitReplayDelta", "nag.failReplayTx", "nag.advance"]:
+        for token in ["bionicSteering", "APActive", "checkAD", "gateReason", "humanReplaySelected", "nag.shouldEcho", "nag.peekReplayDelta", "nag.commitReplayDelta", "nag.failReplayTx", "nag.advance"]:
             self.assertIn(token, block)
         self.assertIn("nag.applyToFrame", block)
-        self.assertIn("(frame.data[4] & 0x3F) | 0x40", block)
+        self.assertIn("dashBuildLegacy370Echo(frame, d2lo, d3, true)", block)
 
     def test_v4_legacy_echo_is_abort_guard_gated_before_send(self) -> None:
         block_start = self.legacy.index("if (frame.id == 880")
@@ -247,7 +286,7 @@ class EpasLateEchoContract(unittest.TestCase):
     def test_late_echo_uses_tick_not_immediate_send(self) -> None:
         epas_branch_start = self.legacy.index("if (frame.id == 880)")
         late_branch_start = self.legacy.index("if (lateEchoSelected())", epas_branch_start)
-        late_branch_end = self.legacy.index("if (!legacyTsl6pSelected()", late_branch_start)
+        late_branch_end = self.legacy.index("if (frame.dlc < 8)", late_branch_start)
         late_branch = self.legacy[late_branch_start:late_branch_end]
         self.assertIn("lateNag.onEpasFrame", late_branch)
         self.assertNotIn("driver.send", late_branch)

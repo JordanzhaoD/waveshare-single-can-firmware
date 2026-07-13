@@ -726,6 +726,19 @@ void test_reactive_hold_apply_to_frame_adds_human_weight_and_hold()
     TEST_ASSERT_EQUAL_INT(0x0812 + 8 + 70, output);
 }
 
+void test_reactive_hold_apply_to_frame_saturates_at_12bit_max()
+{
+    DashReactiveHoldNag engine;
+    engine.init(8);
+    uint8_t data2LowNibble = 0x0F;
+    uint8_t data3 = 0x99;
+
+    engine.applyToFrame(data2LowNibble, data3, 95);
+
+    const int output = (static_cast<int>(data2LowNibble) << 8) | data3;
+    TEST_ASSERT_EQUAL_HEX16(0x0FFF, output);
+}
+
 void test_reactive_hold_uint32_wrap_does_not_extend_burst_indefinitely()
 {
     DashReactiveHoldNag engine;
@@ -879,6 +892,7 @@ int main()
     RUN_TEST(test_reactive_hold_reset_counters_preserves_active_state_and_seeded_schedule);
     RUN_TEST(test_reactive_hold_init_with_same_seed_is_deterministic);
     RUN_TEST(test_reactive_hold_apply_to_frame_adds_human_weight_and_hold);
+    RUN_TEST(test_reactive_hold_apply_to_frame_saturates_at_12bit_max);
     RUN_TEST(test_reactive_hold_uint32_wrap_does_not_extend_burst_indefinitely);
     RUN_TEST(test_reactive_hold_proactive_deadline_is_wrap_safe);
     RUN_TEST(test_reactive_hold_sparse_delay_retires_burst_at_real_time_end);

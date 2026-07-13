@@ -162,7 +162,7 @@ public:
     {
         int torque = (static_cast<int>(data2LowNibble & 0x0F) << 8) |
                      static_cast<int>(data3);
-        torque += kHumanWeight + clampHold(hold);
+        torque = std::min(0x0FFF, torque + kHumanWeight + clampHold(hold));
         data2LowNibble = static_cast<uint8_t>((torque >> 8) & 0x0F);
         data3 = static_cast<uint8_t>(torque & 0xFF);
     }
