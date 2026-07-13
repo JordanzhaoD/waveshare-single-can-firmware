@@ -1,6 +1,7 @@
 #include <unity.h>
 #include "can_frame_types.h"
 #include "can_helpers.h"
+#include "dash_config_update.h"
 
 void setUp()
 {
@@ -365,6 +366,116 @@ void test_softEngageRelease_negative_angle_holds()
                                             true, false, 50));
 }
 
+void test_strict_bool_parser_accepts_documented_values_case_insensitively()
+{
+    struct Case
+    {
+        const char *raw;
+        bool expected;
+    };
+    const Case cases[] = {
+        {"0", false},
+        {"1", true},
+        {"false", false},
+        {"TRUE", true},
+        {"Off", false},
+        {"oN", true},
+        {"NO", false},
+        {"Yes", true},
+    };
+
+    for (const auto &c : cases)
+    {
+        bool parsed = !c.expected;
+        TEST_ASSERT_TRUE_MESSAGE(dashParseStrictBool(c.raw, parsed), c.raw);
+        TEST_ASSERT_EQUAL_MESSAGE(c.expected, parsed, c.raw);
+    }
+}
+
+void test_strict_bool_parser_rejects_malformed_and_decorated_values()
+{
+    const char *invalid[] = {
+        "",
+        "2",
+        "-1",
+        "enabled",
+        "truthy",
+        "truex",
+        " true",
+        "true ",
+        "yes!",
+        "0x",
+    };
+
+    for (const char *raw : invalid)
+    {
+        bool parsed = true;
+        TEST_ASSERT_FALSE_MESSAGE(dashParseStrictBool(raw, parsed), raw);
+        TEST_ASSERT_TRUE_MESSAGE(parsed, raw);
+    }
+
+    bool parsed = false;
+    TEST_ASSERT_FALSE(dashParseStrictBool(nullptr, parsed));
+    TEST_ASSERT_FALSE(parsed);
+}
+
+void test_persisted_bool_update_invalid_input_never_calls_persistence()
+{
+    int calls = 0;
+    auto update = dashPreparePersistedBoolUpdate(
+        "truex", true,
+        [&calls](bool)
+        {
+            calls++;
+            return true;
+        });
+
+    TEST_ASSERT_FALSE(update.valid);
+    TEST_ASSERT_FALSE(update.persisted);
+    TEST_ASSERT_TRUE(update.value);
+    TEST_ASSERT_EQUAL_INT(0, calls);
+}
+
+void test_persisted_bool_update_failure_preserves_runtime_value()
+{
+    int calls = 0;
+    bool attempted = false;
+    auto update = dashPreparePersistedBoolUpdate(
+        "yes", false,
+        [&calls, &attempted](bool value)
+        {
+            calls++;
+            attempted = value;
+            return false;
+        });
+
+    TEST_ASSERT_TRUE(update.valid);
+    TEST_ASSERT_FALSE(update.persisted);
+    TEST_ASSERT_FALSE(update.value);
+    TEST_ASSERT_EQUAL_INT(1, calls);
+    TEST_ASSERT_TRUE(attempted);
+}
+
+void test_persisted_bool_update_success_returns_new_value_after_write()
+{
+    int calls = 0;
+    bool persistedValue = true;
+    auto update = dashPreparePersistedBoolUpdate(
+        "off", true,
+        [&calls, &persistedValue](bool value)
+        {
+            calls++;
+            persistedValue = value;
+            return true;
+        });
+
+    TEST_ASSERT_TRUE(update.valid);
+    TEST_ASSERT_TRUE(update.persisted);
+    TEST_ASSERT_FALSE(update.value);
+    TEST_ASSERT_EQUAL_INT(1, calls);
+    TEST_ASSERT_FALSE(persistedValue);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -418,6 +529,12 @@ int main()
     RUN_TEST(test_softEngageRelease_invalid_validity_holds);
     RUN_TEST(test_softEngageRelease_threshold_boundary_is_inclusive);
     RUN_TEST(test_softEngageRelease_negative_angle_holds);
+
+    RUN_TEST(test_strict_bool_parser_accepts_documented_values_case_insensitively);
+    RUN_TEST(test_strict_bool_parser_rejects_malformed_and_decorated_values);
+    RUN_TEST(test_persisted_bool_update_invalid_input_never_calls_persistence);
+    RUN_TEST(test_persisted_bool_update_failure_preserves_runtime_value);
+    RUN_TEST(test_persisted_bool_update_success_returns_new_value_after_write);
 
     return UNITY_END();
 }

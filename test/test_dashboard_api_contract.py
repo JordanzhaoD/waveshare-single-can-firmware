@@ -18,6 +18,9 @@ README = ROOT / "README.md"
 TESTS_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 SIMULATOR = ROOT / "scripts" / "webui_simulator.py"
+DASH_CONFIG_UPDATE = ROOT / "include" / "dash_config_update.h"
+ESPIDF_RUNTIME_H = ROOT / "include" / "platform" / "espidf_runtime.h"
+ESPIDF_RUNTIME_CPP = ROOT / "src" / "espidf_runtime.cpp"
 
 
 class DashboardApiContractTests(unittest.TestCase):
@@ -36,6 +39,9 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.tests_workflow = TESTS_WORKFLOW.read_text(encoding="utf-8")
         cls.release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         cls.simulator = SIMULATOR.read_text(encoding="utf-8")
+        cls.dash_config_update = DASH_CONFIG_UPDATE.read_text(encoding="utf-8")
+        cls.espidf_runtime_h = ESPIDF_RUNTIME_H.read_text(encoding="utf-8")
+        cls.espidf_runtime_cpp = ESPIDF_RUNTIME_CPP.read_text(encoding="utf-8")
 
     def _standalone_visible_source(self) -> str:
         """Return the source UI surface visible after standalone product gating.
@@ -107,6 +113,36 @@ class DashboardApiContractTests(unittest.TestCase):
         start = max(0, idx - 250)
         end = min(len(self.dash), idx + 250)
         return self.dash[start:end]
+
+    def test_checked_boolean_persistence_contract(self) -> None:
+        self.assertIn("bool dashParseStrictBool(const char *raw, bool &out)", self.dash_config_update)
+        self.assertIn("struct DashPersistedBoolUpdate", self.dash_config_update)
+        self.assertIn("dashPreparePersistedBoolUpdate", self.dash_config_update)
+        self.assertIn("bool putBoolChecked(const char *key, bool value);", self.espidf_runtime_h)
+
+        checked = re.search(
+            r"bool Preferences::putBoolChecked\(const char \*key, bool value\).*?\n\}",
+            self.espidf_runtime_cpp,
+            re.S,
+        )
+        self.assertIsNotNone(checked)
+        checked_body = checked.group(0)
+        for token in [
+            "if (!open_ || readOnly_)",
+            "nvs_set_u8(handle_, key, value ? 1 : 0)",
+            "nvs_commit(handle_)",
+            "return false;",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, checked_body)
+
+        legacy = re.search(
+            r"void Preferences::putBool\(const char \*key, bool value\).*?\n\}",
+            self.espidf_runtime_cpp,
+            re.S,
+        )
+        self.assertIsNotNone(legacy)
+        self.assertIn("(void)putBoolChecked(key, value);", legacy.group(0))
 
     def test_dashboard_ui_generation_is_dependency_aware(self) -> None:
         """PlatformIO must rebuild firmware when the generated dashboard header changes."""

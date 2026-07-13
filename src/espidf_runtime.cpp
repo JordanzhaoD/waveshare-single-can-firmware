@@ -359,9 +359,18 @@ void Preferences::putUInt(const char *key, uint32_t value)
     }
 }
 
+bool Preferences::putBoolChecked(const char *key, bool value)
+{
+    if (!open_ || readOnly_)
+        return false;
+    if (nvs_set_u8(handle_, key, value ? 1 : 0) != ESP_OK)
+        return false;
+    return nvs_commit(handle_) == ESP_OK;
+}
+
 void Preferences::putBool(const char *key, bool value)
 {
-    putUChar(key, value ? 1 : 0);
+    (void)putBoolChecked(key, value);
 }
 
 void Preferences::putString(const char *key, const String &value)
