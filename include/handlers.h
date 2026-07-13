@@ -13,6 +13,7 @@
 #include "dash_abort_guard.h"
 #include "dash_nag_mode.h"
 #include "dash_reactive_nag.h"
+#include "dash_legacy_370_echo.h"
 #include "dash_epas_late_echo.h"
 #include "dash_fsd_diag.h"
 
@@ -518,29 +519,13 @@ struct LegacyHandler : public CarManagerBase
             }
             if (useReplay)
             {
-                CanFrame echo;
-                echo.id = 880;
-                echo.dlc = 8;
-                echo.data[0] = frame.data[0];
-                echo.data[1] = frame.data[1];
-
                 uint8_t d2lo = frame.data[2] & 0x0F;
                 uint8_t d3 = frame.data[3];
                 int signedBase = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
                 nag.noteBaseTorqueRaw(signedBase);
                 int target = nag.peekReplayDelta(nowMs);
                 nag.applyToFrame(d2lo, d3, target);
-                echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) | d2lo);
-                echo.data[3] = d3;
-
-                echo.data[4] = static_cast<uint8_t>((frame.data[4] & 0x3F) | 0x40);
-                echo.data[5] = frame.data[5];
-                uint8_t cnt = static_cast<uint8_t>(frame.data[6] & 0x0F);
-                cnt = static_cast<uint8_t>((cnt + 1) & 0x0F);
-                echo.data[6] = static_cast<uint8_t>((frame.data[6] & 0xF0) | cnt);
-                uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] +
-                               echo.data[4] + echo.data[5] + echo.data[6];
-                echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+                CanFrame echo = dashBuildLegacy370Echo(frame, d2lo, d3, true);
                 bool ok = driver.send(echo);
                 if (ok)
                 {

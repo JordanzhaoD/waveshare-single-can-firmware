@@ -5,6 +5,7 @@
 #include "can_helpers.h"
 #include "handlers.h"
 #include "dash_epas_late_echo.h"
+#include "dash_legacy_370_echo.h"
 #include "drivers/mock_driver.h"
 
 static uint32_t nativeDiagFutureMs(uint32_t leadMs)
@@ -161,6 +162,47 @@ void setUp()
 }
 
 void tearDown() {}
+
+void test_legacy_370_echo_builder_rewrites_only_expected_fields()
+{
+    CanFrame source = makeEpasFrame(3, 0.20f, 0x0E);
+    source.bus = CAN_BUS_VEH;
+    const uint8_t sourceData0 = source.data[0];
+    const uint8_t sourceData1 = source.data[1];
+    const uint8_t sourceData2High = source.data[2] & 0xF0;
+    const uint8_t sourceData4Low = source.data[4] & 0x3F;
+    const uint8_t sourceData5 = source.data[5];
+    const uint8_t sourceData6High = source.data[6] & 0xF0;
+
+    CanFrame echo = dashBuildLegacy370Echo(source, 0x08, 0xB6, true);
+
+    TEST_ASSERT_EQUAL_HEX32(0x370, echo.id);
+    TEST_ASSERT_EQUAL_UINT8(8, echo.dlc);
+    TEST_ASSERT_EQUAL_UINT8(CAN_BUS_VEH, echo.bus);
+    TEST_ASSERT_EQUAL_HEX8(sourceData0, echo.data[0]);
+    TEST_ASSERT_EQUAL_HEX8(sourceData1, echo.data[1]);
+    TEST_ASSERT_EQUAL_HEX8(sourceData2High, echo.data[2] & 0xF0);
+    TEST_ASSERT_EQUAL_HEX8(0x08, echo.data[2] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(0xB6, echo.data[3]);
+    TEST_ASSERT_EQUAL_HEX8(sourceData4Low, echo.data[4] & 0x3F);
+    TEST_ASSERT_EQUAL_HEX8(0x40, echo.data[4] & 0xC0);
+    TEST_ASSERT_EQUAL_HEX8(sourceData5, echo.data[5]);
+    TEST_ASSERT_EQUAL_HEX8(sourceData6High, echo.data[6] & 0xF0);
+    TEST_ASSERT_EQUAL_HEX8(0x0F, echo.data[6] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(computeVehicleChecksum(echo), echo.data[7]);
+}
+
+void test_legacy_370_echo_builder_preserves_hands_on_when_not_forced()
+{
+    CanFrame source = makeEpasFrame(3, -0.20f, 0x0F);
+    const uint8_t sourceHandsOn = source.data[4];
+
+    CanFrame echo = dashBuildLegacy370Echo(source, 0x07, 0x42, false);
+
+    TEST_ASSERT_EQUAL_HEX8(sourceHandsOn, echo.data[4]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, echo.data[6] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(computeVehicleChecksum(echo), echo.data[7]);
+}
 
 // --- Speed profile from stalk position (CAN ID 69) ---
 
@@ -945,6 +987,10 @@ void test_legacy_tsl6p_hos3_sends_first_sequence_frame()
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(880, mock.sent[0].id);
+    TEST_ASSERT_EQUAL_HEX8(epas.data[0], mock.sent[0].data[0]);
+    TEST_ASSERT_EQUAL_HEX8(epas.data[1], mock.sent[0].data[1]);
+    TEST_ASSERT_EQUAL_HEX8(epas.data[2] & 0xF0, mock.sent[0].data[2] & 0xF0);
+    TEST_ASSERT_EQUAL_HEX8(epas.data[5], mock.sent[0].data[5]);
     TEST_ASSERT_EQUAL_INT(180, decodeEchoTorqueSigned(mock.sent[0]));
     TEST_ASSERT_EQUAL_UINT8(1, decodeEchoHandsOnLevel(mock.sent[0]));
     TEST_ASSERT_EQUAL_UINT8(3, counterLowNibble(mock.sent[0]));
@@ -1306,6 +1352,9 @@ void test_epas_late_echo_short_370_cancels_pending_before_due()
 int main()
 {
     UNITY_BEGIN();
+
+    RUN_TEST(test_legacy_370_echo_builder_rewrites_only_expected_fields);
+    RUN_TEST(test_legacy_370_echo_builder_preserves_hands_on_when_not_forced);
 
     RUN_TEST(test_legacy_filter_ids_count);
     RUN_TEST(test_legacy_filter_ids_values);
