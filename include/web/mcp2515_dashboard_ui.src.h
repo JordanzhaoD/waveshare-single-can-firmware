@@ -187,6 +187,8 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .sel-cards.c4 { grid-template-columns: repeat(4, 1fr); }
 .sel-cards.inactive { opacity: .45; }
 .sel-cards.inactive .sel-card { pointer-events: none; cursor: not-allowed; }
+.toggle-row.inactive { opacity: .45; }
+.toggle-row.inactive .tgl { cursor: not-allowed; }
 .sel-card { background: var(--card-bg-alt); border: 2px solid var(--border);
   border-radius: 12px; padding: 24px 14px; text-align: center; cursor: pointer;
   transition: border-color .15s, background .15s; }
@@ -869,6 +871,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="sel-card" data-value="2000" onclick="setApDelayCards(2000)"><div class="sel-lbl">推荐</div><div class="sel-name">2.0</div></div>
   <div class="sel-card" data-value="3000" onclick="setApDelayCards(3000)"><div class="sel-lbl">保守</div><div class="sel-name">3.0</div></div>
 </div></div>
+          <div class="ctl-row toggle-row"><div><div class="cn">Instant Engage (experimental)</div><div class="cd">Allow the first eligible injection immediately when AP truly becomes engaged.</div></div>
+            <label class="tgl"><input class="ap-instant-edge-tgl" type="checkbox" onchange="saveInstantEngage(this)"><div class="tgl-track"></div></label></div>
           <div class="ctl-row"><div><div class="cn">AP 自动恢复</div><div class="cd">重启后恢复上次 AP 配置</div></div>
             <label class="tgl"><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
           <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
@@ -1399,6 +1403,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="sel-card" data-value="2000" onclick="setApDelayCards(2000)"><div class="sel-lbl">推荐</div><div class="sel-name">2.0</div></div>
   <div class="sel-card" data-value="3000" onclick="setApDelayCards(3000)"><div class="sel-lbl">保守</div><div class="sel-name">3.0</div></div>
 </div>
+  </div>
+  <div class="setting-row toggle-row">
+    <div>
+      <div class="setting-name">Instant Engage (experimental)</div>
+      <div class="setting-desc">Allow the first eligible injection immediately when AP truly becomes engaged.</div>
+    </div>
+    <label class="tgl"><input class="ap-instant-edge-tgl" type="checkbox" onchange="saveInstantEngage(this)"><div class="tgl-track"></div></label>
   </div>
   <div class="setting-row">
     <div>
@@ -2054,6 +2065,21 @@ function syncNagModeAvailability(parentEnabled){
   if(wrap)wrap.classList.toggle('inactive',!parentEnabled);
   var sel=$('nag-mode-select');
   if(sel)sel.disabled=!parentEnabled;
+}
+var instantEngageValue=false;
+function syncInstantEngage(value,parentEnabled){
+  document.querySelectorAll('.ap-instant-edge-tgl').forEach(function(el){
+    el.checked=!!value;
+    el.disabled=!parentEnabled;
+    var row=el.closest('.toggle-row');
+    if(row)row.classList.toggle('inactive',!parentEnabled);
+  });
+}
+function apGateParentEnabled(){
+  var core=$('ap-core-gate-tgl');
+  if(core)return !!core.checked;
+  var gate=$('ap-gate-tgl');
+  return !!(gate&&gate.checked);
 }
 function selectCard(id,value){
   var sel=$(id); if(!sel)return;
@@ -2876,6 +2902,28 @@ async function saveSpeedCustom(){
   setStatusTriplet('speed','custom','cp1-cp4 已保存','等待 /status 速度确认','warn');
 }
 
+async function loadInstantEngageConfig(){
+  var d=await fetchJson('/config');
+  if(!d||d.ap_first_edge===undefined)return false;
+  instantEngageValue=!!d.ap_first_edge;
+  syncInstantEngage(instantEngageValue,apGateParentEnabled());
+  return true;
+}
+async function saveInstantEngage(src){
+  var checked=!!(src&&src.checked);
+  syncInstantEngage(checked,apGateParentEnabled());
+  try{
+    await postForm('/config',{ap_first_edge:checked?'1':'0'});
+    instantEngageValue=checked;
+    syncInstantEngage(instantEngageValue,apGateParentEnabled());
+    showToast(T('已保存')||'Saved',true);
+  }catch(e){
+    var restored=await loadInstantEngageConfig();
+    if(!restored)syncInstantEngage(instantEngageValue,apGateParentEnabled());
+    showToast(T('保存失败')||'Save failed',false);
+  }
+}
+
 // ── Save Config (generic toggle) ───────────────────────────
 async function saveConfig(){
   var data={};
@@ -2887,12 +2935,16 @@ async function saveConfig(){
 }
 function updateApGateControl(d){
   var gate=$('ap-gate-tgl');
-  if(gate&&d)gate.checked=!!d.apGateEnabled;
+  var parentEnabled=!!(d&&d.apGateEnabled);
+  if(gate)gate.checked=parentEnabled;
+  syncInstantEngage(instantEngageValue,parentEnabled);
 }
 async function saveApGate(){
   var gate=$('ap-gate-tgl');
-  try{await postForm('/config',{apg:gate&&gate.checked?'1':'0'});}
-  catch(e){if(gate)gate.checked=!gate.checked}
+  var parentEnabled=!!(gate&&gate.checked);
+  syncInstantEngage(instantEngageValue,parentEnabled);
+  try{await postForm('/config',{apg:parentEnabled?'1':'0'});}
+  catch(e){if(gate)gate.checked=!gate.checked;syncInstantEngage(instantEngageValue,!parentEnabled)}
 }
 
 // ── AP injection core controls (standalone driving status) ────────────
@@ -2900,6 +2952,7 @@ async function saveApGateControls(){
   var gate=document.getElementById('ap-core-gate-tgl');
   var delay=document.getElementById('ap-delay-select');
   var restore=document.getElementById('ap-auto-restore-tgl');
+  syncInstantEngage(instantEngageValue,!!(gate&&gate.checked));
   try{
     await postForm('/config',{
       apg:gate&&gate.checked?'1':'0',
@@ -2936,6 +2989,7 @@ function renderApInjectionState(d){
   setText('ap-core-state-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));
   setText('injection-source',d.injectionSource||'Disabled');
   var apg=document.getElementById('ap-core-gate-tgl'); if(apg)apg.checked=!!d.apGateEnabled;
+  syncInstantEngage(instantEngageValue,!!d.apGateEnabled);
   var delayVal=(d.apDelayMs!=null&&d.apDelayMs!==undefined)?d.apDelayMs:(req||2000);
   document.querySelectorAll('.ap-delay-select').forEach(function(s){if(document.activeElement!==s)s.value=String(delayVal);});
   updateApDelayCards();
@@ -4191,6 +4245,7 @@ document.addEventListener('DOMContentLoaded',function(){
   loadFirmwareInfo();
   loadCanPins();
   loadLegacyFsdConfig();
+  loadInstantEngageConfig();
   loadPlugins();
 
   // Start polling

@@ -225,6 +225,23 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertEqual(self.dash.count(declaration), 1)
         self.assertNotIn("dashInstantEngage = false", self.dash.replace(declaration, "", 1))
 
+    def test_instant_engage_ui_uses_existing_config_contract(self) -> None:
+        self.assertEqual(self.ui.count('class="ap-instant-edge-tgl"'), 2)
+        self.assertIn("async function loadInstantEngageConfig()", self.ui)
+        self.assertIn("fetchJson('/config')", self.ui)
+        self.assertIn("d.ap_first_edge", self.ui)
+        self.assertIn("ap_first_edge:checked?'1':'0'", self.ui)
+        self.assertIn("loadInstantEngageConfig()", self.ui)
+        self.assertNotIn("'/ap_first_edge'", self.ui)
+        for token in [
+            "ap-instant-edge-tgl",
+            "Instant Engage (experimental)",
+            "syncInstantEngage",
+            "ap_first_edge",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui_gen)
+
     def test_dashboard_ui_generation_is_dependency_aware(self) -> None:
         """PlatformIO must rebuild firmware when the generated dashboard header changes."""
         build_script = (ROOT / "scripts" / "update_ota_build_timestamp.py").read_text(encoding="utf-8")

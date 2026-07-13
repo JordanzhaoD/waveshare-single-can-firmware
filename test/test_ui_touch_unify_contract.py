@@ -92,6 +92,36 @@ class ApDelayCardsTests(TouchUnifyTests):
         self.assert_present('class="ap-delay-select"')
 
 
+class InstantEngageToggleTests(TouchUnifyTests):
+    def test_desktop_and_mobile_controls_are_present(self):
+        self.assertEqual(SRC.count('class="ap-instant-edge-tgl"'), 2)
+        self.assertEqual(SRC.count('Instant Engage (experimental)'), 2)
+        self.assertEqual(
+            SRC.count('Allow the first eligible injection immediately when AP truly becomes engaged.'),
+            2,
+        )
+
+    def test_sync_preserves_checked_value_when_parent_is_disabled(self):
+        sync = re.search(r"function syncInstantEngage\([^)]*\)\{.*?\n\}", SRC, re.S)
+        self.assertIsNotNone(sync)
+        body = sync.group(0)
+        self.assertIn("document.querySelectorAll('.ap-instant-edge-tgl')", body)
+        self.assertIn("el.checked=!!value", body)
+        self.assertIn("el.disabled=!parentEnabled", body)
+        self.assertIn("classList.toggle('inactive',!parentEnabled)", body)
+        self.assertNotIn("checked=false", body)
+
+    def test_save_uses_existing_config_and_restores_backend_on_failure(self):
+        save = re.search(r"async function saveInstantEngage\([^)]*\)\{.*?\n\}", SRC, re.S)
+        self.assertIsNotNone(save)
+        body = save.group(0)
+        self.assertIn("postForm('/config'", body)
+        self.assertIn("ap_first_edge:checked?'1':'0'", body)
+        self.assertIn("loadInstantEngageConfig()", body)
+        self.assertIn("showToast(T('保存失败')||'Save failed',false)", body)
+        self.assertNotIn("/ap_first_edge", body)
+
+
 class LegacyOffsetModeCardsTests(TouchUnifyTests):
     def test_mode_cards_present(self):
         self.assert_present('data-for="legacy-offset-mode"')
