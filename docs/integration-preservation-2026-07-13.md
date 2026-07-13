@@ -6,10 +6,21 @@ Date: 2026-07-13
 - main: `bce7c91568b6689b3763647a1f8bff9400f37daf`
 - feature/human-replay-nag-v3: `a71b902c1d1753c1d0b5127d424208dc8ac223a7`
 - release/v1.0.8-beta15-safety-hotfix: `f76d181e499fe149ebf26957725f580916df9135`
-- integration/v1.0.8-single-can-experiments-beta16 preservation baseline: `9f2256c6d7501390dca2c2dc76677484b14f4218`
-- integration/v1.0.8-single-can-experiments-beta16 current tip before this manifest: `97518b200276cd35c1b2044ba272b16d9d95eef5`
+- Integration base: `aba16b656bce7c98e60c1e737a04eb7c5141c4be`
+- Preservation/design baseline: `9f2256c6d7501390dca2c2dc76677484b14f4218`
+- Task-start tip: `97518b200276cd35c1b2044ba272b16d9d95eef5`
 
-The integration branch advanced from the protected `9f2256c6d7501390dca2c2dc76677484b14f4218` baseline through two documentation-only planning commits. The protected baseline remains an ancestor of the current tip.
+The integration branch is based on `aba16b656bce7c98e60c1e737a04eb7c5141c4be`. The preservation/design baseline `9f2256c6d7501390dca2c2dc76677484b14f4218` and the Task 1 starting tip `97518b200276cd35c1b2044ba272b16d9d95eef5` are later descendants of that integration base.
+
+### Documentation-only commits from preservation/design baseline to task-start tip
+
+- `89403eb5afffaed9c81bd8bae350c602bdec55a2` — `docs: plan beta16 single-CAN integration`
+  - Added: `docs/superpowers/plans/2026-07-13-v216-beta16-single-can-integration.md`
+- `97518b200276cd35c1b2044ba272b16d9d95eef5` — `docs: align beta16 plan with local AP delay`
+  - Modified: `docs/superpowers/plans/2026-07-13-v216-beta16-single-can-integration.md`
+  - Modified: `docs/superpowers/specs/2026-07-13-v216-beta16-single-can-integration-design.md`
+
+The commit subjects and file scopes above were verified with `git log` and `git diff-tree`; both commits affect documentation only.
 
 ## Dirty tracked files
 - `docs/OPERATION_MANUAL.pdf`
