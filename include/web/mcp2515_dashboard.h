@@ -2309,9 +2309,11 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     bool parked = false;
     bool apActive = false;
     bool summoning = false;
+    DashApFirstDiag ap{};
     if (dashHandler)
     {
         diag = dashHandler->legacyFsdDiag;
+        ap = dashHandler->apFirstDiag(now);
         parked = (bool)dashHandler->Parked;
         apActive = (bool)dashHandler->APActive;
         summoning = (bool)dashHandler->Summoning;
@@ -2339,7 +2341,23 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     appendFsdMuxDiagJson(j, "mux1", diag.mux1, diag.policy == LegacyFsdPolicy::TeslaParity || (diag.policy == LegacyFsdPolicy::Experimental && diag.mux1Enable), now);
     appendFsdMuxDiagJson(j, "aux760", diag.aux760, true, now);
     appendFsdMuxDiagJson(j, "aux1080", diag.aux1080, true, now);
-    j += ",\"gate\":{\"canActive\":";
+    j += R"JSON(,"gate":{"instantEngageEnabled":)JSON";
+    j += dashInstantEngage ? "true" : "false";
+    j += R"JSON(,"apEngaged":)JSON";
+    j += ap.apEngaged ? "true" : "false";
+    j += R"JSON(,"apEdgeCount":)JSON";
+    j += ap.apEdgeCount;
+    j += R"JSON(,"lastApEdgeAgeMs":)JSON";
+    j += ap.hasApEdge ? String(dashAgeMs(now, ap.lastApEdgeMs)) : String(0);
+    j += R"JSON(,"apDebounceBypassCount":)JSON";
+    j += ap.apDebounceBypassCount;
+    j += R"JSON(,"edgePending":)JSON";
+    j += ap.edgePending ? "true" : "false";
+    j += R"JSON(,"debounceSatisfied":)JSON";
+    j += ap.debounceSatisfied ? "true" : "false";
+    j += R"JSON(,"instantBypassLast":)JSON";
+    j += ap.instantBypassLast ? "true" : "false";
+    j += ",\"canActive\":";
     j += canActive ? "true" : "false";
     j += ",\"otaAllowed\":";
     j += dashOtaGuardAllowInjection() ? "true" : "false";
@@ -5641,6 +5659,13 @@ static void dashSerialPrintHelp()
 
 static void dashSerialPrintSystemStatus()
 {
+    const uint32_t now = millis();
+    const DashApFirstDiag ap = dashHandler
+                                  ? dashHandler->apFirstDiag(now)
+                                  : DashApFirstDiag{};
+    const uint32_t lastApEdgeAgeMs = ap.hasApEdge
+                                         ? dashAgeMs(now, ap.lastApEdgeMs)
+                                         : 0;
     uint8_t cpu0Load = 0, cpu1Load = 0;
     bool hasCpuLoad = false;
     dashReadCpuLoad(cpu0Load, cpu1Load, hasCpuLoad);
@@ -5671,7 +5696,7 @@ static void dashSerialPrintSystemStatus()
 
     Serial.println();
     Serial.println("[system_status]");
-    Serial.printf("uptime=%lus firmware=%s idf=%s\n", (millis() - startMs) / 1000, FIRMWARE_VERSION, IDF_VER);
+    Serial.printf("uptime=%lus firmware=%s idf=%s\n", (now - startMs) / 1000, FIRMWARE_VERSION, IDF_VER);
     Serial.printf("cpu=%luMHz load=", (unsigned long)cpuMhz);
     if (hasCpuLoad)
         Serial.printf("CPU0 %u%% CPU1 %u%%\n", cpu0Load, cpu1Load);
@@ -5691,6 +5716,12 @@ static void dashSerialPrintSystemStatus()
     Serial.println();
     if (hasTemp)
         Serial.printf("temp=%.1fC\n", tempC);
+    Serial.printf("instantEngageEnabled=%d apEngaged=%d edgePending=%d debounceSatisfied=%d instantBypassLast=%d\n",
+                  (int)dashInstantEngage, (int)ap.apEngaged, (int)ap.edgePending,
+                  (int)ap.debounceSatisfied, (int)ap.instantBypassLast);
+    Serial.printf("apEdgeCount=%lu lastApEdgeAgeMs=%lu apDebounceBypassCount=%lu\n",
+                  (unsigned long)ap.apEdgeCount, (unsigned long)lastApEdgeAgeMs,
+                  (unsigned long)ap.apDebounceBypassCount);
     Serial.println();
 }
 

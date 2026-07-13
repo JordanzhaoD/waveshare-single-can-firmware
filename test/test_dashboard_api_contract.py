@@ -841,6 +841,54 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.dash)
 
+    def test_instant_engage_runtime_diagnostics_contract(self) -> None:
+        gate_header = (ROOT / "include" / "dash_ap_first_gate.h").read_text(encoding="utf-8")
+        self.assertIn("bool instantBypassLast", gate_header)
+
+        append = re.search(
+            r"static void appendFsdDiagJson\(.*?\n\}",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(append)
+        body = append.group(0)
+        self.assertIn("dashHandler->apFirstDiag(now)", body)
+        for token in [
+            '"instantEngageEnabled"',
+            '"apEngaged"',
+            '"apEdgeCount"',
+            '"lastApEdgeAgeMs"',
+            '"apDebounceBypassCount"',
+            '"edgePending"',
+            '"debounceSatisfied"',
+            '"instantBypassLast"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
+        self.assertIn("ap.hasApEdge", body)
+        self.assertIn("dashAgeMs(now, ap.lastApEdgeMs)", body)
+        self.assertRegex(body, r"ap\.hasApEdge\s*\?\s*String\(dashAgeMs\(now, ap\.lastApEdgeMs\)\)\s*:\s*String\(0\)")
+
+        serial = re.search(
+            r"static void dashSerialPrintSystemStatus\(\).*?static void dashSerialPrintCanStatus\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(serial)
+        serial_body = serial.group(0)
+        self.assertEqual(serial_body.count("dashHandler->apFirstDiag(now)"), 1)
+        for token in [
+            "instantEngageEnabled=",
+            "apEngaged=",
+            "apEdgeCount=",
+            "lastApEdgeAgeMs=",
+            "apDebounceBypassCount=",
+            "instantBypassLast=",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, serial_body)
+        self.assertNotIn('strcmp(start, "ap_first_status")', self.dash)
+
     def test_legacy_tesla_parity_policy_is_wired(self) -> None:
         diag = (ROOT / "include" / "dash_fsd_diag.h").read_text(encoding="utf-8")
         for token in [

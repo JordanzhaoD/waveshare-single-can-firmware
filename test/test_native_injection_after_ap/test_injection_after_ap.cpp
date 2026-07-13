@@ -2,6 +2,7 @@
 #include "can_frame_types.h"
 #include "can_helpers.h"
 #include "dash_ap_first_gate.h"
+#include "dash_twai_diag.h"
 #include "drivers/mock_driver.h"
 #include "handlers.h"
 
@@ -195,6 +196,23 @@ void test_ap_first_gate_engaged_state_matrix()
         TEST_ASSERT_FALSE(DashApFirstGate::isEngagedState(state));
 }
 
+void test_ap_first_gate_edge_age_is_zero_without_edge_and_wrap_safe_after_edge()
+{
+    DashApFirstGate gate;
+    DashApFirstDiag empty = gate.diag(12345);
+    const uint32_t emptyAge = empty.hasApEdge
+                                  ? dashAgeMs(12345, empty.lastApEdgeMs)
+                                  : 0;
+    TEST_ASSERT_EQUAL_UINT32(0, emptyAge);
+    TEST_ASSERT_FALSE(empty.instantBypassLast);
+
+    gate.observe(2, UINT32_MAX - 20);
+    gate.observe(3, UINT32_MAX - 10);
+    DashApFirstDiag wrapped = gate.diag(5);
+    TEST_ASSERT_TRUE(wrapped.hasApEdge);
+    TEST_ASSERT_EQUAL_UINT32(16, dashAgeMs(5, wrapped.lastApEdgeMs));
+}
+
 void test_ap_first_gate_state2_stays_blocked_with_instant_enabled()
 {
     DashApFirstGate gate;
@@ -239,6 +257,8 @@ void test_ap_first_gate_real_edge_waits_configured_debounce()
     TEST_ASSERT_FALSE(before.debounceSatisfied);
     TEST_ASSERT_FALSE(before.instantBypass);
     TEST_ASSERT_FALSE(before.allowed);
+    TEST_ASSERT_FALSE(gate.diag(2199).instantBypassLast);
+    TEST_ASSERT_EQUAL_UINT32(0, gate.diag(2199).apDebounceBypassCount);
 
     DashApFirstDecision atBoundary = gate.decide(true, false, 2000, 2200);
     TEST_ASSERT_TRUE(atBoundary.debounceSatisfied);
@@ -261,6 +281,7 @@ void test_ap_first_gate_instant_bypass_is_one_shot_on_real_edge()
     TEST_ASSERT_FALSE(first.debounceSatisfied);
     TEST_ASSERT_TRUE(first.instantBypass);
     TEST_ASSERT_TRUE(first.allowed);
+    TEST_ASSERT_TRUE(gate.diag(20).instantBypassLast);
 
     DashApFirstDecision repeated = gate.decide(true, true, 2000, 21);
     TEST_ASSERT_FALSE(repeated.edgeDetected);
@@ -270,6 +291,7 @@ void test_ap_first_gate_instant_bypass_is_one_shot_on_real_edge()
 
     DashApFirstDiag diag = gate.diag(21);
     TEST_ASSERT_FALSE(diag.edgePending);
+    TEST_ASSERT_FALSE(diag.instantBypassLast);
     TEST_ASSERT_EQUAL_UINT32(1, diag.apDebounceBypassCount);
 }
 
@@ -373,6 +395,7 @@ void test_ap_first_gate_bypass_counter_requires_unsatisfied_debounce()
     TEST_ASSERT_TRUE(settled.debounceSatisfied);
     TEST_ASSERT_FALSE(settled.instantBypass);
     TEST_ASSERT_TRUE(settled.allowed);
+    TEST_ASSERT_FALSE(gate.diag(300).instantBypassLast);
     TEST_ASSERT_EQUAL_UINT32(0, gate.diag(300).apDebounceBypassCount);
 }
 
@@ -536,6 +559,7 @@ void test_legacy_ap_first_checkad_blocks_final_send()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     DashApFirstDiag diag = handler.apFirstDiag(dashDiagNowMs());
     TEST_ASSERT_FALSE(diag.edgePending);
+    TEST_ASSERT_TRUE(diag.instantBypassLast);
     TEST_ASSERT_EQUAL_UINT32(1, diag.apDebounceBypassCount);
 }
 
@@ -609,6 +633,7 @@ void test_legacy_ap_first_soft_engage_off_center_blocks_final_send()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     DashApFirstDiag diag = handler.apFirstDiag(dashDiagNowMs());
     TEST_ASSERT_FALSE(diag.edgePending);
+    TEST_ASSERT_TRUE(diag.instantBypassLast);
     TEST_ASSERT_EQUAL_UINT32(1, diag.apDebounceBypassCount);
 }
 
@@ -629,6 +654,7 @@ void test_legacy_ap_first_parent_disable_and_runtime_reset_clear_transient_state
     DashApFirstDiag reset = handler.apFirstDiag(500);
     TEST_ASSERT_FALSE(reset.apEngaged);
     TEST_ASSERT_FALSE(reset.edgePending);
+    TEST_ASSERT_FALSE(reset.instantBypassLast);
 }
 
 void test_hw3_enhanced_autopilot_waits_for_ap_before_mux1_injection()
@@ -1023,6 +1049,7 @@ int main()
     UNITY_BEGIN();
 
     RUN_TEST(test_ap_first_gate_engaged_state_matrix);
+    RUN_TEST(test_ap_first_gate_edge_age_is_zero_without_edge_and_wrap_safe_after_edge);
     RUN_TEST(test_ap_first_gate_state2_stays_blocked_with_instant_enabled);
     RUN_TEST(test_ap_first_gate_startup_engaged_is_baseline_not_edge);
     RUN_TEST(test_ap_first_gate_real_edge_waits_configured_debounce);

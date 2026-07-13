@@ -20,6 +20,7 @@ struct DashApFirstDiag
     bool hasApEdge{false};
     uint32_t lastApEdgeMs{0};
     uint32_t apDebounceBypassCount{0};
+    bool instantBypassLast{false};
 };
 
 class DashApFirstGate
@@ -72,6 +73,7 @@ public:
     {
         lastDebounceMs_ = debounceMs;
         haveDebounceConfig_ = true;
+        instantBypassLast_ = false;
 
         DashApFirstDecision decision;
         decision.engaged = apEngaged_;
@@ -101,6 +103,7 @@ public:
         {
             edgePending_ = false;
             apDebounceBypassCount_++;
+            instantBypassLast_ = true;
         }
 
         return decision;
@@ -111,6 +114,7 @@ public:
         haveEngagedSince_ = false;
         engagedSinceMs_ = 0;
         edgePending_ = false;
+        instantBypassLast_ = false;
     }
 
     void resetRuntime()
@@ -136,6 +140,7 @@ public:
         result.hasApEdge = hasApEdge_;
         result.lastApEdgeMs = lastApEdgeMs_;
         result.apDebounceBypassCount = apDebounceBypassCount_;
+        result.instantBypassLast = instantBypassLast_;
         return result;
     }
 
@@ -158,4 +163,5 @@ private:
     bool hasApEdge_{false};
     uint32_t lastApEdgeMs_{0};
     uint32_t apDebounceBypassCount_{0};
+    bool instantBypassLast_{false};
 };
