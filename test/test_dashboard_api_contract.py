@@ -359,11 +359,13 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn('if (dashNagMode > 2)', self.dash)
         self.assertNotIn('if (storedNagMode > 2)', self.dash)
 
-    def test_epas_late_echo_ui_selector_contract(self) -> None:
+    def test_four_mode_nag_ui_selector_contract(self) -> None:
         for token in [
-            "nag-mode-select",
-            "EPAS Late Echo",
-            "实验",
+            'id="nag-mode-select"',
+            '<option value="0">Off</option>',
+            '<option value="1">Human Replay TSL6P</option>',
+            '<option value="2">EPAS Late Echo</option>',
+            '<option value="3">Reactive Sustained Hold</option>',
             "nagMode",
             "defense.nagMode",
             "nag_mode",
@@ -371,11 +373,21 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
 
+        for mode in range(4):
+            with self.subTest(card_mode=mode):
+                self.assertIn(f'data-value="{mode}"', self.ui)
+                self.assertIn(f"selectCard('nag-mode-select',{mode})", self.ui)
+
         load_fn = re.search(r"async function loadDefenseConfig\(\)\{.*?setText\('tb-exp'", self.ui, re.S)
         self.assertIsNotNone(load_fn)
         load_body = load_fn.group(0)
         self.assertIn("setVal('nag-mode-select'", load_body)
         self.assertIn("d.nag_mode", load_body)
+        self.assertIn("syncNagModeAvailability(!!d.enabled)", load_body)
+
+        sync_fn = re.search(r"function syncNagModeAvailability\([^)]*\)\{.*?\n\}", self.ui, re.S)
+        self.assertIsNotNone(sync_fn)
+        self.assertNotIn(".value=", sync_fn.group(0))
 
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
         """Device status must show which firmware/UI and handler mode are running."""

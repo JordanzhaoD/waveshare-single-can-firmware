@@ -46,17 +46,39 @@ class SelCardsBindingTests(TouchUnifyTests):
 
 
 class NagModeCardsTests(TouchUnifyTests):
-    def test_nag_mode_converted_to_cards(self):
-        # 裸 row+label+select 已替换为 setting-row + sel-cards
+    def test_nag_mode_exposes_all_four_stable_modes(self):
+        # 裸 row+label+select 已替换为 setting-row + 四模式 sel-cards。
         self.assert_absent('<div class="row">\n    <label>NAG 模式</label>')
         self.assert_present('data-for="nag-mode-select"')
-        # 隐藏 select 保留作 .value 载体
         self.assertRegex(SRC, r'<select[^>]*id="nag-mode-select"[^>]*display:none')
-        # 两张卡片
-        self.assert_present('onclick="selectCard(\'nag-mode-select\',0)"')
-        self.assert_present('onclick="selectCard(\'nag-mode-select\',2)"')
-        # 旧裸 select（无 display:none）不应再存在为可见控件
+        for option in [
+            '<option value="0">Off</option>',
+            '<option value="1">Human Replay TSL6P</option>',
+            '<option value="2">EPAS Late Echo</option>',
+            '<option value="3">Reactive Sustained Hold</option>',
+        ]:
+            self.assert_present(option)
+        for mode in range(4):
+            self.assert_present(f'onclick="selectCard(\'nag-mode-select\',{mode})"')
+            self.assert_present(f'data-value="{mode}"')
+        self.assert_present('class="sel-cards c4 nag-mode-cards"')
+        # 旧裸 select（无 display:none）不应再存在为可见控件。
         self.assert_absent('<select id="nag-mode-select" onchange="saveDefenseConfig()">')
+
+    def test_nag_mode_load_and_parent_disable_preserve_selection(self):
+        load = re.search(r"async function loadDefenseConfig\(\)\{.*?setText\('tb-exp'", SRC, re.S)
+        self.assertIsNotNone(load)
+        self.assertIn("setVal('nag-mode-select'", load.group(0))
+        self.assertIn("syncNagModeAvailability(!!d.enabled)", load.group(0))
+
+        sync = re.search(r"function syncNagModeAvailability\([^)]*\)\{.*?\n\}", SRC, re.S)
+        self.assertIsNotNone(sync)
+        self.assertIn("classList.toggle('inactive',!parentEnabled)", sync.group(0))
+        self.assertNotIn(".value=", sync.group(0))
+
+        save = re.search(r"async function saveDefenseConfig\(\)\{.*?\n\}", SRC, re.S)
+        self.assertIsNotNone(save)
+        self.assertIn("nagMode: parseInt(val('nag-mode-select')||'0',10)", save.group(0))
 
 
 class ApDelayCardsTests(TouchUnifyTests):

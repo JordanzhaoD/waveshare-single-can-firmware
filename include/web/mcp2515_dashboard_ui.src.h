@@ -185,6 +185,8 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .sel-cards.c2 { grid-template-columns: repeat(2, 1fr); }
 .sel-cards.c3 { grid-template-columns: repeat(3, 1fr); }
 .sel-cards.c4 { grid-template-columns: repeat(4, 1fr); }
+.sel-cards.inactive { opacity: .45; }
+.sel-cards.inactive .sel-card { pointer-events: none; cursor: not-allowed; }
 .sel-card { background: var(--card-bg-alt); border: 2px solid var(--border);
   border-radius: 12px; padding: 24px 14px; text-align: center; cursor: pointer;
   transition: border-color .15s, background .15s; }
@@ -1438,18 +1440,22 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">NAG 模式</div>
-      <div class="setting-desc">Off=关闭；EPAS Late Echo=封闭研究模式（默认关，仅 0x370，保留 handsOnLevel）</div>
+      <div class="setting-desc">四种算法独立选择；总开关关闭时保留已保存模式，仅暂停运行。</div>
     </div>
     <select id="nag-mode-select" style="display:none" onchange="saveDefenseConfig()">
       <option value="0">Off</option>
-      <option value="2">EPAS Late Echo 实验</option>
+      <option value="1">Human Replay TSL6P</option>
+      <option value="2">EPAS Late Echo</option>
+      <option value="3">Reactive Sustained Hold</option>
     </select>
-    <div class="sel-cards c2" data-for="nag-mode-select" style="max-width:240px">
-      <div class="sel-card" data-value="0" onclick="selectCard('nag-mode-select',0)"><div class="sel-lbl">默认</div><div class="sel-name">Off</div></div>
-      <div class="sel-card" data-value="2" onclick="selectCard('nag-mode-select',2)"><div class="sel-lbl">研究</div><div class="sel-name">Late Echo</div></div>
+    <div class="sel-cards c4 nag-mode-cards" data-for="nag-mode-select">
+      <div class="sel-card" data-value="0" onclick="selectCard('nag-mode-select',0)"><div class="sel-lbl">关闭</div><div class="sel-name">Off</div></div>
+      <div class="sel-card" data-value="1" onclick="selectCard('nag-mode-select',1)"><div class="sel-lbl">重放</div><div class="sel-name">TSL6P</div></div>
+      <div class="sel-card" data-value="2" onclick="selectCard('nag-mode-select',2)"><div class="sel-lbl">延迟</div><div class="sel-name">Late Echo</div></div>
+      <div class="sel-card" data-value="3" onclick="selectCard('nag-mode-select',3)"><div class="sel-lbl">持续</div><div class="sel-name">Reactive Hold</div></div>
     </div>
   </div>
-  <div class="hint warn">EPAS Late Echo 为封闭环境研究模式：默认关闭，只发送 0x370，保留 handsOnLevel，cadence/timing 不满足时自动不发。</div>
+  <div class="hint warn">模式编号稳定：0 Off / 1 Human Replay TSL6P / 2 EPAS Late Echo / 3 Reactive Sustained Hold。所有模式仍受防护总开关与既有安全门控约束。</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">扭矩篡改(1.80Nm) <span class="exp-badge">高危</span></div>
@@ -2042,6 +2048,12 @@ function syncSelCardsVisual(id){
     var on=String(cards[i].getAttribute('data-value'))===cur;
     cards[i].classList.toggle('active',on);
   }
+}
+function syncNagModeAvailability(parentEnabled){
+  var wrap=document.querySelector('.nag-mode-cards');
+  if(wrap)wrap.classList.toggle('inactive',!parentEnabled);
+  var sel=$('nag-mode-select');
+  if(sel)sel.disabled=!parentEnabled;
 }
 function selectCard(id,value){
   var sel=$(id); if(!sel)return;
@@ -2690,6 +2702,7 @@ async function loadDefenseConfig(){
   var bioRisk=$('def-bionic-risk');if(bioRisk)bioRisk.style.display=!!d.bionic_steering?'block':'none';
   var conf=(d&&d.defense)?d:{defense:{nagMode:(d&&d.nagMode!=null)?d.nagMode:((d&&d.nag_mode!=null)?d.nag_mode:0)}};
   setVal('nag-mode-select', String((d&&d.nag_mode!=null)?d.nag_mode:((conf&&conf.defense&&conf.defense.nagMode!=null)?conf.defense.nagMode:0)));
+  syncNagModeAvailability(!!d.enabled);
   var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
   var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
   var se=$('def-soft-engage-tgl');if(se)se.checked=!!d.soft_engage;
