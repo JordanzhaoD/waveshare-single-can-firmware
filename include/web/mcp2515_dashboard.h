@@ -2530,11 +2530,17 @@ static void handleStatus()
     j += String(dashNagMode <= 2 ? dashNagMode : 0);
     j += ",\"reactiveNag\":{";
     CarManagerBase *reactive = dashReactiveNagHandler();
-    if (reactive)
+    DashReactiveDiag d = reactive ? reactive->reactiveDiag() : dashMakeDisabledNagDiag();
     {
-        DashReactiveDiag d = reactive->reactiveDiag();
         j += "\"enabled\":";
         j += d.enabled ? "true" : "false";
+        j += R"(,"selectedMode":)";
+        j += String((int)d.selectedMode);
+        j += R"(,"selectedModeName":")";
+        j += jsonEscape(d.selectedModeName);
+        j += R"(","runtimePhase":")";
+        j += jsonEscape(d.runtimePhase);
+        j += "\"";
         j += ",\"mode\":";
         j += String((int)d.mode);
         j += ",\"injecting\":";
@@ -2616,10 +2622,6 @@ static void handleStatus()
         j += R"(,"blockedReason":")";
         j += jsonEscape(d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
         j += "\"";
-    }
-    else
-    {
-        j += "\"enabled\":false";
     }
     j += "}";
     j += ",\"hw3AutoSpeed\":";
@@ -5708,6 +5710,8 @@ static void dashSerialRunCommand(char *cmd)
         if (reactive)
         {
             DashReactiveDiag d = reactive->reactiveDiag();
+            Serial.printf("selectedMode=%u selectedModeName=%s runtimePhase=%s\n",
+                          (unsigned)d.selectedMode, d.selectedModeName, d.runtimePhase);
             Serial.println("=== TSL6P Burst NAG v4 ===");
             Serial.printf("enabled=%d mode=%d injecting=%d amp=%d handsOn=%d nextPhaseMs=%lu\n",
                           (int)d.enabled, (int)d.mode, (int)d.injecting, d.currentAmp,
@@ -5754,6 +5758,9 @@ static void dashSerialRunCommand(char *cmd)
                 Serial.printf("[NVS] rn_ns=%lu rn_rb=%lu rn_pw=%lu rn_es=%lu\n",
                               (unsigned long)p.getUInt("rn_ns", 999), (unsigned long)p.getUInt("rn_rb", 999),
                               (unsigned long)p.getUInt("rn_pw", 999), (unsigned long)p.getUInt("rn_es", 999));
+                Serial.printf("[NVS] rh_ns=%lu rh_rb=%lu rh_pw=%lu rh_es=%lu\n",
+                              (unsigned long)p.getUInt("rh_ns", 999), (unsigned long)p.getUInt("rh_rb", 999),
+                              (unsigned long)p.getUInt("rh_pw", 999), (unsigned long)p.getUInt("rh_es", 999));
                 p.end();
             }
             else
@@ -5769,53 +5776,88 @@ static void dashSerialRunCommand(char *cmd)
     else if (strcmp(start, "reactive_nag_reset") == 0)
     {
         CarManagerBase *reactive = dashReactiveNagHandler();
-        if (reactive)
-            reactive->resetReactiveCounters();
-        Preferences p;
-        if (p.begin(PREFS_NS, false))
+        const DashNagMode selectedMode = dashNagModeFromRaw(dashNagMode);
+        if (!reactive || (selectedMode != DashNagMode::HumanReplayTsl6p &&
+                          selectedMode != DashNagMode::ReactiveHold))
         {
-            p.remove("rn_ns");
-            p.remove("rn_rb");
-            p.remove("rn_pw");
-            p.remove("rn_es");
-            p.end();
-            reactiveCountersLoaded = true; // don't reload stale NVS next loop tick
-            lastReactiveCountersMs = millis();
-            Serial.println("reactive_nag counters reset (RAM + NVS)");
+            Serial.println("selected NAG mode has no persistent counters");
         }
         else
         {
-            reactiveCountersLoaded = false; // retry NVS load later; RAM was still reset above
-            Serial.println("reactive_nag RAM counters reset; NVS reset failed");
+            reactive->resetNagCounters(selectedMode);
+            Preferences p;
+            if (p.begin(PREFS_NS, false))
+            {
+                if (selectedMode == DashNagMode::HumanReplayTsl6p)
+                {
+                    p.remove("rn_ns");
+                    p.remove("rn_rb");
+                    p.remove("rn_pw");
+                    p.remove("rn_es");
+                }
+                else
+                {
+                    p.remove("rh_ns");
+                    p.remove("rh_rb");
+                    p.remove("rh_pw");
+                    p.remove("rh_es");
+                }
+                p.end();
+                reactive->markNagCountersPersisted(selectedMode);
+                reactiveCountersLoaded = true;
+                lastReactiveCountersMs = millis();
+                Serial.println("selected NAG counters reset (RAM + NVS)");
+            }
+            else
+            {
+                Serial.println("selected NAG RAM counters reset; NVS reset failed");
+            }
         }
     }
     else if (strcmp(start, "reactive_nag_bump") == 0)
     {
-        // Persistence self-test: bump counters (magic 111/222/333/444) + immediate
-        // NVS flush. Power-cycle the device, then reactive_nag — values must survive.
+        // Persistence self-test: bump selected counters by 111/222/333/444 and
+        // flush the selected bank immediately.
         CarManagerBase *reactive = dashReactiveNagHandler();
-        if (reactive)
+        const DashNagMode selectedMode = dashNagModeFromRaw(dashNagMode);
+        if (!reactive || (selectedMode != DashNagMode::HumanReplayTsl6p &&
+                          selectedMode != DashNagMode::ReactiveHold))
         {
-            reactive->bumpReactiveCounters();
-            DashReactiveDiag d = reactive->reactiveDiag();
+            Serial.println("selected NAG mode has no persistent counters");
+        }
+        else
+        {
+            reactive->bumpNagCounters(selectedMode);
+            const DashReactiveDiag d = reactive->nagDiagForMode(selectedMode);
             Preferences p;
             if (p.begin(PREFS_NS, false))
             {
-                p.putUInt("rn_ns", d.nagSamples);
-                p.putUInt("rn_rb", d.reactiveBursts);
-                p.putUInt("rn_pw", d.proactiveWiggles);
-                p.putUInt("rn_es", d.echoSent);
+                if (selectedMode == DashNagMode::HumanReplayTsl6p)
+                {
+                    p.putUInt("rn_ns", d.nagSamples);
+                    p.putUInt("rn_rb", d.reactiveBursts);
+                    p.putUInt("rn_pw", d.proactiveWiggles);
+                    p.putUInt("rn_es", d.echoSent);
+                }
+                else
+                {
+                    p.putUInt("rh_ns", d.nagSamples);
+                    p.putUInt("rh_rb", d.reactiveBursts);
+                    p.putUInt("rh_pw", d.proactiveWiggles);
+                    p.putUInt("rh_es", d.echoSent);
+                }
                 p.end();
-                reactiveCountersLoaded = true; // ensure maintenance won't overwrite from stale NVS
+                reactive->markNagCountersPersisted(selectedMode);
+                reactiveCountersLoaded = true;
                 lastReactiveCountersMs = millis();
-                Serial.printf("bumped+flushed: nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu (power-cycle to test persistence)\n",
+                Serial.printf("bumped+flushed mode=%u: nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu\n",
+                              (unsigned)dashNagModeToRaw(selectedMode),
                               (unsigned long)d.nagSamples, (unsigned long)d.reactiveBursts,
                               (unsigned long)d.proactiveWiggles, (unsigned long)d.echoSent);
             }
             else
             {
-                reactiveCountersLoaded = false;
-                Serial.println("reactive_nag bumped RAM counters; NVS flush failed");
+                Serial.println("selected NAG counters bumped in RAM; NVS flush failed");
             }
         }
     }
@@ -7496,25 +7538,57 @@ static void dashReactiveCountersMaintenance()
         Preferences p;
         if (!p.begin(PREFS_NS, false))
             return;
-        uint32_t ns = p.getUInt("rn_ns", 0), rb = p.getUInt("rn_rb", 0),
-                 pw = p.getUInt("rn_pw", 0), es = p.getUInt("rn_es", 0);
+        const uint32_t rnNs = p.getUInt("rn_ns", 0);
+        const uint32_t rnRb = p.getUInt("rn_rb", 0);
+        const uint32_t rnPw = p.getUInt("rn_pw", 0);
+        const uint32_t rnEs = p.getUInt("rn_es", 0);
+        const uint32_t rhNs = p.getUInt("rh_ns", 0);
+        const uint32_t rhRb = p.getUInt("rh_rb", 0);
+        const uint32_t rhPw = p.getUInt("rh_pw", 0);
+        const uint32_t rhEs = p.getUInt("rh_es", 0);
         p.end();
-        reactive->setReactiveCounters(ns, rb, pw, es);
+        reactive->setNagCounters(DashNagMode::HumanReplayTsl6p, rnNs, rnRb, rnPw, rnEs);
+        reactive->setNagCounters(DashNagMode::ReactiveHold, rhNs, rhRb, rhPw, rhEs);
         reactiveCountersLoaded = true;
         lastReactiveCountersMs = now;
         return;
     }
     if (now - lastReactiveCountersMs < 2000)
         return;
+
+    const DashNagMode selectedMode = dashNagModeFromRaw(dashNagMode);
+    if (selectedMode != DashNagMode::HumanReplayTsl6p &&
+        selectedMode != DashNagMode::ReactiveHold)
+    {
+        lastReactiveCountersMs = now;
+        return;
+    }
+    if (!reactive->nagCountersDirty(selectedMode))
+    {
+        lastReactiveCountersMs = now;
+        return;
+    }
+
     Preferences p;
     if (!p.begin(PREFS_NS, false))
         return;
-    DashReactiveDiag d = reactive->reactiveDiag();
-    p.putUInt("rn_ns", d.nagSamples);
-    p.putUInt("rn_rb", d.reactiveBursts);
-    p.putUInt("rn_pw", d.proactiveWiggles);
-    p.putUInt("rn_es", d.echoSent);
+    const DashReactiveDiag d = reactive->nagDiagForMode(selectedMode);
+    if (selectedMode == DashNagMode::HumanReplayTsl6p)
+    {
+        p.putUInt("rn_ns", d.nagSamples);
+        p.putUInt("rn_rb", d.reactiveBursts);
+        p.putUInt("rn_pw", d.proactiveWiggles);
+        p.putUInt("rn_es", d.echoSent);
+    }
+    else
+    {
+        p.putUInt("rh_ns", d.nagSamples);
+        p.putUInt("rh_rb", d.reactiveBursts);
+        p.putUInt("rh_pw", d.proactiveWiggles);
+        p.putUInt("rh_es", d.echoSent);
+    }
     p.end();
+    reactive->markNagCountersPersisted(selectedMode);
     lastReactiveCountersMs = now;
 }
 

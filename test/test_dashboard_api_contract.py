@@ -1745,12 +1745,29 @@ class DashboardApiContractTests(unittest.TestCase):
         """handlers.h must include dash_reactive_nag.h (reactive NAG suppression)."""
         self.assertIn('#include "dash_reactive_nag.h"', self.handlers)
 
+    def test_nag_diag_header_defines_all_mode_projections(self) -> None:
+        diag = (ROOT / "include" / "dash_nag_diag.h").read_text(encoding="utf-8")
+        for symbol in [
+            "dashMapHumanReplayDiag",
+            "dashMapLateEchoDiag",
+            "dashMapReactiveHoldDiag",
+            "dashMakeDisabledNagDiag",
+        ]:
+            self.assertIn(symbol, diag)
+        self.assertIn("switch (nagMode)", self.handlers)
+        self.assertIn("dashMapHumanReplayDiag", self.handlers)
+        self.assertIn("dashMapLateEchoDiag", self.handlers)
+        self.assertIn("dashMapReactiveHoldDiag", self.handlers)
+
     def test_reactive_nag_v4_status_exposes_tsl6p_burst_diagnostics(self) -> None:
         """TSL6P Burst NAG v4 must expose phase/timing/clear diagnostics."""
         status = re.search(r'j \+= ",\\"reactiveNag\\":\{";.*?j \+= "\}";', self.dash, re.S)
         self.assertIsNotNone(status)
         body = status.group(0)
         required = [
+            '"selectedMode"',
+            '"selectedModeName"',
+            '"runtimePhase"',
             '"nagSamples"',
             '"reactiveBursts"',
             '"proactiveWiggles"',
@@ -1792,7 +1809,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("d.blockedReason && d.blockedReason[0]", body)
         self.assertIn('"none"', body)
         self.assertIn("dashReactiveNagHandler()", body)
-        self.assertIn("reactive->reactiveDiag()", body)
+        self.assertIn("reactive ? reactive->reactiveDiag() : dashMakeDisabledNagDiag()", body)
         self.assertNotIn("dashHandler->reactiveDiag()", body)
 
     def test_reactive_nag_serial_command_prints_v4_burst_fields(self) -> None:
@@ -1801,6 +1818,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(serial)
         body = serial.group(0)
         required = [
+            "selectedMode=",
+            "selectedModeName=",
+            "runtimePhase=",
             "=== TSL6P Burst NAG v4 ===",
             "0=IDLE 1=BURST_ON 2=BURST_OFF 3=COOLDOWN",
             "replayAttempts=",
@@ -1838,9 +1858,11 @@ class DashboardApiContractTests(unittest.TestCase):
             self.assertIn(token, body)
         self.assertIn("d.blockedReason && d.blockedReason[0]", body)
         self.assertIn('"none"', body)
+        self.assertIn("rn_ns=", body)
+        self.assertIn("rh_ns=", body)
 
-    def test_reactive_nag_persistence_uses_legacy_handler_and_fixed_nvs_keys(self) -> None:
-        """Reactive replay counters must persist only Legacy-engine counters with stable NVS keys."""
+    def test_reactive_nag_persistence_uses_isolated_dirty_counter_banks(self) -> None:
+        """TSL6P rn_* and Reactive Hold rh_* must load and flush independently."""
         helper = re.search(r"static CarManagerBase \*dashReactiveNagHandler\(\)\n\{.*?\n\}\n", self.dash, re.S)
         self.assertIsNotNone(helper)
         helper_body = helper.group(0)
@@ -1850,21 +1872,26 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(maintenance)
         body = maintenance.group(0)
         self.assertIn("CarManagerBase *reactive = dashReactiveNagHandler();", body)
-        self.assertIn("reactive->setReactiveCounters", body)
-        self.assertIn("reactive->reactiveDiag()", body)
+        self.assertIn("DashNagMode::HumanReplayTsl6p", body)
+        self.assertIn("DashNagMode::ReactiveHold", body)
+        self.assertIn("reactive->setNagCounters", body)
+        self.assertIn("reactive->nagCountersDirty(selectedMode)", body)
+        self.assertIn("reactive->nagDiagForMode(selectedMode)", body)
+        self.assertIn("reactive->markNagCountersPersisted(selectedMode)", body)
         self.assertIn("Preferences p;", body)
         self.assertIn("if (!p.begin(PREFS_NS, false))", body)
-        self.assertIn("return;", body)
-        self.assertNotIn("dashHandler->setReactiveCounters", body)
-        self.assertNotIn("dashHandler->reactiveDiag", body)
+        self.assertNotIn("dashHandler->setNagCounters", body)
+        self.assertNotIn("dashHandler->nagDiagForMode", body)
 
         serial_reset = re.search(r'else if \(strcmp\(start, "reactive_nag_reset"\) == 0\).*?else if \(strcmp\(start, "reactive_nag_bump"\)', self.dash, re.S)
         self.assertIsNotNone(serial_reset)
         self.assertIn("dashReactiveNagHandler()", serial_reset.group(0))
-        self.assertIn("Preferences p;", serial_reset.group(0))
+        self.assertIn("resetNagCounters(selectedMode)", serial_reset.group(0))
 
         rn_keys = set(re.findall(r'"(rn_[a-z]+)"', self.dash))
+        rh_keys = set(re.findall(r'"(rh_[a-z]+)"', self.dash))
         self.assertEqual({"rn_ns", "rn_rb", "rn_pw", "rn_es"}, rn_keys)
+        self.assertEqual({"rh_ns", "rh_rb", "rh_pw", "rh_es"}, rh_keys)
 
     # ── Phase 4: Light Stunt System ───────────────────────────
 

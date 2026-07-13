@@ -2,6 +2,7 @@
 #include "dash_nag_mode.h"
 #include "dash_reactive_hold_nag.h"
 #include "dash_reactive_nag.h"
+#include "dash_nag_diag.h"
 
 void setUp() {}
 void tearDown() {}
@@ -848,11 +849,128 @@ void test_reactive_hold_inactive_sample_does_not_restart_proactive_burst()
     TEST_ASSERT_EQUAL_UINT32(1, engine.diag(201).proactiveWiggles);
 }
 
+void test_nag_diag_maps_disabled_and_human_replay_identity()
+{
+    DashReactiveDiag disabled = dashMakeDisabledNagDiag();
+    TEST_ASSERT_FALSE(disabled.enabled);
+    TEST_ASSERT_EQUAL_UINT8(0, disabled.selectedMode);
+    TEST_ASSERT_EQUAL_STRING("off", disabled.selectedModeName);
+    TEST_ASSERT_EQUAL_STRING("idle", disabled.runtimePhase);
+
+    DashReactiveDiag source;
+    source.mode = HumanReplayMode::BURST_ON;
+    source.burstSessions = 42;
+    source.blockedReason = "test";
+    DashReactiveDiag mapped = dashMapHumanReplayDiag(source, 100);
+    TEST_ASSERT_EQUAL_UINT8(1, mapped.selectedMode);
+    TEST_ASSERT_EQUAL_STRING("human_replay_tsl6p", mapped.selectedModeName);
+    TEST_ASSERT_EQUAL_STRING("burst_on", mapped.runtimePhase);
+    TEST_ASSERT_EQUAL_UINT32(42, mapped.burstSessions);
+    TEST_ASSERT_EQUAL_STRING("test", mapped.blockedReason);
+
+    source.mode = HumanReplayMode::BURST_OFF;
+    TEST_ASSERT_EQUAL_STRING("burst_off", dashMapHumanReplayDiag(source, 100).runtimePhase);
+    source.mode = HumanReplayMode::COOLDOWN;
+    TEST_ASSERT_EQUAL_STRING("cooldown", dashMapHumanReplayDiag(source, 100).runtimePhase);
+    source.mode = HumanReplayMode::IDLE;
+    TEST_ASSERT_EQUAL_STRING("idle", dashMapHumanReplayDiag(source, 100).runtimePhase);
+}
+
+void test_nag_diag_maps_late_echo_without_human_replay_leakage()
+{
+    DashEpasLateEchoDiag source;
+    source.enabled = true;
+    source.mode = LateEchoModeState::BURST_OFF;
+    source.pendingEcho = true;
+    source.periodMs = 40;
+    source.jitterMs = 2;
+    source.scheduledEchoes = 11;
+    source.sentLateEchoes = 7;
+    source.lastHos = 3;
+    source.blockedReason = "window";
+
+    DashReactiveDiag mapped = dashMapLateEchoDiag(source, 200);
+    TEST_ASSERT_EQUAL_UINT8(2, mapped.selectedMode);
+    TEST_ASSERT_EQUAL_STRING("late_echo", mapped.selectedModeName);
+    TEST_ASSERT_EQUAL_STRING("burst_off", mapped.runtimePhase);
+    TEST_ASSERT_TRUE(mapped.lateEchoMode);
+    TEST_ASSERT_TRUE(mapped.pendingEcho);
+    TEST_ASSERT_EQUAL_UINT16(40, mapped.periodMs);
+    TEST_ASSERT_EQUAL_UINT16(2, mapped.jitterMs);
+    TEST_ASSERT_EQUAL_UINT32(11, mapped.scheduledEchoes);
+    TEST_ASSERT_EQUAL_UINT32(7, mapped.sentLateEchoes);
+    TEST_ASSERT_EQUAL_UINT8(3, mapped.lastHandsOnState);
+    TEST_ASSERT_EQUAL_UINT32(0, mapped.burstSessions);
+    TEST_ASSERT_EQUAL_UINT32(0, mapped.replayAttempts);
+}
+
+void test_nag_diag_maps_reactive_hold_without_other_mode_leakage()
+{
+    DashReactiveHoldDiag source;
+    source.phase = DashReactiveHoldPhase::Reactive;
+    source.injecting = true;
+    source.lastHandsOnState = 4;
+    source.currentAmp = 70;
+    source.nagSamples = 101;
+    source.reactiveBursts = 202;
+    source.proactiveWiggles = 303;
+    source.echoSent = 404;
+    source.nextProactiveInMs = 5000;
+
+    DashReactiveDiag mapped = dashMapReactiveHoldDiag(source, 300);
+    TEST_ASSERT_EQUAL_UINT8(3, mapped.selectedMode);
+    TEST_ASSERT_EQUAL_STRING("reactive_hold", mapped.selectedModeName);
+    TEST_ASSERT_EQUAL_STRING("reactive", mapped.runtimePhase);
+    TEST_ASSERT_TRUE(mapped.injecting);
+    TEST_ASSERT_EQUAL_UINT8(4, mapped.lastHandsOnState);
+    TEST_ASSERT_EQUAL_INT(70, mapped.currentAmp);
+    TEST_ASSERT_EQUAL_UINT32(101, mapped.nagSamples);
+    TEST_ASSERT_EQUAL_UINT32(202, mapped.reactiveBursts);
+    TEST_ASSERT_EQUAL_UINT32(303, mapped.proactiveWiggles);
+    TEST_ASSERT_EQUAL_UINT32(404, mapped.echoSent);
+    TEST_ASSERT_EQUAL_UINT32(5000, mapped.nextProactiveInMs);
+    TEST_ASSERT_EQUAL_UINT32(0, mapped.burstSessions);
+    TEST_ASSERT_FALSE(mapped.lateEchoMode);
+
+    source.phase = DashReactiveHoldPhase::Proactive;
+    TEST_ASSERT_EQUAL_STRING("proactive", dashMapReactiveHoldDiag(source, 300).runtimePhase);
+    source.phase = DashReactiveHoldPhase::Idle;
+    TEST_ASSERT_EQUAL_STRING("idle", dashMapReactiveHoldDiag(source, 300).runtimePhase);
+}
+
+void test_nag_counter_banks_are_dirty_and_isolated()
+{
+    DashReactiveNagBurst human;
+    DashReactiveHoldNag hold;
+    human.setCounters(11, 22, 33, 44);
+    hold.setCounters(101, 202, 303, 404);
+    TEST_ASSERT_FALSE(human.countersDirty());
+    TEST_ASSERT_FALSE(hold.countersDirty());
+
+    hold.resetCounters();
+    TEST_ASSERT_TRUE(hold.countersDirty());
+    TEST_ASSERT_FALSE(human.countersDirty());
+    DashReactiveDiag humanDiag = human.diag(0);
+    TEST_ASSERT_EQUAL_UINT32(11, humanDiag.nagSamples);
+    TEST_ASSERT_EQUAL_UINT32(22, humanDiag.reactiveBursts);
+    TEST_ASSERT_EQUAL_UINT32(33, humanDiag.proactiveWiggles);
+    TEST_ASSERT_EQUAL_UINT32(44, humanDiag.echoSent);
+
+    hold.markCountersPersisted();
+    TEST_ASSERT_FALSE(hold.countersDirty());
+    human.notifyEchoSent();
+    TEST_ASSERT_TRUE(human.countersDirty());
+}
+
 int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_dash_nag_mode_numeric_mapping_and_names);
     RUN_TEST(test_dash_nag_mode_parser_accepts_only_exact_numeric_modes);
+    RUN_TEST(test_nag_diag_maps_disabled_and_human_replay_identity);
+    RUN_TEST(test_nag_diag_maps_late_echo_without_human_replay_leakage);
+    RUN_TEST(test_nag_diag_maps_reactive_hold_without_other_mode_leakage);
+    RUN_TEST(test_nag_counter_banks_are_dirty_and_isolated);
     RUN_TEST(test_hos_clear_does_not_start_burst);
     RUN_TEST(test_inactive_gate_records_toggle_and_stays_idle);
     RUN_TEST(test_idle_hos_clear_is_diagnosed_separately_from_on_off_clear);

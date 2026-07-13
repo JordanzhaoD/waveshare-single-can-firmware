@@ -14,6 +14,7 @@
 #include "dash_nag_mode.h"
 #include "dash_reactive_nag.h"
 #include "dash_reactive_hold_nag.h"
+#include "dash_nag_diag.h"
 #include "dash_legacy_370_echo.h"
 #include "dash_epas_late_echo.h"
 #include "dash_fsd_diag.h"
@@ -332,12 +333,24 @@ struct CarManagerBase
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
     virtual void setNagMode(uint8_t mode) { (void)mode; }
-    virtual DashReactiveDiag reactiveDiag() const { return {}; }
+    virtual DashReactiveDiag reactiveDiag() const { return dashMakeDisabledNagDiag(); }
+    virtual DashReactiveDiag nagDiagForMode(DashNagMode /*mode*/) const
+    {
+        return dashMakeDisabledNagDiag();
+    }
     // Instrumentation counter persistence (NVS round-trip) — survive power-off.
-    virtual void resetReactiveCounters() {}
-    virtual void setReactiveCounters(uint32_t /*ns*/, uint32_t /*rb*/, uint32_t /*pw*/,
-                                     uint32_t /*es*/) {}
-    virtual void bumpReactiveCounters() {}
+    virtual void resetNagCounters(DashNagMode /*mode*/) {}
+    virtual void setNagCounters(DashNagMode /*mode*/, uint32_t /*ns*/, uint32_t /*rb*/,
+                                uint32_t /*pw*/, uint32_t /*es*/) {}
+    virtual void bumpNagCounters(DashNagMode /*mode*/) {}
+    virtual bool nagCountersDirty(DashNagMode /*mode*/) const { return false; }
+    virtual void markNagCountersPersisted(DashNagMode /*mode*/) {}
+    virtual void resetReactiveCounters() { resetNagCounters(DashNagMode::HumanReplayTsl6p); }
+    virtual void setReactiveCounters(uint32_t ns, uint32_t rb, uint32_t pw, uint32_t es)
+    {
+        setNagCounters(DashNagMode::HumanReplayTsl6p, ns, rb, pw, es);
+    }
+    virtual void bumpReactiveCounters() { bumpNagCounters(DashNagMode::HumanReplayTsl6p); }
     virtual ~CarManagerBase() = default;
 };
 
@@ -399,53 +412,82 @@ struct LegacyHandler : public CarManagerBase
 
     DashEpasLateEchoDiag lateEchoDiag(uint32_t nowMs) const { return lateNag.diag(nowMs); }
 
+    DashReactiveDiag nagDiagForMode(DashNagMode mode) const override
+    {
+        const uint32_t nowMs = dashDiagNowMs();
+        switch (mode)
+        {
+        case DashNagMode::HumanReplayTsl6p:
+            return dashMapHumanReplayDiag(nag.diag(nowMs), nowMs);
+        case DashNagMode::EpasLateEcho:
+            return dashMapLateEchoDiag(lateNag.diag(nowMs), nowMs);
+        case DashNagMode::ReactiveHold:
+            return dashMapReactiveHoldDiag(reactiveHoldNag.diag(nowMs), nowMs);
+        case DashNagMode::Off:
+        default:
+            return dashMakeDisabledNagDiag();
+        }
+    }
+
     DashReactiveDiag reactiveDiag() const override
     {
-        uint32_t nowMs = dashDiagNowMs();
-        DashReactiveDiag d = nag.diag(nowMs);
-        d.enabled = (bool)bionicSteering && nagMode != DashNagMode::Off;
-        if (lateEchoSelected())
+        switch (nagMode)
         {
-            DashEpasLateEchoDiag late = lateNag.diag(nowMs);
-            d.lateEchoMode = true;
-            d.mode = HumanReplayMode::IDLE;
-            d.injecting = late.mode == LateEchoModeState::BURST_ON;
-            d.currentAmp = 0;
-            d.blockedReason = late.blockedReason;
-            d.cooldownRemainMs = late.cooldownRemainMs;
-            d.phaseRemainMs = late.phaseRemainMs;
-            d.abortBlocks = late.abortBlocks;
-            d.gateBlocks = late.gateBlocks;
-            d.txFailures = late.txFailures;
-            d.lastApState = late.lastApState;
-            d.lastHandsOnState = late.lastHos;
-            d.cadenceStable = late.cadenceStable;
-            d.lateEchoEligible = late.lateEchoEligible;
-            d.pendingEcho = late.pendingEcho;
-            d.periodMs = late.periodMs;
-            d.jitterMs = late.jitterMs;
-            d.counterStep = late.counterStep;
-            d.expectedNextCounter = late.expectedNextCounter;
-            d.predictedNextRxMs = late.predictedNextRxMs;
-            d.pendingSendAtMs = late.pendingSendAtMs;
-            d.scheduledEchoes = late.scheduledEchoes;
-            d.sentLateEchoes = late.sentLateEchoes;
-            d.droppedLateEchoes = late.droppedLateEchoes;
-            d.lateWindowMissed = late.lateWindowMissed;
-            d.lastRxToTxMs = late.lastRxToTxMs;
-            d.lastLeadMs = DashEpasLateEcho::kLateEchoLeadMs;
-            d.preserveHandsOnLevel = late.preserveHandsOnLevel;
-            d.lastSourceHandsOnLevel = late.lastSourceHandsOnLevel;
-            d.lastTxHandsOnLevel = late.lastTxHandsOnLevel;
+        case DashNagMode::HumanReplayTsl6p:
+        case DashNagMode::EpasLateEcho:
+        case DashNagMode::ReactiveHold:
+        {
+            DashReactiveDiag d = nagDiagForMode(nagMode);
+            d.enabled = (bool)bionicSteering;
+            return d;
         }
-        return d;
+        case DashNagMode::Off:
+        default:
+            return dashMakeDisabledNagDiag();
+        }
     }
-    void resetReactiveCounters() override { nag.resetCounters(); }
-    void setReactiveCounters(uint32_t ns, uint32_t rb, uint32_t pw, uint32_t es) override
+
+    void resetNagCounters(DashNagMode mode) override
     {
-        nag.setCounters(ns, rb, pw, es);
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            nag.resetCounters();
+        else if (mode == DashNagMode::ReactiveHold)
+            reactiveHoldNag.resetCounters();
     }
-    void bumpReactiveCounters() override { nag.bumpCounters(); }
+
+    void setNagCounters(DashNagMode mode, uint32_t ns, uint32_t rb,
+                        uint32_t pw, uint32_t es) override
+    {
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            nag.setCounters(ns, rb, pw, es);
+        else if (mode == DashNagMode::ReactiveHold)
+            reactiveHoldNag.setCounters(ns, rb, pw, es);
+    }
+
+    void bumpNagCounters(DashNagMode mode) override
+    {
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            nag.bumpCounters();
+        else if (mode == DashNagMode::ReactiveHold)
+            reactiveHoldNag.bumpCounters();
+    }
+
+    bool nagCountersDirty(DashNagMode mode) const override
+    {
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            return nag.countersDirty();
+        if (mode == DashNagMode::ReactiveHold)
+            return reactiveHoldNag.countersDirty();
+        return false;
+    }
+
+    void markNagCountersPersisted(DashNagMode mode) override
+    {
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            nag.markCountersPersisted();
+        else if (mode == DashNagMode::ReactiveHold)
+            reactiveHoldNag.markCountersPersisted();
+    }
 
     const uint32_t *filterIds() const override
     {

@@ -48,6 +48,16 @@ public:
         reactiveBursts_ = 0;
         proactiveWiggles_ = 0;
         echoSent_ = 0;
+        countersDirty_ = true;
+    }
+
+    void bumpCounters()
+    {
+        nagSamples_ += 111;
+        reactiveBursts_ += 222;
+        proactiveWiggles_ += 333;
+        echoSent_ += 444;
+        countersDirty_ = true;
     }
 
     void setCounters(uint32_t nagSamples,
@@ -59,7 +69,11 @@ public:
         reactiveBursts_ = reactiveBursts;
         proactiveWiggles_ = proactiveWiggles;
         echoSent_ = echoSent;
+        countersDirty_ = false;
     }
+
+    bool countersDirty() const { return countersDirty_; }
+    void markCountersPersisted() { countersDirty_ = false; }
 
     void onNagSample(uint8_t hos, uint32_t nowMs, bool active)
     {
@@ -69,6 +83,7 @@ public:
         if (hos >= kNagThreshold)
         {
             nagSamples_++;
+            countersDirty_ = true;
             phase_ = DashReactiveHoldPhase::Reactive;
             haveNextProactiveMs_ = false;
 
@@ -170,6 +185,7 @@ public:
     void notifyEchoSent()
     {
         echoSent_++;
+        countersDirty_ = true;
     }
 
     DashReactiveHoldDiag diag(uint32_t nowMs) const
@@ -307,12 +323,14 @@ private:
             amp_ = kProactiveAmp;
             jitter_ = kProactiveJitter;
             proactiveWiggles_++;
+            countersDirty_ = true;
         }
         else
         {
             amp_ = kReactiveAmp;
             jitter_ = kReactiveJitter;
             reactiveBursts_++;
+            countersDirty_ = true;
         }
     }
 
@@ -353,4 +371,5 @@ private:
     uint32_t reactiveBursts_{0};
     uint32_t proactiveWiggles_{0};
     uint32_t echoSent_{0};
+    bool countersDirty_{false};
 };
