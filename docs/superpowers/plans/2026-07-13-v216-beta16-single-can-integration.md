@@ -389,6 +389,8 @@ public:
     DashReactiveHoldDiag diag(uint32_t nowMs) const;
 
 private:
+    static constexpr float kPi = 3.14159265358979323846f;
+
     static int clampHold(int value)
     {
         return std::max(0, std::min(95, value));
@@ -437,7 +439,7 @@ Expected: missing `DashReactiveHoldNag` symbols.
 
 - [ ] **Step 3: Implement the final Reactive v2 behavior**
 
-Use `main@bce7c915` commits `fc6936d`, `bfc819c`, `071bef6`, `d55885f`, and `c74b00b` as behavioral references, not as cherry-picks.
+Use `main@bce7c915` commits `fc6936d`, `bfc819c`, `071bef6`, `d55885f`, and `c74b00b` as behavioral references, not as cherry-picks. The new header must include `<algorithm>`, `<cmath>`, and `<cstdint>` for `std::min`, `std::max`, `std::sin`, and fixed-width integer types. Define `static constexpr float kPi = 3.14159265358979323846f;` inside the class instead of relying on a platform-specific pi macro.
 
 Required framing math:
 
@@ -446,7 +448,7 @@ const uint32_t elapsed = nowMs - waveStartMs_;
 const float normalized =
     static_cast<float>(elapsed) /
     static_cast<float>(strokeDurationMs_);
-const float phase = std::min(1.0f, normalized) * static_cast<float>(M_PI);
+const float phase = std::min(1.0f, normalized) * kPi;
 const int hold = clampHold(
     amp_ + static_cast<int>(std::sin(phase) * jitter_));
 ```
@@ -707,7 +709,7 @@ DashReactiveDiag dashMapReactiveHoldDiag(
 DashReactiveDiag dashMakeDisabledNagDiag();
 ```
 
-If the existing Late Echo snapshot type has a different name at implementation time, use that exact existing type consistently in the declaration, definition, and caller; do not introduce a duplicate snapshot type.
+`DashEpasLateEchoDiag` is the existing snapshot type declared in `include/dash_epas_late_echo.h`; use it directly and do not introduce a duplicate snapshot type.
 
 Reactive Hold counter persistence uses new keys:
 

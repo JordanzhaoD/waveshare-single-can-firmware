@@ -189,6 +189,7 @@ ApFirstDecision updateApFirstGate(
     uint8_t apState,
     bool apGateEnabled,
     bool instantEngageEnabled,
+    uint32_t debounceMs,
     uint32_t nowMs
 );
 ```
@@ -200,7 +201,7 @@ Required semantics:
 - state 2 is not engaged;
 - states 3 through 6 are engaged;
 - state 8, state 9, unknown, and non-engaged states are not engaged;
-- disabled Instant Engage preserves the existing one-second debounce;
+- disabled Instant Engage preserves the local configurable AP delay (`0..3000ms`, v1.0.8 default `2000ms`); the upstream beta.16 reference uses one second, but this integration must not change the published local default;
 - enabled Instant Engage bypasses the debounce only on a genuine non-engaged-to-engaged edge;
 - a sustained engaged state does not generate repeated edges;
 - disengage, abort/fault, AP gate disable, or runtime reset clears edge/debounce state;
@@ -413,7 +414,7 @@ Run:
 Required cases:
 
 ```text
-Instant disabled + state 3       -> wait normal one-second debounce
+Instant disabled + state 3       -> wait the configured AP delay (v1.0.8 default 2000ms)
 Instant enabled + state 2        -> remain blocked
 Instant enabled + transition 2-3 -> first eligible decision bypasses debounce
 Instant enabled + sustained 3    -> no repeated edge creation
