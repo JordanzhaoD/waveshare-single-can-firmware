@@ -1,5 +1,6 @@
 #include <unity.h>
 #include "dash_nag_mode.h"
+#include "dash_reactive_hold_nag.h"
 #include "dash_reactive_nag.h"
 
 void setUp() {}
@@ -513,6 +514,327 @@ void test_diag_reports_v4_burst_fields()
     TEST_ASSERT_EQUAL_INT(180, d.lastTorqueNmX100);
 }
 
+static uint32_t drainReactiveHold(DashReactiveHoldNag &engine, uint32_t startMs)
+{
+    uint32_t nowMs = startMs;
+    for (int i = 0; i < 8; ++i)
+    {
+        const int hold = engine.computeHold(nowMs);
+        if (hold > 0)
+            TEST_ASSERT_LESS_OR_EQUAL_INT(95, hold);
+        if (!engine.shouldEcho(nowMs))
+            break;
+        nowMs += 500;
+    }
+    TEST_ASSERT_FALSE(engine.shouldEcho(nowMs));
+    return nowMs;
+}
+
+void test_reactive_hold_inactive_nag_sample_counts_without_injecting()
+{
+    DashReactiveHoldNag engine;
+    engine.init(12345);
+
+    engine.onNagSample(3, 1000, false);
+
+    DashReactiveHoldDiag d = engine.diag(1000);
+    TEST_ASSERT_EQUAL(DashReactiveHoldPhase::Reactive, d.phase);
+    TEST_ASSERT_FALSE(d.injecting);
+    TEST_ASSERT_EQUAL_UINT8(3, d.lastHandsOnState);
+    TEST_ASSERT_EQUAL_UINT32(1, d.nagSamples);
+    TEST_ASSERT_EQUAL_UINT32(0, d.reactiveBursts);
+}
+
+void test_reactive_hold_active_hos3_starts_positive_reactive_hold()
+{
+    DashReactiveHoldNag engine;
+    engine.init(12345);
+
+    engine.onNagSample(3, 2000, true);
+
+    DashReactiveHoldDiag d = engine.diag(2000);
+    TEST_ASSERT_EQUAL(DashReactiveHoldPhase::Reactive, d.phase);
+    TEST_ASSERT_TRUE(d.injecting);
+    TEST_ASSERT_EQUAL_UINT32(1, d.nagSamples);
+    TEST_ASSERT_EQUAL_UINT32(1, d.reactiveBursts);
+    TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(2000));
+}
+
+void test_reactive_hold_outputs_are_positive_accumulating_and_capped()
+{
+    DashReactiveHoldNag engine;
+    engine.init(2);
+    engine.onNagSample(3, 100, true);
+
+    int sum = 0;
+    int samples = 0;
+    int maximum = 0;
+    uint32_t nowMs = 100;
+    for (int i = 0; i < 20 && engine.diag(nowMs).injecting; ++i)
+    {
+        const int hold = engine.computeHold(nowMs);
+        TEST_ASSERT_GREATER_THAN_INT(0, hold);
+        TEST_ASSERT_LESS_OR_EQUAL_INT(95, hold);
+        sum += hold;
+        maximum = std::max(maximum, hold);
+        samples++;
+        nowMs += 100;
+    }
+
+    TEST_ASSERT_GREATER_THAN_INT(0, samples);
+    TEST_ASSERT_GREATER_THAN_INT(0, sum);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(95, maximum);
+    TEST_ASSERT_FALSE(engine.diag(nowMs).injecting);
+}
+
+void test_reactive_hold_enforces_full_800ms_reactive_cooldown()
+{
+    DashReactiveHoldNag engine;
+    engine.init(5); // deterministic 3 strokes * 393ms
+    engine.onNagSample(3, 100, true);
+    TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(493));
+    TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(886));
+    TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(1279));
+    TEST_ASSERT_FALSE(engine.shouldEcho(1279));
+
+    engine.onNagSample(3, 2078, true);
+    TEST_ASSERT_FALSE(engine.diag(2078).injecting);
+    TEST_ASSERT_EQUAL_UINT32(1, engine.diag(2078).reactiveBursts);
+
+    engine.onNagSample(3, 2079, true);
+    TEST_ASSERT_TRUE(engine.diag(2079).injecting);
+    TEST_ASSERT_EQUAL_UINT32(2, engine.diag(2079).reactiveBursts);
+}
+
+void test_reactive_hold_each_hos_zero_through_two_can_start_proactive_hold()
+{
+    for (uint8_t hos = 0; hos <= 2; ++hos)
+    {
+        DashReactiveHoldNag engine;
+        engine.init(100 + hos);
+        engine.onNagSample(hos, 5000, true);
+
+        DashReactiveHoldDiag d = engine.diag(5000);
+        TEST_ASSERT_EQUAL(DashReactiveHoldPhase::Proactive, d.phase);
+        TEST_ASSERT_TRUE(d.injecting);
+        TEST_ASSERT_EQUAL_UINT8(hos, d.lastHandsOnState);
+        TEST_ASSERT_EQUAL_UINT32(1, d.proactiveWiggles);
+        TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(5000));
+    }
+}
+
+void test_reactive_hold_hos3_interrupts_proactive_and_enters_reactive()
+{
+    DashReactiveHoldNag engine;
+    engine.init(6);
+    engine.onNagSample(1, 5000, true);
+    TEST_ASSERT_EQUAL(DashReactiveHoldPhase::Proactive, engine.diag(5000).phase);
+    TEST_ASSERT_TRUE(engine.diag(5000).injecting);
+
+    engine.onNagSample(3, 5020, true);
+
+    DashReactiveHoldDiag d = engine.diag(5020);
+    TEST_ASSERT_EQUAL(DashReactiveHoldPhase::Reactive, d.phase);
+    TEST_ASSERT_TRUE(d.injecting);
+    TEST_ASSERT_EQUAL_UINT32(1, d.proactiveWiggles);
+    TEST_ASSERT_EQUAL_UINT32(1, d.reactiveBursts);
+    TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(5020));
+}
+
+void test_reactive_hold_reset_clears_transient_state_and_preserves_counters()
+{
+    DashReactiveHoldNag engine;
+    engine.init(7);
+    engine.setCounters(11, 22, 33, 44);
+    engine.onNagSample(3, 1000, true);
+    engine.notifyEchoSent();
+
+    engine.reset();
+
+    DashReactiveHoldDiag d = engine.diag(1000);
+    TEST_ASSERT_EQUAL(DashReactiveHoldPhase::Idle, d.phase);
+    TEST_ASSERT_FALSE(d.injecting);
+    TEST_ASSERT_EQUAL_UINT8(0, d.lastHandsOnState);
+    TEST_ASSERT_EQUAL_INT(0, d.currentAmp);
+    TEST_ASSERT_EQUAL_UINT32(12, d.nagSamples);
+    TEST_ASSERT_EQUAL_UINT32(23, d.reactiveBursts);
+    TEST_ASSERT_EQUAL_UINT32(33, d.proactiveWiggles);
+    TEST_ASSERT_EQUAL_UINT32(45, d.echoSent);
+    TEST_ASSERT_EQUAL_UINT32(0, d.nextProactiveInMs);
+}
+
+void test_reactive_hold_reset_counters_preserves_active_state_and_seeded_schedule()
+{
+    DashReactiveHoldNag engine;
+    DashReactiveHoldNag control;
+    engine.init(77);
+    control.init(77);
+    engine.onNagSample(1, 100, true);
+    control.onNagSample(1, 100, true);
+
+    const int ampBefore = engine.diag(100).currentAmp;
+    engine.resetCounters();
+
+    DashReactiveHoldDiag afterReset = engine.diag(100);
+    TEST_ASSERT_EQUAL(DashReactiveHoldPhase::Proactive, afterReset.phase);
+    TEST_ASSERT_TRUE(afterReset.injecting);
+    TEST_ASSERT_EQUAL_INT(ampBefore, afterReset.currentAmp);
+    TEST_ASSERT_EQUAL_UINT32(0, afterReset.nagSamples);
+    TEST_ASSERT_EQUAL_UINT32(0, afterReset.reactiveBursts);
+    TEST_ASSERT_EQUAL_UINT32(0, afterReset.proactiveWiggles);
+    TEST_ASSERT_EQUAL_UINT32(0, afterReset.echoSent);
+
+    const uint32_t engineEnd = drainReactiveHold(engine, 100);
+    const uint32_t controlEnd = drainReactiveHold(control, 100);
+    TEST_ASSERT_EQUAL_UINT32(controlEnd, engineEnd);
+    TEST_ASSERT_EQUAL_UINT32(control.diag(controlEnd).nextProactiveInMs,
+                             engine.diag(engineEnd).nextProactiveInMs);
+}
+
+void test_reactive_hold_init_with_same_seed_is_deterministic()
+{
+    DashReactiveHoldNag first;
+    DashReactiveHoldNag second;
+    first.init(0x12345678u);
+    second.init(0x12345678u);
+    first.onNagSample(1, 100, true);
+    second.onNagSample(1, 100, true);
+
+    uint32_t nowMs = 100;
+    for (int i = 0; i < 8 && first.diag(nowMs).injecting; ++i)
+    {
+        TEST_ASSERT_EQUAL(first.diag(nowMs).injecting, second.diag(nowMs).injecting);
+        TEST_ASSERT_EQUAL_INT(first.computeHold(nowMs), second.computeHold(nowMs));
+        nowMs += 500;
+    }
+
+    TEST_ASSERT_EQUAL(first.diag(nowMs).injecting, second.diag(nowMs).injecting);
+    TEST_ASSERT_EQUAL_UINT32(first.diag(nowMs).nextProactiveInMs,
+                             second.diag(nowMs).nextProactiveInMs);
+}
+
+void test_reactive_hold_apply_to_frame_adds_human_weight_and_hold()
+{
+    DashReactiveHoldNag engine;
+    engine.init(8);
+    uint8_t data2LowNibble = 0x08;
+    uint8_t data3 = 0x12;
+
+    engine.applyToFrame(data2LowNibble, data3, 70);
+
+    const int output = (static_cast<int>(data2LowNibble) << 8) | data3;
+    TEST_ASSERT_EQUAL_INT(0x0812 + 8 + 70, output);
+}
+
+void test_reactive_hold_uint32_wrap_does_not_extend_burst_indefinitely()
+{
+    DashReactiveHoldNag engine;
+    engine.init(9);
+    const uint32_t startMs = UINT32_MAX - 100u;
+    engine.onNagSample(3, startMs, true);
+    TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(startMs));
+
+    const uint32_t wrappedTimes[] = {350u, 850u, 1350u, 1850u};
+    for (uint32_t nowMs : wrappedTimes)
+    {
+        if (!engine.diag(nowMs).injecting)
+            break;
+        TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(nowMs));
+    }
+
+    TEST_ASSERT_FALSE(engine.diag(1850u).injecting);
+}
+
+void test_reactive_hold_proactive_deadline_is_wrap_safe()
+{
+    DashReactiveHoldNag engine;
+    engine.init(10);
+    const uint32_t startMs = UINT32_MAX - 2000u;
+    engine.onNagSample(2, startMs, true);
+    const uint32_t endedAtMs = drainReactiveHold(engine, startMs);
+    const uint32_t remainingMs = engine.diag(endedAtMs).nextProactiveInMs;
+    TEST_ASSERT_GREATER_THAN_UINT32(0, remainingMs);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(5000, remainingMs);
+
+    const uint32_t dueAtMs = endedAtMs + remainingMs;
+    TEST_ASSERT_TRUE(dueAtMs < endedAtMs);
+
+    engine.onNagSample(2, dueAtMs - 1u, true);
+    TEST_ASSERT_FALSE(engine.diag(dueAtMs - 1u).injecting);
+    engine.onNagSample(2, dueAtMs, true);
+    TEST_ASSERT_TRUE(engine.diag(dueAtMs).injecting);
+    TEST_ASSERT_EQUAL_UINT32(2, engine.diag(dueAtMs).proactiveWiggles);
+}
+
+void test_reactive_hold_sparse_delay_retires_burst_at_real_time_end()
+{
+    DashReactiveHoldNag engine;
+    engine.init(11);
+    engine.onNagSample(3, 100, true);
+    TEST_ASSERT_TRUE(engine.shouldEcho(100));
+
+    // Every burst is at most 3 * 400ms. A sample 2000ms later is expired
+    // even if computeHold was not called at each intermediate stroke boundary.
+    TEST_ASSERT_FALSE(engine.shouldEcho(2100));
+    TEST_ASSERT_FALSE(engine.diag(2100).injecting);
+
+    engine.onNagSample(3, 2100, true);
+    TEST_ASSERT_TRUE(engine.shouldEcho(2100));
+    TEST_ASSERT_EQUAL_UINT32(2, engine.diag(2100).reactiveBursts);
+}
+
+void test_reactive_hold_sparse_compute_crosses_strokes_and_emits_terminal_positive()
+{
+    DashReactiveHoldNag engine;
+    engine.init(5); // deterministic 3 strokes * 393ms
+    engine.onNagSample(3, 100, true);
+
+    // One delayed call crosses two stroke boundaries without stretching them.
+    TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(1000));
+    TEST_ASSERT_TRUE(engine.shouldEcho(1000));
+
+    // At the exact real-time end, the final frame is still positive and the
+    // burst is retired only after that terminal value is consumed.
+    TEST_ASSERT_GREATER_THAN_INT(0, engine.computeHold(1279));
+    TEST_ASSERT_FALSE(engine.shouldEcho(1279));
+}
+
+void test_reactive_hold_inactive_sample_does_not_restart_reactive_burst()
+{
+    DashReactiveHoldNag engine;
+    engine.init(12);
+    engine.onNagSample(3, 100, true);
+    TEST_ASSERT_EQUAL_UINT32(1, engine.diag(100).reactiveBursts);
+
+    // Task 6 gates sends with active separately. The pure engine must retain
+    // the in-progress burst instead of clearing its end/cooldown history.
+    engine.onNagSample(3, 200, false);
+    TEST_ASSERT_TRUE(engine.shouldEcho(200));
+
+    engine.onNagSample(3, 201, true);
+    TEST_ASSERT_TRUE(engine.shouldEcho(201));
+    TEST_ASSERT_EQUAL_UINT32(1, engine.diag(201).reactiveBursts);
+}
+
+void test_reactive_hold_inactive_sample_does_not_restart_proactive_burst()
+{
+    DashReactiveHoldNag engine;
+    engine.init(13);
+    engine.onNagSample(1, 100, true);
+    TEST_ASSERT_TRUE(engine.shouldEcho(100));
+    TEST_ASSERT_EQUAL_UINT32(1, engine.diag(100).proactiveWiggles);
+
+    // Sending is gated by active in Task 6, but the pure engine's burst clock
+    // continues. Re-enabling one millisecond later must not bypass the 2-5s
+    // interval by creating a second proactive wiggle.
+    engine.onNagSample(1, 200, false);
+    TEST_ASSERT_TRUE(engine.shouldEcho(200));
+
+    engine.onNagSample(1, 201, true);
+    TEST_ASSERT_TRUE(engine.shouldEcho(201));
+    TEST_ASSERT_EQUAL_UINT32(1, engine.diag(201).proactiveWiggles);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -547,5 +869,21 @@ int main()
     RUN_TEST(test_txfail_enters_cooldown_and_records_failure);
     RUN_TEST(test_set_signed_torque_in_frame_targets_absolute_torque_and_clamps);
     RUN_TEST(test_diag_reports_v4_burst_fields);
+    RUN_TEST(test_reactive_hold_inactive_nag_sample_counts_without_injecting);
+    RUN_TEST(test_reactive_hold_active_hos3_starts_positive_reactive_hold);
+    RUN_TEST(test_reactive_hold_outputs_are_positive_accumulating_and_capped);
+    RUN_TEST(test_reactive_hold_enforces_full_800ms_reactive_cooldown);
+    RUN_TEST(test_reactive_hold_each_hos_zero_through_two_can_start_proactive_hold);
+    RUN_TEST(test_reactive_hold_hos3_interrupts_proactive_and_enters_reactive);
+    RUN_TEST(test_reactive_hold_reset_clears_transient_state_and_preserves_counters);
+    RUN_TEST(test_reactive_hold_reset_counters_preserves_active_state_and_seeded_schedule);
+    RUN_TEST(test_reactive_hold_init_with_same_seed_is_deterministic);
+    RUN_TEST(test_reactive_hold_apply_to_frame_adds_human_weight_and_hold);
+    RUN_TEST(test_reactive_hold_uint32_wrap_does_not_extend_burst_indefinitely);
+    RUN_TEST(test_reactive_hold_proactive_deadline_is_wrap_safe);
+    RUN_TEST(test_reactive_hold_sparse_delay_retires_burst_at_real_time_end);
+    RUN_TEST(test_reactive_hold_sparse_compute_crosses_strokes_and_emits_terminal_positive);
+    RUN_TEST(test_reactive_hold_inactive_sample_does_not_restart_reactive_burst);
+    RUN_TEST(test_reactive_hold_inactive_sample_does_not_restart_proactive_burst);
     return UNITY_END();
 }
