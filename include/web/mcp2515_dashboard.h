@@ -37,6 +37,7 @@
 #endif
 #include "handlers.h"
 #include "can_helpers.h"
+#include "dash_config_update.h"
 #include <ArduinoJson.h>
 #if defined(DRIVER_ESP32_EXT_MCP2515)
 #include "drivers/esp32_mcp2515_driver.h"
@@ -109,6 +110,16 @@ static constexpr uint8_t kDashUnsetU8 = 0xFF;
 
 static Preferences prefs;
 
+static bool dashPutBoolChecked(const char *key, bool value)
+{
+    Preferences prefs;
+    if (!prefs.begin(PREFS_NS, false))
+        return false;
+    const bool ok = prefs.putBoolChecked(key, value);
+    prefs.end();
+    return ok;
+}
+
 static CarManagerBase *dashHandler = nullptr;
 static CarManagerBase *dashReactiveNagHandler();
 static CanDriver *dashDriver = nullptr;
@@ -165,14 +176,15 @@ static String dashPluginUploadBuffer;
 // 当 true 时回到 3.0 早期行为：必须 Parked||APActive||Summoning 才允许注入。
 static bool apInjectionGate = DASH_AP_GATE_DEFAULT;
 static bool apAutoRestore = false;
+// Persisted as `apfe`; runtime reset clears only gate timing, not this preference.
+static bool dashInstantEngage = false;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
 static volatile uint32_t lastInjectMs = 0;
-// Legacy FSD (0x3EE mux0) AP-settle activation gate — upstream beta3 parity.
-// Legacy injection must wait ~2 s after APActive first rises (and CAN must be
-// active, OTA not blocking, apInjectionGate open) before mux0 bit46 fires.
-// AP settle delay is configurable (0-3000 ms, default 2000) so the standalone
-// single-CAN build can expose it through /config and persist across reboots.
+// Legacy FSD (0x3EE mux0) AP-First activation gate — upstream beta3 parity.
+// DashApFirstGate owns the configurable debounce (0-3000 ms, default 2000).
+// The timestamp mirror below remains only for Soft Engage timeout/status output;
+// it no longer decides whether the AP debounce has elapsed.
 static constexpr uint32_t kLegacyFsdActivationSettleDefaultMs = 2000;
 static constexpr uint32_t kLegacyFsdActivationSettleMinMs = 0;
 static constexpr uint32_t kLegacyFsdActivationSettleMaxMs = 3000;
@@ -211,7 +223,7 @@ static bool dashFogOffRequested = false;  // one-shot fail-off/stop command owne
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
-static uint8_t dashNagMode = 0; // 0=off, 1=legacy_tsl6p, 2=epas_late_echo
+static uint8_t dashNagMode = 0; // 0=off, 1=legacy_tsl6p, 2=epas_late_echo, 3=reactive_hold
 static bool dashSpeedNoDisturb = false;
 static bool dashDndVolume = false;       // 音量消除DND（Phase 3实现执行逻辑）
 static bool dashDndSpeed = false;        // 速度滚轮DND（Phase 3实现执行逻辑）
@@ -949,39 +961,57 @@ static bool dashApInjectionAllowed()
     return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
 }
 
-// Legacy FSD (0x3EE mux0) activation gate with a ~2 s AP-settle hold-off.
-// Mirrors upstream ev-open-can-tools v3.0.2-beta.3 safety parity: once AP
-// becomes active (and CAN/OTA/gate all allow), hold off legacy mux0 bit46
-// injection until APActive has been continuously asserted for
-// legacyFsdRequiredStableMs. Any loss of CAN / OTA / gate / APActive
-// resets the settle timer. nowMs is the same monotonically-increasing
-// millisecond counter the handler path uses (millis() in firmware,
-// dashDiagNowMs() in native tests) so the hold-off interval is consistent.
+static void dashClearLegacyApFirstTiming()
+{
+    if (dashHandler)
+        dashHandler->clearApFirstTiming();
+    legacyFsdApActiveSinceMs = 0;
+    legacySoftEngageSent = false;
+}
+
+// Legacy FSD (0x3EE mux0) activation gate. DashApFirstGate now owns AP engaged
+// observation, genuine-edge detection, and the configurable debounce. Instant
+// Engage may bypass only that debounce; CAN, OTA, parent AP gate, checkAD,
+// Abort Guard, Soft Engage, and feature/plugin gates remain independent.
 static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
 {
     if (!canActive)
     {
-        legacyFsdApActiveSinceMs = 0;
+        dashClearLegacyApFirstTiming();
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
     if (!dashOtaGuardAllowInjection())
     {
-        legacyFsdApActiveSinceMs = 0;
+        dashClearLegacyApFirstTiming();
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
+    if (!dashHandler)
+    {
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+
+    DashApFirstDecision ap = dashHandler->decideApFirst(
+        apInjectionGate,
+        dashInstantEngage,
+        legacyFsdRequiredStableMs,
+        nowMs);
     if (!apInjectionGate)
     {
+        legacyFsdApActiveSinceMs = 0;
+        legacySoftEngageSent = false;
         legacyFsdLastAllowed = true;
         return true;
     }
-    bool apActive = dashHandler && (bool)dashHandler->APActive;
-    if (!apActive)
+    if (!ap.engaged)
     {
         legacyFsdApActiveSinceMs = 0;
+        legacySoftEngageSent = false;
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
@@ -989,27 +1019,32 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
     if (legacyFsdApActiveSinceMs == 0)
     {
         legacyFsdApActiveSinceMs = nowMs;
-        legacySoftEngageSent = false; // new AP episode → re-arm soft-engage latch
+        legacySoftEngageSent = false;
     }
-    const bool stable = (nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs;
-    const bool timeout = (nowMs - legacyFsdApActiveSinceMs) >= (legacyFsdRequiredStableMs + SOFT_ENGAGE_TIMEOUT_MS);
+    if (!ap.allowed)
+    {
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+
+    const bool timeout = (nowMs - legacyFsdApActiveSinceMs) >=
+                         (legacyFsdRequiredStableMs + SOFT_ENGAGE_TIMEOUT_MS);
     const bool release = dashSoftEngageRelease(dashSoftEngage, legacySoftEngageSent,
                                                apRestoreState.steerSeen,
                                                apRestoreState.steerValidity,
                                                apRestoreState.steerAngleX10,
-                                               stable, timeout, SOFT_ENGAGE_ANGLE_THRESH_X10);
-    if (stable && !release)
+                                               true, timeout, SOFT_ENGAGE_ANGLE_THRESH_X10);
+    if (!release)
     {
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
-        return false; // Soft Engage hold: wheel off-centre, within timeout window
+        return false;
     }
-    if (stable)
-        legacySoftEngageSent = true; // latch: angle ignored for rest of episode
-    legacyFsdLastAllowed = stable;
-    if (!stable)
-        legacyFsdLastBlockedMs = nowMs;
-    return stable;
+
+    legacySoftEngageSent = true;
+    legacyFsdLastAllowed = true;
+    return true;
 }
 
 static FsdGateBlockReason dashCurrentGateBlockReason()
@@ -1171,20 +1206,10 @@ static bool dashArgTruthy(const String &v)
 
 static uint8_t dashClampNagMode(int mode)
 {
-    return (mode >= 0 && mode <= 2) ? static_cast<uint8_t>(mode) : 0;
-}
-
-static uint8_t dashParseNagMode(const String &raw, uint8_t fallback = 0)
-{
-    if (!raw.length())
-        return fallback;
-    for (size_t i = 0; i < raw.length(); i++)
-    {
-        char c = raw.charAt(i);
-        if (c < '0' || c > '9')
-            return fallback;
-    }
-    return dashClampNagMode(raw.toInt());
+    const int maxMode = static_cast<int>(dashNagModeToRaw(DashNagMode::ReactiveHold));
+    return (mode >= 0 && mode <= maxMode)
+               ? static_cast<uint8_t>(mode)
+               : dashNagModeToRaw(DashNagMode::Off);
 }
 
 // Clamp an AP settle delay (ms) parsed from /config into the valid range so a
@@ -1421,6 +1446,8 @@ static void dashApplyRuntimeState()
         dashHandler->legacyFsdDiag.profileWriteEnable = dashLegacyFsdProfileWriteEnable;
         dashHandler->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
         dashApplySpeedProfileState();
+        if (!canActive || !apInjectionGate)
+            dashClearLegacyApFirstTiming();
         if (!canActive)
         {
             dashHandler->ADEnabled = false;
@@ -1443,6 +1470,7 @@ static void dashSavePrefs()
     prefs.putBool("force_act", forceActivate);
     prefs.putBool("boot_can", bootCanActive);
     prefs.putBool("ap_gate", apInjectionGate);
+    prefs.putBool("apfe", dashInstantEngage);
     prefs.putBool("ap_rst", apAutoRestore);
     prefs.putUInt("ap_dly", legacyFsdRequiredStableMs);
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
@@ -1468,7 +1496,7 @@ static void dashSavePrefs()
     prefs.putUChar("lt_fog", dashRearFogStrategy);
     prefs.putBool("def_en", dashDefenseEnabled);
     prefs.putBool("def_bio", dashBionicSteering);
-    prefs.putUChar("def_nag_mode", dashNagMode <= 2 ? dashNagMode : 0);
+    prefs.putUChar("def_nag_mode", dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
     prefs.putBool("def_ntt", dashNagTorqueTamper);
     prefs.putBool("def_se", dashSoftEngage);
     prefs.putBool("def_ag", dashAbortGuardEnabled);
@@ -1643,6 +1671,7 @@ static void dashLoadPrefs()
         prefs.putBool("boot_can", bootCanActive);
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", DASH_AP_GATE_DEFAULT);
+    dashInstantEngage = prefs.getBool("apfe", false);
     apAutoRestore = prefs.getBool("ap_rst", false);
     legacyFsdRequiredStableMs = dashClampApDelayMs(static_cast<int>(prefs.getUInt("ap_dly", kLegacyFsdActivationSettleDefaultMs)));
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
@@ -1675,9 +1704,18 @@ static void dashLoadPrefs()
         dashRearFogStrategy = 0;
     dashDefenseEnabled = prefs.getBool("def_en", false);
     dashBionicSteering = prefs.getBool("def_bio", false);
-    dashNagMode = prefs.getUChar("def_nag_mode", 0);
-    if (dashNagMode > 2)
-        dashNagMode = 0;
+    if (prefs.isKey("def_nag_mode"))
+    {
+        dashNagMode = dashNagModeToRaw(
+            dashNagModeFromRaw(prefs.getUChar("def_nag_mode", 0)));
+    }
+    else
+    {
+        dashNagMode = dashBionicSteering
+                          ? dashNagModeToRaw(DashNagMode::ReactiveHold)
+                          : dashNagModeToRaw(DashNagMode::Off);
+        prefs.putUChar("def_nag_mode", dashNagMode);
+    }
     dashNagTorqueTamper = prefs.getBool("def_ntt", false);
     nagTorqueTamperRuntime = dashNagTorqueTamper; // boot-sync opt-in to NagHandler
     dashSoftEngage = prefs.getBool("def_se", kSoftEngageDefaultEnabled);
@@ -2271,9 +2309,11 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     bool parked = false;
     bool apActive = false;
     bool summoning = false;
+    DashApFirstDiag ap{};
     if (dashHandler)
     {
         diag = dashHandler->legacyFsdDiag;
+        ap = dashHandler->apFirstDiag(now);
         parked = (bool)dashHandler->Parked;
         apActive = (bool)dashHandler->APActive;
         summoning = (bool)dashHandler->Summoning;
@@ -2301,7 +2341,23 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     appendFsdMuxDiagJson(j, "mux1", diag.mux1, diag.policy == LegacyFsdPolicy::TeslaParity || (diag.policy == LegacyFsdPolicy::Experimental && diag.mux1Enable), now);
     appendFsdMuxDiagJson(j, "aux760", diag.aux760, true, now);
     appendFsdMuxDiagJson(j, "aux1080", diag.aux1080, true, now);
-    j += ",\"gate\":{\"canActive\":";
+    j += R"JSON(,"gate":{"instantEngageEnabled":)JSON";
+    j += dashInstantEngage ? "true" : "false";
+    j += R"JSON(,"apEngaged":)JSON";
+    j += ap.apEngaged ? "true" : "false";
+    j += R"JSON(,"apEdgeCount":)JSON";
+    j += ap.apEdgeCount;
+    j += R"JSON(,"lastApEdgeAgeMs":)JSON";
+    j += ap.hasApEdge ? String(dashAgeMs(now, ap.lastApEdgeMs)) : String(0);
+    j += R"JSON(,"apDebounceBypassCount":)JSON";
+    j += ap.apDebounceBypassCount;
+    j += R"JSON(,"edgePending":)JSON";
+    j += ap.edgePending ? "true" : "false";
+    j += R"JSON(,"debounceSatisfied":)JSON";
+    j += ap.debounceSatisfied ? "true" : "false";
+    j += R"JSON(,"instantBypassLast":)JSON";
+    j += ap.instantBypassLast ? "true" : "false";
+    j += ",\"canActive\":";
     j += canActive ? "true" : "false";
     j += ",\"otaAllowed\":";
     j += dashOtaGuardAllowInjection() ? "true" : "false";
@@ -2527,14 +2583,20 @@ static void handleStatus()
     j += ",\"overrideSpeedLimit\":";
     j += dashHandler ? ((bool)dashHandler->overrideSpeedLimit ? "true" : "false") : "false";
     j += ",\"nagMode\":";
-    j += String(dashNagMode <= 2 ? dashNagMode : 0);
+    j += String(dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
     j += ",\"reactiveNag\":{";
     CarManagerBase *reactive = dashReactiveNagHandler();
-    if (reactive)
+    DashReactiveDiag d = reactive ? reactive->reactiveDiag() : dashMakeDisabledNagDiag();
     {
-        DashReactiveDiag d = reactive->reactiveDiag();
         j += "\"enabled\":";
         j += d.enabled ? "true" : "false";
+        j += R"(,"selectedMode":)";
+        j += String((int)d.selectedMode);
+        j += R"(,"selectedModeName":")";
+        j += jsonEscape(d.selectedModeName);
+        j += R"(","runtimePhase":")";
+        j += jsonEscape(d.runtimePhase);
+        j += "\"";
         j += ",\"mode\":";
         j += String((int)d.mode);
         j += ",\"injecting\":";
@@ -2616,10 +2678,6 @@ static void handleStatus()
         j += R"(,"blockedReason":")";
         j += jsonEscape(d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
         j += "\"";
-    }
-    else
-    {
-        j += "\"enabled\":false";
     }
     j += "}";
     j += ",\"hw3AutoSpeed\":";
@@ -2783,7 +2841,9 @@ static void handleStatus()
 // 返回的 fsdRuntime 块与 handleConfig POST 接收的 {fsdRuntime:{...}} 契约对齐。
 static void handleConfigGet()
 {
-    String j = "{\"fsdRuntime\":{";
+    String j = "{\"ap_first_edge\":";
+    j += dashInstantEngage ? "true" : "false";
+    j += ",\"fsdRuntime\":{";
     j += "\"legacyOffset\":" + String(nvsLegacyOffset);
     j += ",\"legacyOffsetMode\":" + String(dashLegacyOffsetMode);
     j += ",\"legacySmoothDown\":" + String(dashLegacySmoothDown ? "true" : "false");
@@ -2794,13 +2854,38 @@ static void handleConfigGet()
     j += ",\"legacyCustomPctVeryHigh\":" + String(dashLegacyCustomPctVeryHigh);
     j += ",\"overrideSpeedLimit\":" + String(nvsOverrideSpeedLimit ? "true" : "false");
     j += "},\"defense\":{";
-    j += "\"nagMode\":" + String(dashNagMode <= 2 ? dashNagMode : 0);
+    j += "\"nagMode\":" + String(dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
     j += "}}";
     server.send(200, "application/json", j);
 }
 
 static void handleConfig()
 {
+    if (server.hasArg("ap_first_edge"))
+    {
+        String raw = server.arg("ap_first_edge");
+        auto update = dashPreparePersistedBoolUpdate(
+            raw.c_str(),
+            dashInstantEngage,
+            [](bool value)
+            {
+                return dashPutBoolChecked("apfe", value);
+            });
+        if (!update.valid)
+        {
+            server.send(400, "application/json",
+                        "{\"ok\":false,\"error\":\"ap_first_edge must be boolean\"}");
+            return;
+        }
+        if (!update.persisted)
+        {
+            server.send(500, "application/json",
+                        "{\"ok\":false,\"error\":\"failed to persist ap_first_edge\"}");
+            return;
+        }
+        dashInstantEngage = update.value;
+    }
+
     // --- FSD runtime JSON body ({fsdRuntime:{legacyOffset,overrideSpeedLimit}}) ---
     // UI postConfigJson() posts here as application/json. Without this branch the
     // body was silently dropped and legacyOffset/overrideSpeedLimit never reached
@@ -3397,7 +3482,7 @@ static String dashDefenseConfigJson()
     j += ",\"bionic_steering\":";
     j += dashBionicSteering ? "true" : "false";
     j += ",\"nag_mode\":";
-    j += String(dashNagMode <= 2 ? dashNagMode : 0);
+    j += String(dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
     j += ",\"nag_torque_tamper\":";
     j += dashNagTorqueTamper ? "true" : "false";
     j += ",\"soft_engage\":";
@@ -3438,6 +3523,19 @@ static void handleDefenseConfig()
         server.hasArg("nag_torque_tamper") ||
         server.hasArg("soft_engage") || server.hasArg("abort_guard"))
     {
+        const bool hasNagModeArg = server.hasArg("nag_mode") || server.hasArg("nagMode");
+        DashNagMode parsedNagMode = dashNagModeFromRaw(dashNagMode);
+        if (hasNagModeArg)
+        {
+            String raw = server.hasArg("nag_mode") ? server.arg("nag_mode") : server.arg("nagMode");
+            if (!dashTryParseNagMode(raw.c_str(), parsedNagMode))
+            {
+                server.send(400, "application/json",
+                            "{\"ok\":false,\"error\":\"nag_mode must be 0..3\"}");
+                return;
+            }
+        }
+
         bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
         bool prevDndSpeed = dashDndSpeed;
@@ -3460,11 +3558,8 @@ static void handleDefenseConfig()
             if (CarManagerBase *reactive = dashReactiveNagHandler(); reactive && reactive != dashHandler)
                 reactive->resetBionic(resetSeed);
         }
-        if (server.hasArg("nag_mode") || server.hasArg("nagMode"))
-        {
-            String raw = server.hasArg("nag_mode") ? server.arg("nag_mode") : server.arg("nagMode");
-            dashNagMode = dashParseNagMode(raw, 0);
-        }
+        if (hasNagModeArg)
+            dashNagMode = dashNagModeToRaw(parsedNagMode);
         if (server.hasArg("nag_torque_tamper"))
         {
             // WARNING: torque-tamper is the documented primary-suspect vector of
@@ -5564,6 +5659,13 @@ static void dashSerialPrintHelp()
 
 static void dashSerialPrintSystemStatus()
 {
+    const uint32_t now = millis();
+    const DashApFirstDiag ap = dashHandler
+                                   ? dashHandler->apFirstDiag(now)
+                                   : DashApFirstDiag{};
+    const uint32_t lastApEdgeAgeMs = ap.hasApEdge
+                                         ? dashAgeMs(now, ap.lastApEdgeMs)
+                                         : 0;
     uint8_t cpu0Load = 0, cpu1Load = 0;
     bool hasCpuLoad = false;
     dashReadCpuLoad(cpu0Load, cpu1Load, hasCpuLoad);
@@ -5594,7 +5696,7 @@ static void dashSerialPrintSystemStatus()
 
     Serial.println();
     Serial.println("[system_status]");
-    Serial.printf("uptime=%lus firmware=%s idf=%s\n", (millis() - startMs) / 1000, FIRMWARE_VERSION, IDF_VER);
+    Serial.printf("uptime=%lus firmware=%s idf=%s\n", (now - startMs) / 1000, FIRMWARE_VERSION, IDF_VER);
     Serial.printf("cpu=%luMHz load=", (unsigned long)cpuMhz);
     if (hasCpuLoad)
         Serial.printf("CPU0 %u%% CPU1 %u%%\n", cpu0Load, cpu1Load);
@@ -5614,6 +5716,12 @@ static void dashSerialPrintSystemStatus()
     Serial.println();
     if (hasTemp)
         Serial.printf("temp=%.1fC\n", tempC);
+    Serial.printf("instantEngageEnabled=%d apEngaged=%d edgePending=%d debounceSatisfied=%d instantBypassLast=%d\n",
+                  (int)dashInstantEngage, (int)ap.apEngaged, (int)ap.edgePending,
+                  (int)ap.debounceSatisfied, (int)ap.instantBypassLast);
+    Serial.printf("apEdgeCount=%lu lastApEdgeAgeMs=%lu apDebounceBypassCount=%lu\n",
+                  (unsigned long)ap.apEdgeCount, (unsigned long)lastApEdgeAgeMs,
+                  (unsigned long)ap.apDebounceBypassCount);
     Serial.println();
 }
 
@@ -5708,6 +5816,8 @@ static void dashSerialRunCommand(char *cmd)
         if (reactive)
         {
             DashReactiveDiag d = reactive->reactiveDiag();
+            Serial.printf("selectedMode=%u selectedModeName=%s runtimePhase=%s\n",
+                          (unsigned)d.selectedMode, d.selectedModeName, d.runtimePhase);
             Serial.println("=== TSL6P Burst NAG v4 ===");
             Serial.printf("enabled=%d mode=%d injecting=%d amp=%d handsOn=%d nextPhaseMs=%lu\n",
                           (int)d.enabled, (int)d.mode, (int)d.injecting, d.currentAmp,
@@ -5754,6 +5864,9 @@ static void dashSerialRunCommand(char *cmd)
                 Serial.printf("[NVS] rn_ns=%lu rn_rb=%lu rn_pw=%lu rn_es=%lu\n",
                               (unsigned long)p.getUInt("rn_ns", 999), (unsigned long)p.getUInt("rn_rb", 999),
                               (unsigned long)p.getUInt("rn_pw", 999), (unsigned long)p.getUInt("rn_es", 999));
+                Serial.printf("[NVS] rh_ns=%lu rh_rb=%lu rh_pw=%lu rh_es=%lu\n",
+                              (unsigned long)p.getUInt("rh_ns", 999), (unsigned long)p.getUInt("rh_rb", 999),
+                              (unsigned long)p.getUInt("rh_pw", 999), (unsigned long)p.getUInt("rh_es", 999));
                 p.end();
             }
             else
@@ -5769,53 +5882,88 @@ static void dashSerialRunCommand(char *cmd)
     else if (strcmp(start, "reactive_nag_reset") == 0)
     {
         CarManagerBase *reactive = dashReactiveNagHandler();
-        if (reactive)
-            reactive->resetReactiveCounters();
-        Preferences p;
-        if (p.begin(PREFS_NS, false))
+        const DashNagMode selectedMode = dashNagModeFromRaw(dashNagMode);
+        if (!reactive || (selectedMode != DashNagMode::HumanReplayTsl6p &&
+                          selectedMode != DashNagMode::ReactiveHold))
         {
-            p.remove("rn_ns");
-            p.remove("rn_rb");
-            p.remove("rn_pw");
-            p.remove("rn_es");
-            p.end();
-            reactiveCountersLoaded = true; // don't reload stale NVS next loop tick
-            lastReactiveCountersMs = millis();
-            Serial.println("reactive_nag counters reset (RAM + NVS)");
+            Serial.println("selected NAG mode has no persistent counters");
         }
         else
         {
-            reactiveCountersLoaded = false; // retry NVS load later; RAM was still reset above
-            Serial.println("reactive_nag RAM counters reset; NVS reset failed");
+            reactive->resetNagCounters(selectedMode);
+            Preferences p;
+            if (p.begin(PREFS_NS, false))
+            {
+                if (selectedMode == DashNagMode::HumanReplayTsl6p)
+                {
+                    p.remove("rn_ns");
+                    p.remove("rn_rb");
+                    p.remove("rn_pw");
+                    p.remove("rn_es");
+                }
+                else
+                {
+                    p.remove("rh_ns");
+                    p.remove("rh_rb");
+                    p.remove("rh_pw");
+                    p.remove("rh_es");
+                }
+                p.end();
+                reactive->markNagCountersPersisted(selectedMode);
+                reactiveCountersLoaded = true;
+                lastReactiveCountersMs = millis();
+                Serial.println("selected NAG counters reset (RAM + NVS)");
+            }
+            else
+            {
+                Serial.println("selected NAG RAM counters reset; NVS reset failed");
+            }
         }
     }
     else if (strcmp(start, "reactive_nag_bump") == 0)
     {
-        // Persistence self-test: bump counters (magic 111/222/333/444) + immediate
-        // NVS flush. Power-cycle the device, then reactive_nag — values must survive.
+        // Persistence self-test: bump selected counters by 111/222/333/444 and
+        // flush the selected bank immediately.
         CarManagerBase *reactive = dashReactiveNagHandler();
-        if (reactive)
+        const DashNagMode selectedMode = dashNagModeFromRaw(dashNagMode);
+        if (!reactive || (selectedMode != DashNagMode::HumanReplayTsl6p &&
+                          selectedMode != DashNagMode::ReactiveHold))
         {
-            reactive->bumpReactiveCounters();
-            DashReactiveDiag d = reactive->reactiveDiag();
+            Serial.println("selected NAG mode has no persistent counters");
+        }
+        else
+        {
+            reactive->bumpNagCounters(selectedMode);
+            const DashReactiveDiag d = reactive->nagDiagForMode(selectedMode);
             Preferences p;
             if (p.begin(PREFS_NS, false))
             {
-                p.putUInt("rn_ns", d.nagSamples);
-                p.putUInt("rn_rb", d.reactiveBursts);
-                p.putUInt("rn_pw", d.proactiveWiggles);
-                p.putUInt("rn_es", d.echoSent);
+                if (selectedMode == DashNagMode::HumanReplayTsl6p)
+                {
+                    p.putUInt("rn_ns", d.nagSamples);
+                    p.putUInt("rn_rb", d.reactiveBursts);
+                    p.putUInt("rn_pw", d.proactiveWiggles);
+                    p.putUInt("rn_es", d.echoSent);
+                }
+                else
+                {
+                    p.putUInt("rh_ns", d.nagSamples);
+                    p.putUInt("rh_rb", d.reactiveBursts);
+                    p.putUInt("rh_pw", d.proactiveWiggles);
+                    p.putUInt("rh_es", d.echoSent);
+                }
                 p.end();
-                reactiveCountersLoaded = true; // ensure maintenance won't overwrite from stale NVS
+                reactive->markNagCountersPersisted(selectedMode);
+                reactiveCountersLoaded = true;
                 lastReactiveCountersMs = millis();
-                Serial.printf("bumped+flushed: nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu (power-cycle to test persistence)\n",
+                Serial.printf("bumped+flushed mode=%u: nagSamples=%lu reactiveBursts=%lu proactiveWiggles=%lu echoSent=%lu\n",
+                              (unsigned)dashNagModeToRaw(selectedMode),
                               (unsigned long)d.nagSamples, (unsigned long)d.reactiveBursts,
                               (unsigned long)d.proactiveWiggles, (unsigned long)d.echoSent);
             }
             else
             {
-                reactiveCountersLoaded = false;
-                Serial.println("reactive_nag bumped RAM counters; NVS flush failed");
+                Serial.println("selected NAG counters bumped in RAM; NVS flush failed");
             }
         }
     }
@@ -5997,6 +6145,7 @@ static void handleSettingsExport()
     bool storedForce = forceActivate;
     bool storedBootCan = bootCanActive;
     bool storedApGate = apInjectionGate;
+    bool storedApFirstEdge = dashInstantEngage;
     bool storedApRestore = apAutoRestore;
     bool spAuto = dashSpeedProfileAuto;
     uint8_t spSel = dashManualSpeedProfile;
@@ -6066,6 +6215,7 @@ static void handleSettingsExport()
         storedForce = p.getBool("force_act", forceActivate);
         storedBootCan = p.getBool("boot_can", bootCanActive);
         storedApGate = p.getBool("ap_gate", apInjectionGate);
+        storedApFirstEdge = p.getBool("apfe", dashInstantEngage);
         storedApRestore = p.getBool("ap_rst", apAutoRestore);
         spAuto = p.getBool("sp_auto", dashSpeedProfileAuto);
         spSel = p.getUChar("sp_sel", dashManualSpeedProfile);
@@ -6090,9 +6240,8 @@ static void handleSettingsExport()
         storedRearFogStrategy = p.getUChar("lt_fog", dashRearFogStrategy);
         storedDefenseEnabled = p.getBool("def_en", dashDefenseEnabled);
         storedBionicSteering = p.getBool("def_bio", dashBionicSteering);
-        storedNagMode = p.getUChar("def_nag_mode", dashNagMode);
-        if (storedNagMode > 2)
-            storedNagMode = 0;
+        storedNagMode = dashNagModeToRaw(
+            dashNagModeFromRaw(p.getUChar("def_nag_mode", dashNagMode)));
         storedNagTorqueTamper = p.getBool("def_ntt", dashNagTorqueTamper);
         storedSoftEngage = p.getBool("def_se", dashSoftEngage);
         storedAbortGuard = p.getBool("def_ag", dashAbortGuardEnabled);
@@ -6177,6 +6326,7 @@ static void handleSettingsExport()
     j += ",\"force\":" + String(storedForce ? "true" : "false");
     j += ",\"bootCan\":" + String(storedBootCan ? "true" : "false");
     j += ",\"apGate\":" + String(storedApGate ? "true" : "false");
+    j += ",\"apFirstEdge\":" + String(storedApFirstEdge ? "true" : "false");
     j += ",\"apAutoRestore\":" + String(storedApRestore ? "true" : "false");
     j += ",\"speedProfileAuto\":" + String(spAuto ? "true" : "false") + ",\"speedProfile\":" + String(spSel);
     j += ",\"driveProfile\":" + String(storedDriveProfile);
@@ -6340,6 +6490,8 @@ static void handleSettingsImport()
             p.putBool("boot_can", device["bootCan"].as<bool>());
         if (device["apGate"].is<bool>())
             p.putBool("ap_gate", device["apGate"].as<bool>());
+        if (device["apFirstEdge"].is<bool>())
+            p.putBool("apfe", device["apFirstEdge"].as<bool>());
         if (device["apAutoRestore"].is<bool>())
             p.putBool("ap_rst", device["apAutoRestore"].as<bool>());
         if (device["speedProfileAuto"].is<bool>())
@@ -7243,6 +7395,7 @@ static void dashInitHandlers()
     for (int i = 0; i < 3; i++)
     {
         handlerPool[i]->onFrame = mcpDashOnFrame;
+        handlerPool[i]->resetApFirstRuntime();
         handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason;
         handlerPool[i]->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         handlerPool[i]->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
@@ -7258,6 +7411,15 @@ static void dashSwapHandler(uint8_t mode)
     CarManagerBase *next = handlerPool[effective];
     if (dashHandler)
         next->enablePrint = (bool)dashHandler->enablePrint;
+    if (dashHandler != next)
+    {
+        if (dashHandler)
+            dashHandler->clearApFirstTiming();
+        next->clearApFirstTiming();
+        legacyFsdApActiveSinceMs = 0;
+        legacySoftEngageSent = false;
+        legacyFsdLastAllowed = false;
+    }
     appActiveHandler = next;
     dashHandler = next;
     dashApplyRuntimeState();
@@ -7496,25 +7658,57 @@ static void dashReactiveCountersMaintenance()
         Preferences p;
         if (!p.begin(PREFS_NS, false))
             return;
-        uint32_t ns = p.getUInt("rn_ns", 0), rb = p.getUInt("rn_rb", 0),
-                 pw = p.getUInt("rn_pw", 0), es = p.getUInt("rn_es", 0);
+        const uint32_t rnNs = p.getUInt("rn_ns", 0);
+        const uint32_t rnRb = p.getUInt("rn_rb", 0);
+        const uint32_t rnPw = p.getUInt("rn_pw", 0);
+        const uint32_t rnEs = p.getUInt("rn_es", 0);
+        const uint32_t rhNs = p.getUInt("rh_ns", 0);
+        const uint32_t rhRb = p.getUInt("rh_rb", 0);
+        const uint32_t rhPw = p.getUInt("rh_pw", 0);
+        const uint32_t rhEs = p.getUInt("rh_es", 0);
         p.end();
-        reactive->setReactiveCounters(ns, rb, pw, es);
+        reactive->setNagCounters(DashNagMode::HumanReplayTsl6p, rnNs, rnRb, rnPw, rnEs);
+        reactive->setNagCounters(DashNagMode::ReactiveHold, rhNs, rhRb, rhPw, rhEs);
         reactiveCountersLoaded = true;
         lastReactiveCountersMs = now;
         return;
     }
     if (now - lastReactiveCountersMs < 2000)
         return;
+
+    const DashNagMode selectedMode = dashNagModeFromRaw(dashNagMode);
+    if (selectedMode != DashNagMode::HumanReplayTsl6p &&
+        selectedMode != DashNagMode::ReactiveHold)
+    {
+        lastReactiveCountersMs = now;
+        return;
+    }
+    if (!reactive->nagCountersDirty(selectedMode))
+    {
+        lastReactiveCountersMs = now;
+        return;
+    }
+
     Preferences p;
     if (!p.begin(PREFS_NS, false))
         return;
-    DashReactiveDiag d = reactive->reactiveDiag();
-    p.putUInt("rn_ns", d.nagSamples);
-    p.putUInt("rn_rb", d.reactiveBursts);
-    p.putUInt("rn_pw", d.proactiveWiggles);
-    p.putUInt("rn_es", d.echoSent);
+    const DashReactiveDiag d = reactive->nagDiagForMode(selectedMode);
+    if (selectedMode == DashNagMode::HumanReplayTsl6p)
+    {
+        p.putUInt("rn_ns", d.nagSamples);
+        p.putUInt("rn_rb", d.reactiveBursts);
+        p.putUInt("rn_pw", d.proactiveWiggles);
+        p.putUInt("rn_es", d.echoSent);
+    }
+    else
+    {
+        p.putUInt("rh_ns", d.nagSamples);
+        p.putUInt("rh_rb", d.reactiveBursts);
+        p.putUInt("rh_pw", d.proactiveWiggles);
+        p.putUInt("rh_es", d.echoSent);
+    }
     p.end();
+    reactive->markNagCountersPersisted(selectedMode);
     lastReactiveCountersMs = now;
 }
 

@@ -46,17 +46,39 @@ class SelCardsBindingTests(TouchUnifyTests):
 
 
 class NagModeCardsTests(TouchUnifyTests):
-    def test_nag_mode_converted_to_cards(self):
-        # 裸 row+label+select 已替换为 setting-row + sel-cards
+    def test_nag_mode_exposes_all_four_stable_modes(self):
+        # 裸 row+label+select 已替换为 setting-row + 四模式 sel-cards。
         self.assert_absent('<div class="row">\n    <label>NAG 模式</label>')
         self.assert_present('data-for="nag-mode-select"')
-        # 隐藏 select 保留作 .value 载体
         self.assertRegex(SRC, r'<select[^>]*id="nag-mode-select"[^>]*display:none')
-        # 两张卡片
-        self.assert_present('onclick="selectCard(\'nag-mode-select\',0)"')
-        self.assert_present('onclick="selectCard(\'nag-mode-select\',2)"')
-        # 旧裸 select（无 display:none）不应再存在为可见控件
+        for option in [
+            '<option value="0">Off</option>',
+            '<option value="1">Human Replay TSL6P</option>',
+            '<option value="2">EPAS Late Echo</option>',
+            '<option value="3">Reactive Sustained Hold</option>',
+        ]:
+            self.assert_present(option)
+        for mode in range(4):
+            self.assert_present(f'onclick="selectCard(\'nag-mode-select\',{mode})"')
+            self.assert_present(f'data-value="{mode}"')
+        self.assert_present('class="sel-cards c4 nag-mode-cards"')
+        # 旧裸 select（无 display:none）不应再存在为可见控件。
         self.assert_absent('<select id="nag-mode-select" onchange="saveDefenseConfig()">')
+
+    def test_nag_mode_load_and_parent_disable_preserve_selection(self):
+        load = re.search(r"async function loadDefenseConfig\(\)\{.*?setText\('tb-exp'", SRC, re.S)
+        self.assertIsNotNone(load)
+        self.assertIn("setVal('nag-mode-select'", load.group(0))
+        self.assertIn("syncNagModeAvailability(!!d.enabled)", load.group(0))
+
+        sync = re.search(r"function syncNagModeAvailability\([^)]*\)\{.*?\n\}", SRC, re.S)
+        self.assertIsNotNone(sync)
+        self.assertIn("classList.toggle('inactive',!parentEnabled)", sync.group(0))
+        self.assertNotIn(".value=", sync.group(0))
+
+        save = re.search(r"async function saveDefenseConfig\(\)\{.*?\n\}", SRC, re.S)
+        self.assertIsNotNone(save)
+        self.assertIn("nagMode: parseInt(val('nag-mode-select')||'0',10)", save.group(0))
 
 
 class ApDelayCardsTests(TouchUnifyTests):
@@ -68,6 +90,36 @@ class ApDelayCardsTests(TouchUnifyTests):
         # 两处 select 都保留 hidden 作为 .value / class sync 载体
         self.assertRegex(SRC, r'<select[^>]*id="ap-delay-select"[^>]*display:none')
         self.assert_present('class="ap-delay-select"')
+
+
+class InstantEngageToggleTests(TouchUnifyTests):
+    def test_desktop_and_mobile_controls_are_present(self):
+        self.assertEqual(SRC.count('class="ap-instant-edge-tgl"'), 2)
+        self.assertEqual(SRC.count('Instant Engage (experimental)'), 2)
+        self.assertEqual(
+            SRC.count('Allow the first eligible injection immediately when AP truly becomes engaged.'),
+            2,
+        )
+
+    def test_sync_preserves_checked_value_when_parent_is_disabled(self):
+        sync = re.search(r"function syncInstantEngage\([^)]*\)\{.*?\n\}", SRC, re.S)
+        self.assertIsNotNone(sync)
+        body = sync.group(0)
+        self.assertIn("document.querySelectorAll('.ap-instant-edge-tgl')", body)
+        self.assertIn("el.checked=!!value", body)
+        self.assertIn("el.disabled=!parentEnabled", body)
+        self.assertIn("classList.toggle('inactive',!parentEnabled)", body)
+        self.assertNotIn("checked=false", body)
+
+    def test_save_uses_existing_config_and_restores_backend_on_failure(self):
+        save = re.search(r"async function saveInstantEngage\([^)]*\)\{.*?\n\}", SRC, re.S)
+        self.assertIsNotNone(save)
+        body = save.group(0)
+        self.assertIn("postForm('/config'", body)
+        self.assertIn("ap_first_edge:checked?'1':'0'", body)
+        self.assertIn("loadInstantEngageConfig()", body)
+        self.assertIn("showToast(T('保存失败')||'Save failed',false)", body)
+        self.assertNotIn("/ap_first_edge", body)
 
 
 class LegacyOffsetModeCardsTests(TouchUnifyTests):

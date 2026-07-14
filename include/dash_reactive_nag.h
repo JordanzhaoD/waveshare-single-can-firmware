@@ -46,6 +46,9 @@ enum class DashHumanReplayProfileId
 struct DashReactiveDiag
 {
     bool enabled{false};
+    uint8_t selectedMode{0};
+    const char *selectedModeName{"off"};
+    const char *runtimePhase{"idle"};
     HumanReplayMode mode{HumanReplayMode::IDLE};
     bool injecting{false};
     uint8_t lastHandsOnState{0};
@@ -141,6 +144,7 @@ struct DashReactiveNagBurst
     uint32_t abortBlocks_{0};
     uint32_t gateBlocks_{0};
     uint32_t txFailures_{0};
+    bool countersDirty_{false};
 
     unsigned long phaseStartMs_{0};
     unsigned long cooldownStartMs_{0};
@@ -191,6 +195,7 @@ struct DashReactiveNagBurst
         abortBlocks_ = 0;
         gateBlocks_ = 0;
         txFailures_ = 0;
+        countersDirty_ = true;
     }
 
     // Diagnostic test hook: add distinct magic amounts so persistence across
@@ -201,6 +206,7 @@ struct DashReactiveNagBurst
         burstSessions_ += 222;
         hosClearEvents_ += 333;
         burstFramesSent_ += 444;
+        countersDirty_ = true;
     }
 
     void setCounters(uint32_t ns, uint32_t sessions, uint32_t clears, uint32_t sent)
@@ -219,11 +225,16 @@ struct DashReactiveNagBurst
         abortBlocks_ = 0;
         gateBlocks_ = 0;
         txFailures_ = 0;
+        countersDirty_ = false;
     }
+
+    bool countersDirty() const { return countersDirty_; }
+    void markCountersPersisted() { countersDirty_ = false; }
 
     void notifyEchoSent()
     {
         burstFramesSent_++;
+        countersDirty_ = true;
     }
 
     void noteBaseTorqueRaw(int raw) { lastBaseRaw_ = raw; }
@@ -440,6 +451,7 @@ struct DashReactiveNagBurst
         torqueIndex_ = 0;
         blockedReason_ = "";
         burstSessions_++;
+        countersDirty_ = true;
         burstOnEntries_++;
     }
 
@@ -519,6 +531,7 @@ struct DashReactiveNagBurst
         else
             return;
         hosClearEvents_++;
+        countersDirty_ = true;
         lastHosAfter_ = hos;
     }
 
@@ -534,6 +547,7 @@ struct DashReactiveNagBurst
             if (hos > 2)
             {
                 nagSamples_++;
+                countersDirty_ = true;
                 lastHosBefore_ = hos;
             }
             else
@@ -564,6 +578,7 @@ struct DashReactiveNagBurst
         }
 
         nagSamples_++;
+        countersDirty_ = true;
         lastHosBefore_ = hos;
 
         if (!active)

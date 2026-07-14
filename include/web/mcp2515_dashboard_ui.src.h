@@ -185,6 +185,10 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .sel-cards.c2 { grid-template-columns: repeat(2, 1fr); }
 .sel-cards.c3 { grid-template-columns: repeat(3, 1fr); }
 .sel-cards.c4 { grid-template-columns: repeat(4, 1fr); }
+.sel-cards.inactive { opacity: .45; }
+.sel-cards.inactive .sel-card { pointer-events: none; cursor: not-allowed; }
+.toggle-row.inactive { opacity: .45; }
+.toggle-row.inactive .tgl { cursor: not-allowed; }
 .sel-card { background: var(--card-bg-alt); border: 2px solid var(--border);
   border-radius: 12px; padding: 24px 14px; text-align: center; cursor: pointer;
   transition: border-color .15s, background .15s; }
@@ -867,6 +871,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="sel-card" data-value="2000" onclick="setApDelayCards(2000)"><div class="sel-lbl">推荐</div><div class="sel-name">2.0</div></div>
   <div class="sel-card" data-value="3000" onclick="setApDelayCards(3000)"><div class="sel-lbl">保守</div><div class="sel-name">3.0</div></div>
 </div></div>
+          <div class="ctl-row toggle-row"><div><div class="cn">Instant Engage (experimental)</div><div class="cd">Allow the first eligible injection immediately when AP truly becomes engaged.</div></div>
+            <label class="tgl"><input class="ap-instant-edge-tgl" type="checkbox" onchange="saveInstantEngage(this)"><div class="tgl-track"></div></label></div>
           <div class="ctl-row"><div><div class="cn">AP 自动恢复</div><div class="cd">重启后恢复上次 AP 配置</div></div>
             <label class="tgl"><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
           <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
@@ -1398,6 +1404,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="sel-card" data-value="3000" onclick="setApDelayCards(3000)"><div class="sel-lbl">保守</div><div class="sel-name">3.0</div></div>
 </div>
   </div>
+  <div class="setting-row toggle-row">
+    <div>
+      <div class="setting-name">Instant Engage (experimental)</div>
+      <div class="setting-desc">Allow the first eligible injection immediately when AP truly becomes engaged.</div>
+    </div>
+    <label class="tgl"><input class="ap-instant-edge-tgl" type="checkbox" onchange="saveInstantEngage(this)"><div class="tgl-track"></div></label>
+  </div>
   <div class="setting-row">
     <div>
       <div class="setting-name">Soft Engage 方向盘居中</div>
@@ -1438,18 +1451,22 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">NAG 模式</div>
-      <div class="setting-desc">Off=关闭；EPAS Late Echo=封闭研究模式（默认关，仅 0x370，保留 handsOnLevel）</div>
+      <div class="setting-desc">四种算法独立选择；总开关关闭时保留已保存模式，仅暂停运行。</div>
     </div>
     <select id="nag-mode-select" style="display:none" onchange="saveDefenseConfig()">
       <option value="0">Off</option>
-      <option value="2">EPAS Late Echo 实验</option>
+      <option value="1">Human Replay TSL6P</option>
+      <option value="2">EPAS Late Echo</option>
+      <option value="3">Reactive Sustained Hold</option>
     </select>
-    <div class="sel-cards c2" data-for="nag-mode-select" style="max-width:240px">
-      <div class="sel-card" data-value="0" onclick="selectCard('nag-mode-select',0)"><div class="sel-lbl">默认</div><div class="sel-name">Off</div></div>
-      <div class="sel-card" data-value="2" onclick="selectCard('nag-mode-select',2)"><div class="sel-lbl">研究</div><div class="sel-name">Late Echo</div></div>
+    <div class="sel-cards c4 nag-mode-cards" data-for="nag-mode-select">
+      <div class="sel-card" data-value="0" onclick="selectCard('nag-mode-select',0)"><div class="sel-lbl">关闭</div><div class="sel-name">Off</div></div>
+      <div class="sel-card" data-value="1" onclick="selectCard('nag-mode-select',1)"><div class="sel-lbl">重放</div><div class="sel-name">TSL6P</div></div>
+      <div class="sel-card" data-value="2" onclick="selectCard('nag-mode-select',2)"><div class="sel-lbl">延迟</div><div class="sel-name">Late Echo</div></div>
+      <div class="sel-card" data-value="3" onclick="selectCard('nag-mode-select',3)"><div class="sel-lbl">持续</div><div class="sel-name">Reactive Hold</div></div>
     </div>
   </div>
-  <div class="hint warn">EPAS Late Echo 为封闭环境研究模式：默认关闭，只发送 0x370，保留 handsOnLevel，cadence/timing 不满足时自动不发。</div>
+  <div class="hint warn">模式编号稳定：0 Off / 1 Human Replay TSL6P / 2 EPAS Late Echo / 3 Reactive Sustained Hold。所有模式仍受防护总开关与既有安全门控约束。</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">扭矩篡改(1.80Nm) <span class="exp-badge">高危</span></div>
@@ -2042,6 +2059,27 @@ function syncSelCardsVisual(id){
     var on=String(cards[i].getAttribute('data-value'))===cur;
     cards[i].classList.toggle('active',on);
   }
+}
+function syncNagModeAvailability(parentEnabled){
+  var wrap=document.querySelector('.nag-mode-cards');
+  if(wrap)wrap.classList.toggle('inactive',!parentEnabled);
+  var sel=$('nag-mode-select');
+  if(sel)sel.disabled=!parentEnabled;
+}
+var instantEngageValue=false;
+function syncInstantEngage(value,parentEnabled){
+  document.querySelectorAll('.ap-instant-edge-tgl').forEach(function(el){
+    el.checked=!!value;
+    el.disabled=!parentEnabled;
+    var row=el.closest('.toggle-row');
+    if(row)row.classList.toggle('inactive',!parentEnabled);
+  });
+}
+function apGateParentEnabled(){
+  var core=$('ap-core-gate-tgl');
+  if(core)return !!core.checked;
+  var gate=$('ap-gate-tgl');
+  return !!(gate&&gate.checked);
 }
 function selectCard(id,value){
   var sel=$(id); if(!sel)return;
@@ -2690,6 +2728,7 @@ async function loadDefenseConfig(){
   var bioRisk=$('def-bionic-risk');if(bioRisk)bioRisk.style.display=!!d.bionic_steering?'block':'none';
   var conf=(d&&d.defense)?d:{defense:{nagMode:(d&&d.nagMode!=null)?d.nagMode:((d&&d.nag_mode!=null)?d.nag_mode:0)}};
   setVal('nag-mode-select', String((d&&d.nag_mode!=null)?d.nag_mode:((conf&&conf.defense&&conf.defense.nagMode!=null)?conf.defense.nagMode:0)));
+  syncNagModeAvailability(!!d.enabled);
   var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
   var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
   var se=$('def-soft-engage-tgl');if(se)se.checked=!!d.soft_engage;
@@ -2863,6 +2902,28 @@ async function saveSpeedCustom(){
   setStatusTriplet('speed','custom','cp1-cp4 已保存','等待 /status 速度确认','warn');
 }
 
+async function loadInstantEngageConfig(){
+  var d=await fetchJson('/config');
+  if(!d||d.ap_first_edge===undefined)return false;
+  instantEngageValue=!!d.ap_first_edge;
+  syncInstantEngage(instantEngageValue,apGateParentEnabled());
+  return true;
+}
+async function saveInstantEngage(src){
+  var checked=!!(src&&src.checked);
+  syncInstantEngage(checked,apGateParentEnabled());
+  try{
+    await postForm('/config',{ap_first_edge:checked?'1':'0'});
+    instantEngageValue=checked;
+    syncInstantEngage(instantEngageValue,apGateParentEnabled());
+    showToast(T('已保存')||'Saved',true);
+  }catch(e){
+    var restored=await loadInstantEngageConfig();
+    if(!restored)syncInstantEngage(instantEngageValue,apGateParentEnabled());
+    showToast(T('保存失败')||'Save failed',false);
+  }
+}
+
 // ── Save Config (generic toggle) ───────────────────────────
 async function saveConfig(){
   var data={};
@@ -2874,12 +2935,16 @@ async function saveConfig(){
 }
 function updateApGateControl(d){
   var gate=$('ap-gate-tgl');
-  if(gate&&d)gate.checked=!!d.apGateEnabled;
+  var parentEnabled=!!(d&&d.apGateEnabled);
+  if(gate)gate.checked=parentEnabled;
+  syncInstantEngage(instantEngageValue,parentEnabled);
 }
 async function saveApGate(){
   var gate=$('ap-gate-tgl');
-  try{await postForm('/config',{apg:gate&&gate.checked?'1':'0'});}
-  catch(e){if(gate)gate.checked=!gate.checked}
+  var parentEnabled=!!(gate&&gate.checked);
+  syncInstantEngage(instantEngageValue,parentEnabled);
+  try{await postForm('/config',{apg:parentEnabled?'1':'0'});}
+  catch(e){if(gate)gate.checked=!gate.checked;syncInstantEngage(instantEngageValue,!parentEnabled)}
 }
 
 // ── AP injection core controls (standalone driving status) ────────────
@@ -2887,6 +2952,7 @@ async function saveApGateControls(){
   var gate=document.getElementById('ap-core-gate-tgl');
   var delay=document.getElementById('ap-delay-select');
   var restore=document.getElementById('ap-auto-restore-tgl');
+  syncInstantEngage(instantEngageValue,!!(gate&&gate.checked));
   try{
     await postForm('/config',{
       apg:gate&&gate.checked?'1':'0',
@@ -2923,6 +2989,7 @@ function renderApInjectionState(d){
   setText('ap-core-state-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));
   setText('injection-source',d.injectionSource||'Disabled');
   var apg=document.getElementById('ap-core-gate-tgl'); if(apg)apg.checked=!!d.apGateEnabled;
+  syncInstantEngage(instantEngageValue,!!d.apGateEnabled);
   var delayVal=(d.apDelayMs!=null&&d.apDelayMs!==undefined)?d.apDelayMs:(req||2000);
   document.querySelectorAll('.ap-delay-select').forEach(function(s){if(document.activeElement!==s)s.value=String(delayVal);});
   updateApDelayCards();
@@ -4178,6 +4245,7 @@ document.addEventListener('DOMContentLoaded',function(){
   loadFirmwareInfo();
   loadCanPins();
   loadLegacyFsdConfig();
+  loadInstantEngageConfig();
   loadPlugins();
 
   // Start polling

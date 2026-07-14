@@ -5,6 +5,7 @@
 #include "can_helpers.h"
 #include "handlers.h"
 #include "dash_epas_late_echo.h"
+#include "dash_legacy_370_echo.h"
 #include "drivers/mock_driver.h"
 
 static uint32_t nativeDiagFutureMs(uint32_t leadMs)
@@ -25,6 +26,11 @@ static LegacyHandler handler;
 static bool denyAD()
 {
     return false;
+}
+
+static bool allowLegacyActivation(uint32_t)
+{
+    return true;
 }
 
 static FsdGateBlockReason denyByApGate()
@@ -162,6 +168,47 @@ void setUp()
 
 void tearDown() {}
 
+void test_legacy_370_echo_builder_rewrites_only_expected_fields()
+{
+    CanFrame source = makeEpasFrame(3, 0.20f, 0x0E);
+    source.bus = CAN_BUS_VEH;
+    const uint8_t sourceData0 = source.data[0];
+    const uint8_t sourceData1 = source.data[1];
+    const uint8_t sourceData2High = source.data[2] & 0xF0;
+    const uint8_t sourceData4Low = source.data[4] & 0x3F;
+    const uint8_t sourceData5 = source.data[5];
+    const uint8_t sourceData6High = source.data[6] & 0xF0;
+
+    CanFrame echo = dashBuildLegacy370Echo(source, 0x08, 0xB6, true);
+
+    TEST_ASSERT_EQUAL_HEX32(0x370, echo.id);
+    TEST_ASSERT_EQUAL_UINT8(8, echo.dlc);
+    TEST_ASSERT_EQUAL_UINT8(CAN_BUS_VEH, echo.bus);
+    TEST_ASSERT_EQUAL_HEX8(sourceData0, echo.data[0]);
+    TEST_ASSERT_EQUAL_HEX8(sourceData1, echo.data[1]);
+    TEST_ASSERT_EQUAL_HEX8(sourceData2High, echo.data[2] & 0xF0);
+    TEST_ASSERT_EQUAL_HEX8(0x08, echo.data[2] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(0xB6, echo.data[3]);
+    TEST_ASSERT_EQUAL_HEX8(sourceData4Low, echo.data[4] & 0x3F);
+    TEST_ASSERT_EQUAL_HEX8(0x40, echo.data[4] & 0xC0);
+    TEST_ASSERT_EQUAL_HEX8(sourceData5, echo.data[5]);
+    TEST_ASSERT_EQUAL_HEX8(sourceData6High, echo.data[6] & 0xF0);
+    TEST_ASSERT_EQUAL_HEX8(0x0F, echo.data[6] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(computeVehicleChecksum(echo), echo.data[7]);
+}
+
+void test_legacy_370_echo_builder_preserves_hands_on_when_not_forced()
+{
+    CanFrame source = makeEpasFrame(3, -0.20f, 0x0F);
+    const uint8_t sourceHandsOn = source.data[4];
+
+    CanFrame echo = dashBuildLegacy370Echo(source, 0x07, 0x42, false);
+
+    TEST_ASSERT_EQUAL_HEX8(sourceHandsOn, echo.data[4]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, echo.data[6] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(computeVehicleChecksum(echo), echo.data[7]);
+}
+
 // --- Speed profile from stalk position (CAN ID 69) ---
 
 void test_legacy_stalk_pos0_sets_profile_2()
@@ -280,6 +327,22 @@ void test_legacy_checkAD_blocks_mux0_send()
     TEST_ASSERT_TRUE(handler.ADEnabled);
     TEST_ASSERT_TRUE(handler.fsdTriggered);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+void test_legacy_checkAD_still_blocks_when_ap_first_callback_allows()
+{
+    handler.checkAD = denyAD;
+    handler.legacyFsdActivationAllowed = allowLegacyActivation;
+
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_TRUE(handler.ADEnabled);
+    TEST_ASSERT_TRUE(handler.fsdTriggered);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(FsdSkipReason::GateBlocked, handler.legacyFsdDiag.mux0.lastSkip);
 }
 
 // --- fsdTriggered state tracking ---
@@ -936,7 +999,7 @@ void test_legacy_tsl6p_default_mode_off_no_echo_even_when_bionic_enabled()
 void test_legacy_tsl6p_hos3_sends_first_sequence_frame()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
 
@@ -945,6 +1008,10 @@ void test_legacy_tsl6p_hos3_sends_first_sequence_frame()
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(880, mock.sent[0].id);
+    TEST_ASSERT_EQUAL_HEX8(epas.data[0], mock.sent[0].data[0]);
+    TEST_ASSERT_EQUAL_HEX8(epas.data[1], mock.sent[0].data[1]);
+    TEST_ASSERT_EQUAL_HEX8(epas.data[2] & 0xF0, mock.sent[0].data[2] & 0xF0);
+    TEST_ASSERT_EQUAL_HEX8(epas.data[5], mock.sent[0].data[5]);
     TEST_ASSERT_EQUAL_INT(180, decodeEchoTorqueSigned(mock.sent[0]));
     TEST_ASSERT_EQUAL_UINT8(1, decodeEchoHandsOnLevel(mock.sent[0]));
     TEST_ASSERT_EQUAL_UINT8(3, counterLowNibble(mock.sent[0]));
@@ -954,7 +1021,7 @@ void test_legacy_tsl6p_hos3_sends_first_sequence_frame()
 void test_legacy_tsl6p_sequence_cycles_absolute_torque_targets()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
 
@@ -973,7 +1040,7 @@ void test_legacy_tsl6p_sequence_cycles_absolute_torque_targets()
 void test_legacy_tsl6p_burst_off_suppresses_echo()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     CanFrame epas = makeEpasFrame(0, 0.10f, 2);
@@ -992,7 +1059,7 @@ void test_legacy_tsl6p_burst_off_suppresses_echo()
 void test_legacy_tsl6p_370_path_advances_cycle_without_fresh_399()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
@@ -1018,7 +1085,7 @@ void test_legacy_tsl6p_370_path_advances_cycle_without_fresh_399()
 void test_legacy_tsl6p_hos_clear_stops_future_echo()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     CanFrame epas = makeEpasFrame(0, 0.10f, 2);
@@ -1037,7 +1104,7 @@ void test_legacy_tsl6p_hos_clear_stops_future_echo()
 void test_legacy_tsl6p_checkad_blocks_and_cancels()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
@@ -1054,7 +1121,7 @@ void test_legacy_tsl6p_checkad_blocks_and_cancels()
 void test_legacy_tsl6p_checkad_false_from_idle_does_not_start_burst_session()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     handler.checkAD = denyAD;
 
     CanFrame das = makeDasFrameWithState(3, 6);
@@ -1068,7 +1135,7 @@ void test_legacy_tsl6p_checkad_false_from_idle_does_not_start_burst_session()
 void test_legacy_tsl6p_burst_off_gate_loss_cancels_with_reason()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     handler.nag.onNagSample(3, 5000, true, 6);
@@ -1085,7 +1152,7 @@ void test_legacy_tsl6p_burst_off_gate_loss_cancels_with_reason()
 void test_legacy_tsl6p_ap_inactive_cancels()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
@@ -1103,7 +1170,7 @@ void test_legacy_tsl6p_ap_inactive_cancels()
 void test_legacy_tsl6p_abort_state_blocks_subsequent_echo()
 {
     handler.bionicSteering = true;
-    handler.setNagModeForTest("legacy_tsl6p");
+    handler.setNagModeForTest("human_replay_tsl6p");
     CanFrame das = makeDasFrameWithState(3, 6);
     handler.handleMessage(das, mock);
     TEST_ASSERT_EQUAL(HumanReplayMode::BURST_ON, handler.nag.mode());
@@ -1116,6 +1183,143 @@ void test_legacy_tsl6p_abort_state_blocks_subsequent_echo()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     TEST_ASSERT_EQUAL(HumanReplayMode::COOLDOWN, handler.nag.mode());
     TEST_ASSERT_EQUAL_STRING("abort", handler.nag.blockedReason());
+}
+
+void test_reactive_hold_active_hos3_sends_bounded_echo()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("reactive_hold");
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+
+    CanFrame epas = makeEpasFrame(0, 0.20f, 2);
+    const int32_t sourceRaw = decodeEchoTorqueRaw(epas);
+    handler.handleMessage(epas, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    const int32_t addedRaw = decodeEchoTorqueRaw(mock.sent[0]) - sourceRaw;
+    TEST_ASSERT_GREATER_THAN_INT(0, addedRaw);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(103, addedRaw);
+    TEST_ASSERT_EQUAL_UINT8(1, decodeEchoHandsOnLevel(mock.sent[0]));
+    TEST_ASSERT_TRUE(checksumValid370(mock.sent[0]));
+}
+
+void test_reactive_hold_hos0_proactive_can_send()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("reactive_hold");
+    CanFrame das = makeDasFrameWithState(0, 6);
+    handler.handleMessage(das, mock);
+
+    CanFrame epas = makeEpasFrame(0, 0.10f, 3);
+    handler.handleMessage(epas, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL(DashReactiveHoldPhase::Proactive,
+                      handler.reactiveHoldNag.diag(dashDiagNowMs()).phase);
+    TEST_ASSERT_EQUAL_UINT32(1,
+                             handler.reactiveHoldNag.diag(dashDiagNowMs()).proactiveWiggles);
+}
+
+void test_reactive_hold_ap_inactive_blocks_send()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("reactive_hold");
+    CanFrame das = makeDasFrameWithState(3, 2);
+    handler.handleMessage(das, mock);
+
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(epas, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(0,
+                             handler.reactiveHoldNag.diag(dashDiagNowMs()).reactiveBursts);
+}
+
+void test_reactive_hold_checkad_false_blocks_send()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("reactive_hold");
+    handler.checkAD = denyAD;
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(epas, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(0,
+                             handler.reactiveHoldNag.diag(dashDiagNowMs()).reactiveBursts);
+}
+
+void test_reactive_hold_abort_guard_blocks_send()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("reactive_hold");
+    handler.abortGuard.setEnabled(true);
+    CanFrame dasAbort = makeDasFrameWithState(3, 8);
+    handler.handleMessage(dasAbort, mock);
+    CanFrame dasEngaged = makeDasFrameWithState(3, 6);
+    handler.handleMessage(dasEngaged, mock);
+
+    CanFrame epas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(epas, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_TRUE(handler.abortGuard.diag().latched);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.abortGuard.diag().blocks);
+}
+
+void test_reactive_hold_never_modifies_or_sends_399()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("reactive_hold");
+    CanFrame das = makeDasFrameWithState(3, 6);
+    CanFrame original = das;
+
+    handler.handleMessage(das, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT(0, std::memcmp(original.data, das.data, sizeof(das.data)));
+}
+
+void test_switching_nag_modes_clears_both_immediate_engines()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("human_replay_tsl6p");
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+    TEST_ASSERT_TRUE(handler.nag.shouldEcho(dashDiagNowMs()));
+
+    handler.setNagModeForTest("reactive_hold");
+    TEST_ASSERT_FALSE(handler.nag.shouldEcho(dashDiagNowMs()));
+    handler.handleMessage(das, mock);
+    TEST_ASSERT_TRUE(handler.reactiveHoldNag.shouldEcho(dashDiagNowMs()));
+
+    handler.setNagModeForTest("off");
+    TEST_ASSERT_FALSE(handler.reactiveHoldNag.shouldEcho(dashDiagNowMs()));
+}
+
+void test_reactive_hold_counts_only_successful_echoes()
+{
+    handler.bionicSteering = true;
+    handler.setNagModeForTest("reactive_hold");
+    CanFrame das = makeDasFrameWithState(3, 6);
+    handler.handleMessage(das, mock);
+
+    mock.sendOk = false;
+    CanFrame failedEpas = makeEpasFrame(0, 0.10f, 2);
+    handler.handleMessage(failedEpas, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(0, handler.reactiveHoldNag.diag(dashDiagNowMs()).echoSent);
+    TEST_ASSERT_EQUAL_UINT32(0, handler.framesSent);
+
+    mock.sendOk = true;
+    CanFrame successfulEpas = makeEpasFrame(0, 0.10f, 3);
+    handler.handleMessage(successfulEpas, mock);
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, handler.reactiveHoldNag.diag(dashDiagNowMs()).echoSent);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.framesSent);
 }
 
 void test_epas_late_echo_does_not_send_immediately_on_370()
@@ -1307,6 +1511,9 @@ int main()
 {
     UNITY_BEGIN();
 
+    RUN_TEST(test_legacy_370_echo_builder_rewrites_only_expected_fields);
+    RUN_TEST(test_legacy_370_echo_builder_preserves_hands_on_when_not_forced);
+
     RUN_TEST(test_legacy_filter_ids_count);
     RUN_TEST(test_legacy_filter_ids_values);
     RUN_TEST(test_legacy_health_no_source_when_mux0_stale);
@@ -1327,6 +1534,7 @@ int main()
     RUN_TEST(test_legacy_AD_sets_bit46);
     RUN_TEST(test_legacy_stable_mux0_sets_bit46_only);
     RUN_TEST(test_legacy_checkAD_blocks_mux0_send);
+    RUN_TEST(test_legacy_checkAD_still_blocks_when_ap_first_callback_allows);
     RUN_TEST(test_legacy_fsdTriggered_set_on_mux0);
 
     RUN_TEST(test_legacy_stable_mux1_is_disabled);
@@ -1375,6 +1583,16 @@ int main()
     RUN_TEST(test_legacy_tsl6p_burst_off_gate_loss_cancels_with_reason);
     RUN_TEST(test_legacy_tsl6p_ap_inactive_cancels);
     RUN_TEST(test_legacy_tsl6p_abort_state_blocks_subsequent_echo);
+
+    RUN_TEST(test_reactive_hold_active_hos3_sends_bounded_echo);
+    RUN_TEST(test_reactive_hold_hos0_proactive_can_send);
+    RUN_TEST(test_reactive_hold_ap_inactive_blocks_send);
+    RUN_TEST(test_reactive_hold_checkad_false_blocks_send);
+    RUN_TEST(test_reactive_hold_abort_guard_blocks_send);
+    RUN_TEST(test_reactive_hold_never_modifies_or_sends_399);
+    RUN_TEST(test_switching_nag_modes_clears_both_immediate_engines);
+    RUN_TEST(test_reactive_hold_counts_only_successful_echoes);
+
     RUN_TEST(test_epas_late_echo_does_not_send_immediately_on_370);
     RUN_TEST(test_epas_late_echo_tick_sends_due_frame_and_preserves_byte4);
     RUN_TEST(test_epas_late_echo_new_370_before_tick_drops_pending);

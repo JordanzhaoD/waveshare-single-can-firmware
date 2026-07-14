@@ -360,6 +360,7 @@ public:
     void putChar(const char *key, int8_t value);
     void putUChar(const char *key, uint8_t value);
     void putUInt(const char *key, uint32_t value);
+    bool putBoolChecked(const char *key, bool value);
     void putBool(const char *key, bool value);
     void putString(const char *key, const String &value);
     void remove(const char *key);

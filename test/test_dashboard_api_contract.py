@@ -18,6 +18,9 @@ README = ROOT / "README.md"
 TESTS_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 SIMULATOR = ROOT / "scripts" / "webui_simulator.py"
+DASH_CONFIG_UPDATE = ROOT / "include" / "dash_config_update.h"
+ESPIDF_RUNTIME_H = ROOT / "include" / "platform" / "espidf_runtime.h"
+ESPIDF_RUNTIME_CPP = ROOT / "src" / "espidf_runtime.cpp"
 
 
 class DashboardApiContractTests(unittest.TestCase):
@@ -36,6 +39,9 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.tests_workflow = TESTS_WORKFLOW.read_text(encoding="utf-8")
         cls.release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         cls.simulator = SIMULATOR.read_text(encoding="utf-8")
+        cls.dash_config_update = DASH_CONFIG_UPDATE.read_text(encoding="utf-8")
+        cls.espidf_runtime_h = ESPIDF_RUNTIME_H.read_text(encoding="utf-8")
+        cls.espidf_runtime_cpp = ESPIDF_RUNTIME_CPP.read_text(encoding="utf-8")
 
     def _standalone_visible_source(self) -> str:
         """Return the source UI surface visible after standalone product gating.
@@ -107,6 +113,134 @@ class DashboardApiContractTests(unittest.TestCase):
         start = max(0, idx - 250)
         end = min(len(self.dash), idx + 250)
         return self.dash[start:end]
+
+    def test_checked_boolean_persistence_contract(self) -> None:
+        self.assertIn("bool dashParseStrictBool(const char *raw, bool &out)", self.dash_config_update)
+        self.assertIn("struct DashPersistedBoolUpdate", self.dash_config_update)
+        self.assertIn("dashPreparePersistedBoolUpdate", self.dash_config_update)
+        self.assertIn("bool putBoolChecked(const char *key, bool value);", self.espidf_runtime_h)
+
+        checked = re.search(
+            r"bool Preferences::putBoolChecked\(const char \*key, bool value\).*?\n\}",
+            self.espidf_runtime_cpp,
+            re.S,
+        )
+        self.assertIsNotNone(checked)
+        checked_body = checked.group(0)
+        for token in [
+            "if (!open_ || readOnly_)",
+            "nvs_set_u8(handle_, key, value ? 1 : 0)",
+            "nvs_commit(handle_)",
+            "return false;",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, checked_body)
+
+        legacy = re.search(
+            r"void Preferences::putBool\(const char \*key, bool value\).*?\n\}",
+            self.espidf_runtime_cpp,
+            re.S,
+        )
+        self.assertIsNotNone(legacy)
+        self.assertIn("(void)putBoolChecked(key, value);", legacy.group(0))
+
+    def test_instant_engage_config_persistence_contract(self) -> None:
+        self.assertIn('#include "dash_config_update.h"', self.dash)
+        self.assertEqual(self.dash.count('server.on("/config", HTTP_GET, handleConfigGet);'), 1)
+        self.assertEqual(self.dash.count('server.on("/config", HTTP_POST, handleConfig);'), 1)
+        self.assertNotIn('server.on("/ap_first_edge"', self.dash)
+
+        load = re.search(r"static void dashLoadPrefs\(\).*?prefs\.end\(\);", self.dash, re.S)
+        self.assertIsNotNone(load)
+        self.assertIn('dashInstantEngage = prefs.getBool("apfe", false);', load.group(0))
+
+        get_handler = re.search(r"static void handleConfigGet\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(get_handler)
+        self.assertIn('\\"ap_first_edge\\":', get_handler.group(0))
+        self.assertIn("dashInstantEngage", get_handler.group(0))
+
+        self.assertIn("static bool dashPutBoolChecked(const char *key, bool value)", self.dash)
+        wrapper = re.search(
+            r"static bool dashPutBoolChecked\(const char \*key, bool value\).*?\n\}",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(wrapper)
+        wrapper_body = wrapper.group(0)
+        self.assertIn("prefs.begin(PREFS_NS, false)", wrapper_body)
+        self.assertIn("prefs.putBoolChecked(key, value)", wrapper_body)
+        self.assertIn("prefs.end()", wrapper_body)
+        self.assertIn("return ok;", wrapper_body)
+
+        post = re.search(
+            r"static void handleConfig\(\).*?static void handleLoggingConfig\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(post)
+        post_body = post.group(0)
+        self.assertIn('server.hasArg("ap_first_edge")', post_body)
+        self.assertIn("dashPreparePersistedBoolUpdate", post_body)
+        self.assertIn('dashPutBoolChecked("apfe", value)', post_body)
+        self.assertIn('server.send(400, "application/json"', post_body)
+        self.assertIn('server.send(500, "application/json"', post_body)
+        self.assertNotIn('server.arg("ap_first_edge").toInt()', post_body)
+        parse_idx = post_body.index("dashPreparePersistedBoolUpdate")
+        invalid_idx = post_body.index("if (!update.valid)", parse_idx)
+        persist_idx = post_body.index("if (!update.persisted)", invalid_idx)
+        assign_idx = post_body.index("dashInstantEngage = update.value;", persist_idx)
+        apply_idx = post_body.index("dashApplyRuntimeState()", assign_idx)
+        self.assertLess(parse_idx, invalid_idx)
+        self.assertLess(invalid_idx, persist_idx)
+        self.assertLess(persist_idx, assign_idx)
+        self.assertLess(assign_idx, apply_idx)
+
+        export = re.search(
+            r"static void handleSettingsExport\(\).*?static void handleSettingsImport\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(export)
+        export_body = export.group(0)
+        self.assertIn('p.getBool("apfe", dashInstantEngage)', export_body)
+        self.assertIn('\\"apFirstEdge\\":', export_body)
+
+        restore = re.search(
+            r"static void handleSettingsImport\(\).*?dashLog\(\"\[BACKUP\] Settings imported",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(restore)
+        self.assertIn('if (device["apFirstEdge"].is<bool>())', restore.group(0))
+        self.assertIn('p.putBool("apfe", device["apFirstEdge"].as<bool>())', restore.group(0))
+
+        clear_timing = re.search(
+            r"static void dashClearLegacyApFirstTiming\(\).*?\n\}",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(clear_timing)
+        self.assertNotIn("dashInstantEngage", clear_timing.group(0))
+        declaration = "static bool dashInstantEngage = false;"
+        self.assertEqual(self.dash.count(declaration), 1)
+        self.assertNotIn("dashInstantEngage = false", self.dash.replace(declaration, "", 1))
+
+    def test_instant_engage_ui_uses_existing_config_contract(self) -> None:
+        self.assertEqual(self.ui.count('class="ap-instant-edge-tgl"'), 2)
+        self.assertIn("async function loadInstantEngageConfig()", self.ui)
+        self.assertIn("fetchJson('/config')", self.ui)
+        self.assertIn("d.ap_first_edge", self.ui)
+        self.assertIn("ap_first_edge:checked?'1':'0'", self.ui)
+        self.assertIn("loadInstantEngageConfig()", self.ui)
+        self.assertNotIn("'/ap_first_edge'", self.ui)
+        for token in [
+            "ap-instant-edge-tgl",
+            "Instant Engage (experimental)",
+            "syncInstantEngage",
+            "ap_first_edge",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui_gen)
 
     def test_dashboard_ui_generation_is_dependency_aware(self) -> None:
         """PlatformIO must rebuild firmware when the generated dashboard header changes."""
@@ -268,7 +402,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('reactive && reactive != dashHandler', self.dash)
         self.assertIn('reactive->resetBionic(resetSeed)', self.dash)
         self.assertNotIn('static_cast<LegacyHandler *>(reactive)->setNagMode', self.dash)
-        self.assertIn('dashParseNagMode(raw, 0)', self.dash)
+        self.assertIn('dashTryParseNagMode(raw.c_str(), parsedNagMode)', self.dash)
         self.assertNotIn('int mode = raw.toInt();', self.dash)
         self.assertIn('p.putUChar("def_nag_mode", dashClampNagMode(mode));', self.dash)
         status_idx = self.dash.find('static void handleStatus()')
@@ -277,14 +411,95 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotEqual(reactive_idx, -1)
         status_prefix = self.dash[status_idx:reactive_idx]
         self.assertIn(',\\"nagMode\\":', status_prefix)
-        self.assertIn('String(dashNagMode <= 2 ? dashNagMode : 0)', status_prefix)
+        self.assertIn(
+            'String(dashNagModeIsValid(dashNagMode) ? dashNagMode : '
+            'dashNagModeToRaw(DashNagMode::Off))',
+            status_prefix,
+        )
         self.assertIn('=== EPAS-faithful Late Echo ===', self.dash)
 
-    def test_epas_late_echo_ui_selector_contract(self) -> None:
+    def test_four_mode_nag_persistence_and_migration_contract(self) -> None:
+        load = re.search(
+            r"static void dashLoadPrefs\(\).*?dashNagTorqueTamper =",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(load)
+        load_body = load.group(0)
+        mode_load = re.search(
+            r'if \(prefs\.isKey\("def_nag_mode"\)\)\s*'
+            r'\{(?P<stored>.*?)\}\s*else\s*\{(?P<migrated>.*?)\}',
+            load_body,
+            re.S,
+        )
+        self.assertIsNotNone(mode_load)
+        stored_branch = mode_load.group("stored")
+        migrated_branch = mode_load.group("migrated")
+        self.assertIn('prefs.getUChar("def_nag_mode", 0)', stored_branch)
+        self.assertNotIn("dashBionicSteering", stored_branch)
+        self.assertIn("dashNagMode = dashBionicSteering", migrated_branch)
+        self.assertIn("DashNagMode::ReactiveHold", migrated_branch)
+        self.assertIn("DashNagMode::Off", migrated_branch)
+        self.assertIn('prefs.putUChar("def_nag_mode", dashNagMode);', migrated_branch)
+
+        handler = re.search(
+            r"static void handleDefenseConfig\(\).*?"
+            r"static void handleLegacyFsdConfig\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(handler)
+        handler_body = handler.group(0)
+        parse_call = "dashTryParseNagMode(raw.c_str(), parsedNagMode)"
+        assign_call = "dashNagMode = dashNagModeToRaw(parsedNagMode);"
+        self.assertIn(parse_call, handler_body)
+        self.assertIn('server.send(400, "application/json"', handler_body)
+        self.assertIn("nag_mode must be 0..3", handler_body)
+        self.assertIn("return;", handler_body)
+        self.assertLess(handler_body.index(parse_call), handler_body.index(assign_call))
+        self.assertLess(handler_body.index(parse_call), handler_body.index("bool prevDefenseEnabled"))
+        self.assertNotIn("raw.toInt()", handler_body)
+        self.assertNotIn("dashNagMode = 0", handler_body)
+        self.assertIn(
+            "uint8_t effectiveNagMode = dashDefenseEnabled ? dashNagMode : 0;",
+            self.dash,
+        )
+
+        export = re.search(
+            r"static void handleSettingsExport\(\).*?"
+            r"static void handleSettingsImport\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(export)
+        export_body = export.group(0)
+        self.assertIn('p.getUChar("def_nag_mode", dashNagMode)', export_body)
+        self.assertIn(',\\"nagMode\\":', export_body)
+
+        restore = re.search(
+            r"static void handleSettingsImport\(\).*?"
+            r'dashLog\("\[BACKUP\] Settings imported',
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(restore)
+        restore_body = restore.group(0)
+        self.assertIn('if (defense["nagMode"].is<int>())', restore_body)
+        self.assertIn('p.putUChar("def_nag_mode", dashClampNagMode(mode));', restore_body)
+        self.assertIn("DashNagMode::ReactiveHold", self.dash)
+        self.assertIn(',\\"nag_mode\\":', self.dash)
+        self.assertIn(',\\"nagMode\\":', self.dash)
+        self.assertNotIn('dashNagMode <= 2 ? dashNagMode : 0', self.dash)
+        self.assertNotIn('if (dashNagMode > 2)', self.dash)
+        self.assertNotIn('if (storedNagMode > 2)', self.dash)
+
+    def test_four_mode_nag_ui_selector_contract(self) -> None:
         for token in [
-            "nag-mode-select",
-            "EPAS Late Echo",
-            "实验",
+            'id="nag-mode-select"',
+            '<option value="0">Off</option>',
+            '<option value="1">Human Replay TSL6P</option>',
+            '<option value="2">EPAS Late Echo</option>',
+            '<option value="3">Reactive Sustained Hold</option>',
             "nagMode",
             "defense.nagMode",
             "nag_mode",
@@ -292,11 +507,21 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
 
+        for mode in range(4):
+            with self.subTest(card_mode=mode):
+                self.assertIn(f'data-value="{mode}"', self.ui)
+                self.assertIn(f"selectCard('nag-mode-select',{mode})", self.ui)
+
         load_fn = re.search(r"async function loadDefenseConfig\(\)\{.*?setText\('tb-exp'", self.ui, re.S)
         self.assertIsNotNone(load_fn)
         load_body = load_fn.group(0)
         self.assertIn("setVal('nag-mode-select'", load_body)
         self.assertIn("d.nag_mode", load_body)
+        self.assertIn("syncNagModeAvailability(!!d.enabled)", load_body)
+
+        sync_fn = re.search(r"function syncNagModeAvailability\([^)]*\)\{.*?\n\}", self.ui, re.S)
+        self.assertIsNotNone(sync_fn)
+        self.assertNotIn(".value=", sync_fn.group(0))
 
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
         """Device status must show which firmware/UI and handler mode are running."""
@@ -615,6 +840,54 @@ class DashboardApiContractTests(unittest.TestCase):
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.dash)
+
+    def test_instant_engage_runtime_diagnostics_contract(self) -> None:
+        gate_header = (ROOT / "include" / "dash_ap_first_gate.h").read_text(encoding="utf-8")
+        self.assertIn("bool instantBypassLast", gate_header)
+
+        append = re.search(
+            r"static void appendFsdDiagJson\(.*?\n\}",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(append)
+        body = append.group(0)
+        self.assertIn("dashHandler->apFirstDiag(now)", body)
+        for token in [
+            '"instantEngageEnabled"',
+            '"apEngaged"',
+            '"apEdgeCount"',
+            '"lastApEdgeAgeMs"',
+            '"apDebounceBypassCount"',
+            '"edgePending"',
+            '"debounceSatisfied"',
+            '"instantBypassLast"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
+        self.assertIn("ap.hasApEdge", body)
+        self.assertIn("dashAgeMs(now, ap.lastApEdgeMs)", body)
+        self.assertRegex(body, r"ap\.hasApEdge\s*\?\s*String\(dashAgeMs\(now, ap\.lastApEdgeMs\)\)\s*:\s*String\(0\)")
+
+        serial = re.search(
+            r"static void dashSerialPrintSystemStatus\(\).*?static void dashSerialPrintCanStatus\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(serial)
+        serial_body = serial.group(0)
+        self.assertEqual(serial_body.count("dashHandler->apFirstDiag(now)"), 1)
+        for token in [
+            "instantEngageEnabled=",
+            "apEngaged=",
+            "apEdgeCount=",
+            "lastApEdgeAgeMs=",
+            "apDebounceBypassCount=",
+            "instantBypassLast=",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, serial_body)
+        self.assertNotIn('strcmp(start, "ap_first_status")', self.dash)
 
     def test_legacy_tesla_parity_policy_is_wired(self) -> None:
         diag = (ROOT / "include" / "dash_fsd_diag.h").read_text(encoding="utf-8")
@@ -1745,12 +2018,29 @@ class DashboardApiContractTests(unittest.TestCase):
         """handlers.h must include dash_reactive_nag.h (reactive NAG suppression)."""
         self.assertIn('#include "dash_reactive_nag.h"', self.handlers)
 
+    def test_nag_diag_header_defines_all_mode_projections(self) -> None:
+        diag = (ROOT / "include" / "dash_nag_diag.h").read_text(encoding="utf-8")
+        for symbol in [
+            "dashMapHumanReplayDiag",
+            "dashMapLateEchoDiag",
+            "dashMapReactiveHoldDiag",
+            "dashMakeDisabledNagDiag",
+        ]:
+            self.assertIn(symbol, diag)
+        self.assertIn("switch (nagMode)", self.handlers)
+        self.assertIn("dashMapHumanReplayDiag", self.handlers)
+        self.assertIn("dashMapLateEchoDiag", self.handlers)
+        self.assertIn("dashMapReactiveHoldDiag", self.handlers)
+
     def test_reactive_nag_v4_status_exposes_tsl6p_burst_diagnostics(self) -> None:
         """TSL6P Burst NAG v4 must expose phase/timing/clear diagnostics."""
         status = re.search(r'j \+= ",\\"reactiveNag\\":\{";.*?j \+= "\}";', self.dash, re.S)
         self.assertIsNotNone(status)
         body = status.group(0)
         required = [
+            '"selectedMode"',
+            '"selectedModeName"',
+            '"runtimePhase"',
             '"nagSamples"',
             '"reactiveBursts"',
             '"proactiveWiggles"',
@@ -1792,7 +2082,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("d.blockedReason && d.blockedReason[0]", body)
         self.assertIn('"none"', body)
         self.assertIn("dashReactiveNagHandler()", body)
-        self.assertIn("reactive->reactiveDiag()", body)
+        self.assertIn("reactive ? reactive->reactiveDiag() : dashMakeDisabledNagDiag()", body)
         self.assertNotIn("dashHandler->reactiveDiag()", body)
 
     def test_reactive_nag_serial_command_prints_v4_burst_fields(self) -> None:
@@ -1801,6 +2091,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(serial)
         body = serial.group(0)
         required = [
+            "selectedMode=",
+            "selectedModeName=",
+            "runtimePhase=",
             "=== TSL6P Burst NAG v4 ===",
             "0=IDLE 1=BURST_ON 2=BURST_OFF 3=COOLDOWN",
             "replayAttempts=",
@@ -1838,9 +2131,11 @@ class DashboardApiContractTests(unittest.TestCase):
             self.assertIn(token, body)
         self.assertIn("d.blockedReason && d.blockedReason[0]", body)
         self.assertIn('"none"', body)
+        self.assertIn("rn_ns=", body)
+        self.assertIn("rh_ns=", body)
 
-    def test_reactive_nag_persistence_uses_legacy_handler_and_fixed_nvs_keys(self) -> None:
-        """Reactive replay counters must persist only Legacy-engine counters with stable NVS keys."""
+    def test_reactive_nag_persistence_uses_isolated_dirty_counter_banks(self) -> None:
+        """TSL6P rn_* and Reactive Hold rh_* must load and flush independently."""
         helper = re.search(r"static CarManagerBase \*dashReactiveNagHandler\(\)\n\{.*?\n\}\n", self.dash, re.S)
         self.assertIsNotNone(helper)
         helper_body = helper.group(0)
@@ -1850,21 +2145,26 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(maintenance)
         body = maintenance.group(0)
         self.assertIn("CarManagerBase *reactive = dashReactiveNagHandler();", body)
-        self.assertIn("reactive->setReactiveCounters", body)
-        self.assertIn("reactive->reactiveDiag()", body)
+        self.assertIn("DashNagMode::HumanReplayTsl6p", body)
+        self.assertIn("DashNagMode::ReactiveHold", body)
+        self.assertIn("reactive->setNagCounters", body)
+        self.assertIn("reactive->nagCountersDirty(selectedMode)", body)
+        self.assertIn("reactive->nagDiagForMode(selectedMode)", body)
+        self.assertIn("reactive->markNagCountersPersisted(selectedMode)", body)
         self.assertIn("Preferences p;", body)
         self.assertIn("if (!p.begin(PREFS_NS, false))", body)
-        self.assertIn("return;", body)
-        self.assertNotIn("dashHandler->setReactiveCounters", body)
-        self.assertNotIn("dashHandler->reactiveDiag", body)
+        self.assertNotIn("dashHandler->setNagCounters", body)
+        self.assertNotIn("dashHandler->nagDiagForMode", body)
 
         serial_reset = re.search(r'else if \(strcmp\(start, "reactive_nag_reset"\) == 0\).*?else if \(strcmp\(start, "reactive_nag_bump"\)', self.dash, re.S)
         self.assertIsNotNone(serial_reset)
         self.assertIn("dashReactiveNagHandler()", serial_reset.group(0))
-        self.assertIn("Preferences p;", serial_reset.group(0))
+        self.assertIn("resetNagCounters(selectedMode)", serial_reset.group(0))
 
         rn_keys = set(re.findall(r'"(rn_[a-z]+)"', self.dash))
+        rh_keys = set(re.findall(r'"(rh_[a-z]+)"', self.dash))
         self.assertEqual({"rn_ns", "rn_rb", "rn_pw", "rn_es"}, rn_keys)
+        self.assertEqual({"rh_ns", "rh_rb", "rh_pw", "rh_es"}, rh_keys)
 
     # ── Phase 4: Light Stunt System ───────────────────────────
 

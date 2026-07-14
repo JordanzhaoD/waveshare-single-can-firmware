@@ -11,8 +11,13 @@
 #include "dash_hw3_speed.h"
 #include "dash_legacy_speed.h"
 #include "dash_abort_guard.h"
+#include "dash_nag_mode.h"
 #include "dash_reactive_nag.h"
+#include "dash_reactive_hold_nag.h"
+#include "dash_nag_diag.h"
+#include "dash_legacy_370_echo.h"
 #include "dash_epas_late_echo.h"
+#include "dash_ap_first_gate.h"
 #include "dash_fsd_diag.h"
 
 #ifndef DASH_FSD_252_COMPAT
@@ -328,37 +333,88 @@ struct CarManagerBase
     virtual uint8_t filterIdCount() const = 0;
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
+    virtual void observeApFirstState(uint8_t apState, uint32_t nowMs)
+    {
+        (void)apState;
+        (void)nowMs;
+    }
+    virtual DashApFirstDecision decideApFirst(bool gateEnabled,
+                                              bool instantEnabled,
+                                              uint32_t debounceMs,
+                                              uint32_t nowMs)
+    {
+        (void)gateEnabled;
+        (void)instantEnabled;
+        (void)debounceMs;
+        (void)nowMs;
+        return DashApFirstDecision{};
+    }
+    virtual void clearApFirstTiming() {}
+    virtual void resetApFirstRuntime() {}
+    virtual DashApFirstDiag apFirstDiag(uint32_t nowMs) const
+    {
+        (void)nowMs;
+        return DashApFirstDiag{};
+    }
     virtual void setNagMode(uint8_t mode) { (void)mode; }
-    virtual DashReactiveDiag reactiveDiag() const { return {}; }
+    virtual DashReactiveDiag reactiveDiag() const { return dashMakeDisabledNagDiag(); }
+    virtual DashReactiveDiag nagDiagForMode(DashNagMode /*mode*/) const
+    {
+        return dashMakeDisabledNagDiag();
+    }
     // Instrumentation counter persistence (NVS round-trip) — survive power-off.
-    virtual void resetReactiveCounters() {}
-    virtual void setReactiveCounters(uint32_t /*ns*/, uint32_t /*rb*/, uint32_t /*pw*/,
-                                     uint32_t /*es*/) {}
-    virtual void bumpReactiveCounters() {}
+    virtual void resetNagCounters(DashNagMode /*mode*/) {}
+    virtual void setNagCounters(DashNagMode /*mode*/, uint32_t /*ns*/, uint32_t /*rb*/,
+                                uint32_t /*pw*/, uint32_t /*es*/) {}
+    virtual void bumpNagCounters(DashNagMode /*mode*/) {}
+    virtual bool nagCountersDirty(DashNagMode /*mode*/) const { return false; }
+    virtual void markNagCountersPersisted(DashNagMode /*mode*/) {}
+    virtual void resetReactiveCounters() { resetNagCounters(DashNagMode::HumanReplayTsl6p); }
+    virtual void setReactiveCounters(uint32_t ns, uint32_t rb, uint32_t pw, uint32_t es)
+    {
+        setNagCounters(DashNagMode::HumanReplayTsl6p, ns, rb, pw, es);
+    }
+    virtual void bumpReactiveCounters() { bumpNagCounters(DashNagMode::HumanReplayTsl6p); }
     virtual ~CarManagerBase() = default;
 };
 
 struct LegacyHandler : public CarManagerBase
 {
-    enum class NagMode : uint8_t
-    {
-        Off = 0,
-        LegacyTsl6p = 1,
-        EpasLateEcho = 2
-    };
-
-    DashReactiveNagBurst nag; // reactive NAG-suppression burst state machine
+    DashReactiveNagBurst nag; // TSL6P replay burst state machine
+    DashReactiveHoldNag reactiveHoldNag;
     DashEpasLateEcho lateNag;
-    NagMode nagMode{NagMode::Off};
+    DashApFirstGate apFirstGate;
+    DashNagMode nagMode{DashNagMode::Off};
     uint8_t lastNagApState{0};
     uint8_t lastNagHos{0};
     const char *lastNagGateReason{"toggle"};
     bool lastNagGatesActive{false};
 
     bool bionicDisabled() const override { return false; } // reactive has no auto-disable
-    bool lateEchoSelected() const { return nagMode == NagMode::EpasLateEcho; }
-    bool legacyTsl6pSelected() const { return nagMode == NagMode::LegacyTsl6p; }
+    bool humanReplaySelected() const { return nagMode == DashNagMode::HumanReplayTsl6p; }
+    bool lateEchoSelected() const { return nagMode == DashNagMode::EpasLateEcho; }
+    bool reactiveHoldSelected() const { return nagMode == DashNagMode::ReactiveHold; }
     bool isPrimaryDasFrame(const CanFrame &frame) const { return frame.bus != CAN_BUS_PARTY; }
+
+    void observeApFirstState(uint8_t apState, uint32_t nowMs) override
+    {
+        apFirstGate.observe(apState, nowMs);
+    }
+
+    DashApFirstDecision decideApFirst(bool gateEnabled,
+                                      bool instantEnabled,
+                                      uint32_t debounceMs,
+                                      uint32_t nowMs) override
+    {
+        return apFirstGate.decide(gateEnabled, instantEnabled, debounceMs, nowMs);
+    }
+
+    void clearApFirstTiming() override { apFirstGate.clearTiming(); }
+    void resetApFirstRuntime() override { apFirstGate.resetRuntime(); }
+    DashApFirstDiag apFirstDiag(uint32_t nowMs) const override
+    {
+        return apFirstGate.diag(nowMs);
+    }
 
     void refreshLateNagEnabled()
     {
@@ -367,82 +423,116 @@ struct LegacyHandler : public CarManagerBase
 
     void setNagMode(uint8_t mode) override
     {
-        if (mode == static_cast<uint8_t>(NagMode::LegacyTsl6p))
-            nagMode = NagMode::LegacyTsl6p;
-        else if (mode == static_cast<uint8_t>(NagMode::EpasLateEcho))
-            nagMode = NagMode::EpasLateEcho;
-        else
-            nagMode = NagMode::Off;
+        const DashNagMode nextMode = dashNagModeFromRaw(mode);
+        if (nextMode != nagMode)
+        {
+            nag.reset();
+            reactiveHoldNag.reset();
+            nagMode = nextMode;
+        }
         refreshLateNagEnabled();
     }
 
     void setNagModeForTest(const char *mode)
     {
-        if (mode && std::strcmp(mode, "legacy_tsl6p") == 0)
-            setNagMode(static_cast<uint8_t>(NagMode::LegacyTsl6p));
+        if (mode && std::strcmp(mode, "human_replay_tsl6p") == 0)
+            setNagMode(static_cast<uint8_t>(DashNagMode::HumanReplayTsl6p));
         else if (mode && std::strcmp(mode, "late_echo") == 0)
-            setNagMode(static_cast<uint8_t>(NagMode::EpasLateEcho));
+            setNagMode(static_cast<uint8_t>(DashNagMode::EpasLateEcho));
+        else if (mode && std::strcmp(mode, "reactive_hold") == 0)
+            setNagMode(static_cast<uint8_t>(DashNagMode::ReactiveHold));
         else
-            setNagMode(static_cast<uint8_t>(NagMode::Off));
+            setNagMode(static_cast<uint8_t>(DashNagMode::Off));
     }
 
     void resetBionic(uint32_t seed) override
     {
+        const uint32_t actualSeed = seed ? seed : 0xDEADBEEF;
         nag.reset();
-        nag.init(seed ? seed : 0xDEADBEEF);
+        nag.init(actualSeed);
+        reactiveHoldNag.init(actualSeed);
         lateNag = DashEpasLateEcho{};
         refreshLateNagEnabled();
     }
 
     DashEpasLateEchoDiag lateEchoDiag(uint32_t nowMs) const { return lateNag.diag(nowMs); }
 
+    DashReactiveDiag nagDiagForMode(DashNagMode mode) const override
+    {
+        const uint32_t nowMs = dashDiagNowMs();
+        switch (mode)
+        {
+        case DashNagMode::HumanReplayTsl6p:
+            return dashMapHumanReplayDiag(nag.diag(nowMs), nowMs);
+        case DashNagMode::EpasLateEcho:
+            return dashMapLateEchoDiag(lateNag.diag(nowMs), nowMs);
+        case DashNagMode::ReactiveHold:
+            return dashMapReactiveHoldDiag(reactiveHoldNag.diag(nowMs), nowMs);
+        case DashNagMode::Off:
+        default:
+            return dashMakeDisabledNagDiag();
+        }
+    }
+
     DashReactiveDiag reactiveDiag() const override
     {
-        uint32_t nowMs = dashDiagNowMs();
-        DashReactiveDiag d = nag.diag(nowMs);
-        d.enabled = (bool)bionicSteering && nagMode != NagMode::Off;
-        if (lateEchoSelected())
+        switch (nagMode)
         {
-            DashEpasLateEchoDiag late = lateNag.diag(nowMs);
-            d.lateEchoMode = true;
-            d.mode = HumanReplayMode::IDLE;
-            d.injecting = late.mode == LateEchoModeState::BURST_ON;
-            d.currentAmp = 0;
-            d.blockedReason = late.blockedReason;
-            d.cooldownRemainMs = late.cooldownRemainMs;
-            d.phaseRemainMs = late.phaseRemainMs;
-            d.abortBlocks = late.abortBlocks;
-            d.gateBlocks = late.gateBlocks;
-            d.txFailures = late.txFailures;
-            d.lastApState = late.lastApState;
-            d.lastHandsOnState = late.lastHos;
-            d.cadenceStable = late.cadenceStable;
-            d.lateEchoEligible = late.lateEchoEligible;
-            d.pendingEcho = late.pendingEcho;
-            d.periodMs = late.periodMs;
-            d.jitterMs = late.jitterMs;
-            d.counterStep = late.counterStep;
-            d.expectedNextCounter = late.expectedNextCounter;
-            d.predictedNextRxMs = late.predictedNextRxMs;
-            d.pendingSendAtMs = late.pendingSendAtMs;
-            d.scheduledEchoes = late.scheduledEchoes;
-            d.sentLateEchoes = late.sentLateEchoes;
-            d.droppedLateEchoes = late.droppedLateEchoes;
-            d.lateWindowMissed = late.lateWindowMissed;
-            d.lastRxToTxMs = late.lastRxToTxMs;
-            d.lastLeadMs = DashEpasLateEcho::kLateEchoLeadMs;
-            d.preserveHandsOnLevel = late.preserveHandsOnLevel;
-            d.lastSourceHandsOnLevel = late.lastSourceHandsOnLevel;
-            d.lastTxHandsOnLevel = late.lastTxHandsOnLevel;
+        case DashNagMode::HumanReplayTsl6p:
+        case DashNagMode::EpasLateEcho:
+        case DashNagMode::ReactiveHold:
+        {
+            DashReactiveDiag d = nagDiagForMode(nagMode);
+            d.enabled = (bool)bionicSteering;
+            return d;
         }
-        return d;
+        case DashNagMode::Off:
+        default:
+            return dashMakeDisabledNagDiag();
+        }
     }
-    void resetReactiveCounters() override { nag.resetCounters(); }
-    void setReactiveCounters(uint32_t ns, uint32_t rb, uint32_t pw, uint32_t es) override
+
+    void resetNagCounters(DashNagMode mode) override
     {
-        nag.setCounters(ns, rb, pw, es);
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            nag.resetCounters();
+        else if (mode == DashNagMode::ReactiveHold)
+            reactiveHoldNag.resetCounters();
     }
-    void bumpReactiveCounters() override { nag.bumpCounters(); }
+
+    void setNagCounters(DashNagMode mode, uint32_t ns, uint32_t rb,
+                        uint32_t pw, uint32_t es) override
+    {
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            nag.setCounters(ns, rb, pw, es);
+        else if (mode == DashNagMode::ReactiveHold)
+            reactiveHoldNag.setCounters(ns, rb, pw, es);
+    }
+
+    void bumpNagCounters(DashNagMode mode) override
+    {
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            nag.bumpCounters();
+        else if (mode == DashNagMode::ReactiveHold)
+            reactiveHoldNag.bumpCounters();
+    }
+
+    bool nagCountersDirty(DashNagMode mode) const override
+    {
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            return nag.countersDirty();
+        if (mode == DashNagMode::ReactiveHold)
+            return reactiveHoldNag.countersDirty();
+        return false;
+    }
+
+    void markNagCountersPersisted(DashNagMode mode) override
+    {
+        if (mode == DashNagMode::HumanReplayTsl6p)
+            nag.markCountersPersisted();
+        else if (mode == DashNagMode::ReactiveHold)
+            reactiveHoldNag.markCountersPersisted();
+    }
 
     const uint32_t *filterIds() const override
     {
@@ -512,8 +602,33 @@ struct LegacyHandler : public CarManagerBase
                 lateNag.onEpasFrame(frame, nowMs, active);
                 return;
             }
-            if (!legacyTsl6pSelected() || frame.dlc < 8)
+            if (frame.dlc < 8)
                 return;
+            if (reactiveHoldSelected())
+            {
+                if (!active || !reactiveHoldNag.shouldEcho(nowMs))
+                    return;
+                if (!abortGuard.allowsInjection())
+                {
+                    abortGuard.recordBlock(DashAbortGuardBlockPath::Nag);
+                    return;
+                }
+
+                const int hold = reactiveHoldNag.computeHold(nowMs);
+                uint8_t d2lo = frame.data[2] & 0x0F;
+                uint8_t d3 = frame.data[3];
+                reactiveHoldNag.applyToFrame(d2lo, d3, hold);
+                CanFrame echo = dashBuildLegacy370Echo(frame, d2lo, d3, true);
+                if (driver.send(echo))
+                {
+                    framesSent++;
+                    reactiveHoldNag.notifyEchoSent();
+                }
+                return;
+            }
+            if (!humanReplaySelected())
+                return;
+
             nag.advance(nowMs, active, gateReason);
             bool replayPending = nag.shouldEcho(nowMs);
             bool useReplay = replayPending && active;
@@ -524,29 +639,13 @@ struct LegacyHandler : public CarManagerBase
             }
             if (useReplay)
             {
-                CanFrame echo;
-                echo.id = 880;
-                echo.dlc = 8;
-                echo.data[0] = frame.data[0];
-                echo.data[1] = frame.data[1];
-
                 uint8_t d2lo = frame.data[2] & 0x0F;
                 uint8_t d3 = frame.data[3];
                 int signedBase = DashReactiveNagBurst::decodeSignedTorque(d2lo, d3);
                 nag.noteBaseTorqueRaw(signedBase);
                 int target = nag.peekReplayDelta(nowMs);
                 nag.applyToFrame(d2lo, d3, target);
-                echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) | d2lo);
-                echo.data[3] = d3;
-
-                echo.data[4] = static_cast<uint8_t>((frame.data[4] & 0x3F) | 0x40);
-                echo.data[5] = frame.data[5];
-                uint8_t cnt = static_cast<uint8_t>(frame.data[6] & 0x0F);
-                cnt = static_cast<uint8_t>((cnt + 1) & 0x0F);
-                echo.data[6] = static_cast<uint8_t>((frame.data[6] & 0xF0) | cnt);
-                uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] +
-                               echo.data[4] + echo.data[5] + echo.data[6];
-                echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+                CanFrame echo = dashBuildLegacy370Echo(frame, d2lo, d3, true);
                 bool ok = driver.send(echo);
                 if (ok)
                 {
@@ -697,7 +796,11 @@ struct LegacyHandler : public CarManagerBase
                 return;
             uint8_t apState = readDASAutopilotStatus(frame);
             if (isPrimaryDasFrame(frame))
-                abortGuard.onApState(apState, dashDiagNowMs());
+            {
+                const uint32_t apNowMs = dashDiagNowMs();
+                abortGuard.onApState(apState, apNowMs);
+                observeApFirstState(apState, apNowMs);
+            }
             APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
@@ -721,8 +824,10 @@ struct LegacyHandler : public CarManagerBase
                 refreshLateNagEnabled();
                 if (lateEchoSelected())
                     lateNag.onDasStatus(apState, hos, nowMs, active, gateReason);
-                else if (legacyTsl6pSelected())
+                else if (humanReplaySelected())
                     nag.onNagSample(hos, nowMs, active, apState, gateReason);
+                else if (reactiveHoldSelected())
+                    reactiveHoldNag.onNagSample(hos, nowMs, active);
             }
             else if (lateEchoSelected() && (apState == 8 || apState == 9))
             {
@@ -792,6 +897,13 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.lastBlockedBy = legacyFsdActivationAllowed
                                                       ? FsdGateBlockReason::LegacyFsdSettle
                                                       : currentGateBlockReason();
+                    return;
+                }
+                if (checkAD && !checkAD())
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = currentGateBlockReason();
                     return;
                 }
 

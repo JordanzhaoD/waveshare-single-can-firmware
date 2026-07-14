@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-07-14
+
+### Added
+- **四模式 Legacy NAG 选择器**：稳定保留 `0=Off`、`1=Human Replay TSL6P`、`2=EPAS Late Echo`，并恢复 `3=Reactive Sustained Hold`。Reactive Hold 包含 proactive 与 reactive 两个阶段；Dashboard 桌面/手机界面、NVS、备份/恢复和统一运行时诊断均使用同一模式编号。
+- **Instant Engage（实验，默认关闭）**：新增 `ap_first_edge` 配置（NVS `apfe`）和桌面/手机同步开关。仅在 primary Legacy AP 状态出现真实的 non-engaged → engaged 边沿时，一次性绕过已配置的 AP-First 延迟；父 AP gate 关闭时保留已保存的 Instant Engage 偏好。
+- **AP-First 运行证据**：`/status.fsdDiag.gate` 与串口 `system_status` 现报告 Instant Engage 有效状态、AP engaged 状态、边沿次数、最近边沿年龄、pending/debounce 状态和实际 debounce bypass 次数。
+- **Flash artifact checker**：发布前统一验证 generated sdkconfig、ESP image header、`flasher_args.json`、partition binary、OTA data、app slot、8 项 release bundle、merged offsets 与 SHA256。
+
+### Changed
+- Legacy AP 状态语义统一为：state `2` 不算 engaged，只有 `3..6` 算 engaged；`8/9`、disengage、CAN 关闭、OTA 阻断、父 AP gate 关闭、handler 切换或 runtime reset 会清除 transient AP-First timing。
+- `bionicSteering` 保留为历史兼容的父 enable；它不是第五种 NAG 算法。实际算法由四模式选择器决定，父开关关闭时保留已保存的模式。
+- ESP-IDF defaults 现与 PlatformIO 16MB 产品 profile 和双 OTA partition table 一致，不再生成 2MB/single-app metadata 或 app `0x10000` flasher args。
+- Tests workflow 覆盖完整 18 个 native environments，并在 Waveshare build 后验证真实 Flash 产物。
+
+### Fixed
+- Release profile 补齐 `INJECTION_AFTER_AP`，确保发布固件与测试固件、产品文档使用相同的 AP Injection Gate 默认值。
+- GitHub Release workflow 生成并验证标准 8 资产后保持 draft，不再在测试/人工批准前立即公开。
+- 发布包 `flash.sh` 烧录前校验 `SHA256SUMS`，并明确 merged flash 会覆盖 NVS、`--split` 用于保留 NVS/SPIFFS 的常规升级。
+
+### Safety
+- Instant Engage **只**绕过 Legacy `0x3EE mux0` 的可配置 AP-First settle delay（本地默认仍为 `2000ms`）；不会绕过 CAN/FSD enablement、OTA blocking、父 AP gate、`checkAD`、gear logic、Abort Guard、Soft Engage、插件或功能自身开关。
+- v1.0.9 候选完成本地自动化、release-equivalent clean build 与资产校验；**尚未 push、tag、公开 Release、flash、OTA 或进行台架/车辆测试**。
+- 历史事故与旧禁令文档继续作为背景材料保留，但不再构成对当前 opt-in `0x370` NAG 模式的 blanket ban；当前安全边界以模式选择、父开关和既有门控为准。
+
 ## [1.0.8] - 2026-07-09
 
 ### Fixed

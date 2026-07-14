@@ -57,6 +57,7 @@ jobs:
         env:
           - native
           - native_dashboard
+          - native_single_can_dashboard
           - native_log_buffer
           - native_mcp2515_recovery
           - native_nag
@@ -65,6 +66,8 @@ jobs:
           - native_hw3
           - native_hw4
           - native_legacy
+          - native_legacy_speed
+          - native_abort_guard
           - native_helpers
           - native_twai
           - native_reactive_nag
@@ -107,3 +110,5 @@ jobs:
         working-directory: ${{ matrix.project_dir }}
         env:
           SKIP_DASH_CREDENTIAL_CHECK: "1"
+      - run: python scripts/check_flash_artifacts.py
+        working-directory: ${{ matrix.project_dir }}

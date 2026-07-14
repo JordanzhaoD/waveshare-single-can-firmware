@@ -73,7 +73,9 @@
 - **重写限速**：Legacy / HW4 限速报文重写
 - **方向盘检测屏蔽**（bit-19 baseline，安全路径）
 - **限速提示音抑制**（ISA chime 抑制）
-- **AP Injection Gate**：安全门控，未确认 AP 激活时 fail-closed
+- **AP Injection Gate**：安全门控；Legacy AP state `2` 保持阻断，仅 `3..6` 视为 engaged
+- **Instant Engage（实验，默认关闭）**：真实 AP engaged 边沿可一次性绕过 Legacy AP-First 延迟，但不能绕过 CAN/OTA/checkAD/Abort Guard/Soft Engage 等安全门
+- **四模式 Legacy NAG**：Off / Human Replay TSL6P / EPAS Late Echo / Reactive Sustained Hold；`bionicSteering` 仅是历史父开关，不是第五种算法
 - **插件引擎**：官方 JSON 插件（URL 安装 / `.json` 上传 / 离线粘贴），默认关闭，优先级管理，状态持久化
 - **Web Dashboard**：驾驶舱 glassmorphism 风格 UI（车机/手机自适应）
 - **OTA 固件在线升级**
@@ -158,6 +160,10 @@ pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbse
 
 在 Web Dashboard 中可切换车辆协议模式（**Legacy / HW3 / HW4**）。不同年款/硬件版本的车辆使用不同协议，请根据你的实车选择。模式切换在运行时生效并持久化。
 
+Legacy 模式还提供四种明确的 NAG 算法：**Off / Human Replay TSL6P / EPAS Late Echo / Reactive Sustained Hold**。防护总开关与历史 `bionicSteering` 字段是父 enable；关闭父开关不会擦除已保存的算法选择。
+
+AP Injection Gate 的默认延迟仍为 2000ms（可配置 0–3000ms）。可选的 **Instant Engage** 默认关闭；开启后只在 primary Legacy AP 状态出现真实 engaged 边沿时一次性绕过该延迟。state `2` 仍被阻断，只有 `3..6` 视为 engaged；其它 CAN、OTA、`checkAD`、Abort Guard 与 Soft Engage 门控保持有效。
+
 ---
 
 ### 安全
@@ -221,7 +227,9 @@ A web dashboard is served over the onboard WiFi hotspot — no app needed, just 
 - **Speed-limit rewrite**: Legacy / HW4 speed-limit message rewrite
 - **Steering-wheel detection shield** (bit-19 baseline, safe path)
 - **ISA chime suppression**
-- **AP Injection Gate**: safety gating, fail-closed until AP activation confirmed
+- **AP Injection Gate**: safety gating; Legacy AP state `2` stays blocked and only states `3..6` are engaged
+- **Instant Engage** (experimental, off by default): a genuine AP engaged edge can bypass the Legacy AP-First delay once, without bypassing CAN/OTA/checkAD/Abort Guard/Soft Engage gates
+- **Four Legacy NAG modes**: Off / Human Replay TSL6P / EPAS Late Echo / Reactive Sustained Hold; `bionicSteering` is a historical parent enable, not a fifth algorithm
 - **Plugin engine**: official JSON plugins (URL install / `.json` upload / offline paste), disabled by default, priority management, state persistence
 - **Web Dashboard**: cockpit glassmorphism UI (car/phone adaptive)
 - **OTA firmware updates**
@@ -305,6 +313,10 @@ Or use the prebuilt firmware from the Releases page + esptool per-partition flas
 ### Runtime Configuration
 
 Switch the vehicle protocol mode (**Legacy / HW3 / HW4**) in the web dashboard. Different model years/hardware revisions use different protocols — choose based on your vehicle. Mode changes take effect at runtime and persist.
+
+Legacy mode exposes four explicit NAG algorithms: **Off / Human Replay TSL6P / EPAS Late Echo / Reactive Sustained Hold**. The defense master and historical `bionicSteering` field act as parent enables; disabling the parent does not erase the saved algorithm.
+
+The AP Injection Gate keeps the local configurable delay (0–3000 ms, default 2000 ms). Optional **Instant Engage** is off by default and bypasses that delay only once on a genuine primary Legacy AP engaged edge. State `2` remains blocked, only states `3..6` are engaged, and all CAN, OTA, `checkAD`, Abort Guard, and Soft Engage gates remain in force.
 
 ---
 

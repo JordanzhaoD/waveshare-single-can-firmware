@@ -1,6 +1,8 @@
 #include <unity.h>
 #include "can_frame_types.h"
 #include "can_helpers.h"
+#include "dash_ap_first_gate.h"
+#include "dash_twai_diag.h"
 #include "drivers/mock_driver.h"
 #include "handlers.h"
 
@@ -97,13 +99,562 @@ static bool legacyGateAlwaysBlocks(uint32_t)
     return false;
 }
 
-// Represents the dashboard state with the AP-First gate DISABLED by the user
-// (apInjectionGate=false → dashLegacyFsdActivationAllowed() short-circuits at
-// mcp2515_dashboard.h:949, returning true before the AP-active / 2s-settle checks).
-// Use case: non-8.3.6 cars where direct Legacy 0x3EE injection is safe.
+// Represents the dashboard state with the AP-First gate DISABLED by the user.
+// dashLegacyFsdActivationAllowed() clears transient AP timing and returns true
+// before engaged/debounce/Soft Engage checks. Use case: non-8.3.6 cars where
+// direct Legacy 0x3EE injection is safe.
 static bool legacyGateAlwaysAllow(uint32_t)
 {
     return true;
+}
+
+static bool denyAD()
+{
+    return false;
+}
+
+static void advanceNativeDiagNowMsUntilNextCallReturns(uint32_t targetNowMs)
+{
+    while (dashDiagNowMs() + 1 < targetNowMs)
+    {
+    }
+}
+
+struct LegacyApGateHarness
+{
+    LegacyHandler *handler{nullptr};
+    bool canEnabled{true};
+    bool otaAllowed{true};
+    bool apGateEnabled{true};
+    bool instantEnabled{false};
+    uint32_t delayMs{2000};
+    bool softEngageEnabled{false};
+    bool softEngageSent{false};
+    bool steerSeen{true};
+    uint8_t steerValidity{0};
+    int16_t steerAngleX10{0};
+
+    bool allowed(uint32_t nowMs)
+    {
+        if (!handler)
+            return false;
+        if (!canEnabled || !otaAllowed)
+        {
+            handler->clearApFirstTiming();
+            softEngageSent = false;
+            return false;
+        }
+
+        DashApFirstDecision ap = handler->decideApFirst(
+            apGateEnabled, instantEnabled, delayMs, nowMs);
+        if (!apGateEnabled)
+            return true;
+        if (!ap.allowed)
+            return false;
+
+        const bool delayAllowed = ap.debounceSatisfied || ap.instantBypass;
+        const bool release = dashSoftEngageRelease(
+            softEngageEnabled, softEngageSent,
+            steerSeen, steerValidity, steerAngleX10,
+            delayAllowed, false, 50);
+        if (!release)
+            return false;
+
+        softEngageSent = true;
+        return true;
+    }
+};
+
+static LegacyApGateHarness legacyApGateHarness;
+
+static bool legacyApGateAllowed(uint32_t nowMs)
+{
+    return legacyApGateHarness.allowed(nowMs);
+}
+
+static void configureLegacyApGate(LegacyHandler &handler,
+                                  bool instantEnabled,
+                                  uint32_t delayMs = 2000)
+{
+    legacyApGateHarness = LegacyApGateHarness{};
+    legacyApGateHarness.handler = &handler;
+    legacyApGateHarness.instantEnabled = instantEnabled;
+    legacyApGateHarness.delayMs = delayMs;
+    handler.legacyFsdActivationAllowed = legacyApGateAllowed;
+}
+
+void test_ap_first_gate_engaged_state_matrix()
+{
+    for (uint8_t state : {static_cast<uint8_t>(3), static_cast<uint8_t>(4),
+                          static_cast<uint8_t>(5), static_cast<uint8_t>(6)})
+        TEST_ASSERT_TRUE(DashApFirstGate::isEngagedState(state));
+
+    for (uint8_t state : {static_cast<uint8_t>(0), static_cast<uint8_t>(1),
+                          static_cast<uint8_t>(2), static_cast<uint8_t>(7),
+                          static_cast<uint8_t>(8), static_cast<uint8_t>(9),
+                          static_cast<uint8_t>(15)})
+        TEST_ASSERT_FALSE(DashApFirstGate::isEngagedState(state));
+}
+
+void test_ap_first_gate_edge_age_is_zero_without_edge_and_wrap_safe_after_edge()
+{
+    DashApFirstGate gate;
+    DashApFirstDiag empty = gate.diag(12345);
+    const uint32_t emptyAge = empty.hasApEdge
+                                  ? dashAgeMs(12345, empty.lastApEdgeMs)
+                                  : 0;
+    TEST_ASSERT_EQUAL_UINT32(0, emptyAge);
+    TEST_ASSERT_FALSE(empty.instantBypassLast);
+
+    gate.observe(2, UINT32_MAX - 20);
+    gate.observe(3, UINT32_MAX - 10);
+    DashApFirstDiag wrapped = gate.diag(5);
+    TEST_ASSERT_TRUE(wrapped.hasApEdge);
+    TEST_ASSERT_EQUAL_UINT32(16, dashAgeMs(5, wrapped.lastApEdgeMs));
+}
+
+void test_ap_first_gate_state2_stays_blocked_with_instant_enabled()
+{
+    DashApFirstGate gate;
+    gate.observe(2, 100);
+
+    DashApFirstDecision decision = gate.decide(true, true, 0, 100);
+    TEST_ASSERT_FALSE(decision.engaged);
+    TEST_ASSERT_FALSE(decision.edgeDetected);
+    TEST_ASSERT_FALSE(decision.debounceSatisfied);
+    TEST_ASSERT_FALSE(decision.instantBypass);
+    TEST_ASSERT_FALSE(decision.allowed);
+}
+
+void test_ap_first_gate_startup_engaged_is_baseline_not_edge()
+{
+    DashApFirstGate gate;
+    gate.observe(3, 100);
+
+    DashApFirstDiag diag = gate.diag(100);
+    TEST_ASSERT_TRUE(diag.apEngaged);
+    TEST_ASSERT_FALSE(diag.edgePending);
+    TEST_ASSERT_FALSE(diag.hasApEdge);
+    TEST_ASSERT_EQUAL_UINT32(0, diag.apEdgeCount);
+
+    DashApFirstDecision decision = gate.decide(true, true, 2000, 100);
+    TEST_ASSERT_TRUE(decision.engaged);
+    TEST_ASSERT_FALSE(decision.edgeDetected);
+    TEST_ASSERT_FALSE(decision.debounceSatisfied);
+    TEST_ASSERT_FALSE(decision.instantBypass);
+    TEST_ASSERT_FALSE(decision.allowed);
+}
+
+void test_ap_first_gate_real_edge_waits_configured_debounce()
+{
+    DashApFirstGate gate;
+    gate.observe(2, 100);
+    gate.observe(3, 200);
+
+    DashApFirstDecision before = gate.decide(true, false, 2000, 2199);
+    TEST_ASSERT_TRUE(before.engaged);
+    TEST_ASSERT_TRUE(before.edgeDetected);
+    TEST_ASSERT_FALSE(before.debounceSatisfied);
+    TEST_ASSERT_FALSE(before.instantBypass);
+    TEST_ASSERT_FALSE(before.allowed);
+    TEST_ASSERT_FALSE(gate.diag(2199).instantBypassLast);
+    TEST_ASSERT_EQUAL_UINT32(0, gate.diag(2199).apDebounceBypassCount);
+
+    DashApFirstDecision atBoundary = gate.decide(true, false, 2000, 2200);
+    TEST_ASSERT_TRUE(atBoundary.debounceSatisfied);
+    TEST_ASSERT_TRUE(atBoundary.allowed);
+
+    DashApFirstDiag diag = gate.diag(2200);
+    TEST_ASSERT_EQUAL_UINT32(1, diag.apEdgeCount);
+    TEST_ASSERT_TRUE(diag.hasApEdge);
+    TEST_ASSERT_EQUAL_UINT32(200, diag.lastApEdgeMs);
+}
+
+void test_ap_first_gate_instant_bypass_is_one_shot_on_real_edge()
+{
+    DashApFirstGate gate;
+    gate.observe(2, 10);
+    gate.observe(3, 20);
+
+    DashApFirstDecision first = gate.decide(true, true, 2000, 20);
+    TEST_ASSERT_TRUE(first.edgeDetected);
+    TEST_ASSERT_FALSE(first.debounceSatisfied);
+    TEST_ASSERT_TRUE(first.instantBypass);
+    TEST_ASSERT_TRUE(first.allowed);
+    TEST_ASSERT_TRUE(gate.diag(20).instantBypassLast);
+
+    DashApFirstDecision repeated = gate.decide(true, true, 2000, 21);
+    TEST_ASSERT_FALSE(repeated.edgeDetected);
+    TEST_ASSERT_FALSE(repeated.debounceSatisfied);
+    TEST_ASSERT_FALSE(repeated.instantBypass);
+    TEST_ASSERT_FALSE(repeated.allowed);
+
+    DashApFirstDiag diag = gate.diag(21);
+    TEST_ASSERT_FALSE(diag.edgePending);
+    TEST_ASSERT_FALSE(diag.instantBypassLast);
+    TEST_ASSERT_EQUAL_UINT32(1, diag.apDebounceBypassCount);
+}
+
+void test_ap_first_gate_pending_edge_can_bypass_after_instant_is_enabled()
+{
+    DashApFirstGate gate;
+    gate.observe(2, 100);
+    gate.observe(3, 200);
+
+    DashApFirstDecision disabled = gate.decide(true, false, 2000, 300);
+    TEST_ASSERT_TRUE(disabled.edgeDetected);
+    TEST_ASSERT_FALSE(disabled.allowed);
+    TEST_ASSERT_TRUE(gate.diag(300).edgePending);
+
+    DashApFirstDecision enabled = gate.decide(true, true, 2000, 301);
+    TEST_ASSERT_TRUE(enabled.edgeDetected);
+    TEST_ASSERT_TRUE(enabled.instantBypass);
+    TEST_ASSERT_TRUE(enabled.allowed);
+    TEST_ASSERT_FALSE(gate.diag(301).edgePending);
+}
+
+void test_ap_first_gate_disengage_clears_timing_and_pending_edge()
+{
+    for (uint8_t state : {static_cast<uint8_t>(8), static_cast<uint8_t>(9)})
+    {
+        DashApFirstGate gate;
+        gate.observe(2, 100);
+        gate.observe(3, 200);
+        TEST_ASSERT_TRUE(gate.diag(200).edgePending);
+
+        gate.observe(state, 300);
+        DashApFirstDiag diag = gate.diag(300);
+        TEST_ASSERT_FALSE(diag.apEngaged);
+        TEST_ASSERT_FALSE(diag.edgePending);
+        TEST_ASSERT_FALSE(diag.debounceSatisfied);
+        TEST_ASSERT_FALSE(gate.decide(true, true, 2000, 300).allowed);
+    }
+}
+
+void test_ap_first_gate_reengagement_creates_a_new_edge()
+{
+    DashApFirstGate gate;
+    gate.observe(2, 100);
+    gate.observe(3, 200);
+    TEST_ASSERT_TRUE(gate.decide(true, true, 2000, 200).instantBypass);
+
+    gate.observe(2, 300);
+    gate.observe(3, 400);
+    DashApFirstDecision second = gate.decide(true, true, 2000, 400);
+    TEST_ASSERT_TRUE(second.edgeDetected);
+    TEST_ASSERT_TRUE(second.instantBypass);
+    TEST_ASSERT_TRUE(second.allowed);
+    TEST_ASSERT_EQUAL_UINT32(2, gate.diag(400).apEdgeCount);
+    TEST_ASSERT_EQUAL_UINT32(2, gate.diag(400).apDebounceBypassCount);
+}
+
+void test_ap_first_gate_parent_disable_clears_transient_timing()
+{
+    DashApFirstGate gate;
+    gate.observe(2, 100);
+    gate.observe(3, 200);
+    TEST_ASSERT_TRUE(gate.diag(200).edgePending);
+
+    DashApFirstDecision disabled = gate.decide(false, true, 2000, 250);
+    TEST_ASSERT_TRUE(disabled.allowed);
+    TEST_ASSERT_FALSE(disabled.instantBypass);
+
+    DashApFirstDiag cleared = gate.diag(250);
+    TEST_ASSERT_TRUE(cleared.apEngaged);
+    TEST_ASSERT_FALSE(cleared.edgePending);
+    TEST_ASSERT_FALSE(cleared.debounceSatisfied);
+
+    gate.observe(3, 300);
+    DashApFirstDecision reenabled = gate.decide(true, true, 2000, 300);
+    TEST_ASSERT_FALSE(reenabled.edgeDetected);
+    TEST_ASSERT_FALSE(reenabled.allowed);
+}
+
+void test_ap_first_gate_uint32_wrap_preserves_debounce_elapsed_time()
+{
+    DashApFirstGate gate;
+    gate.observe(2, UINT32_MAX - 100);
+    gate.observe(3, UINT32_MAX - 50);
+
+    DashApFirstDecision before = gate.decide(true, false, 100, 48);
+    TEST_ASSERT_FALSE(before.debounceSatisfied);
+    TEST_ASSERT_FALSE(before.allowed);
+
+    DashApFirstDecision atBoundary = gate.decide(true, false, 100, 49);
+    TEST_ASSERT_TRUE(atBoundary.debounceSatisfied);
+    TEST_ASSERT_TRUE(atBoundary.allowed);
+}
+
+void test_ap_first_gate_bypass_counter_requires_unsatisfied_debounce()
+{
+    DashApFirstGate gate;
+    gate.observe(2, 100);
+    gate.observe(3, 200);
+
+    DashApFirstDecision settled = gate.decide(true, true, 100, 300);
+    TEST_ASSERT_TRUE(settled.debounceSatisfied);
+    TEST_ASSERT_FALSE(settled.instantBypass);
+    TEST_ASSERT_TRUE(settled.allowed);
+    TEST_ASSERT_FALSE(gate.diag(300).instantBypassLast);
+    TEST_ASSERT_EQUAL_UINT32(0, gate.diag(300).apDebounceBypassCount);
+}
+
+void test_ap_first_gate_reset_runtime_clears_observation_but_preserves_counters()
+{
+    DashApFirstGate gate;
+    gate.observe(2, 100);
+    gate.observe(3, 200);
+    TEST_ASSERT_TRUE(gate.decide(true, true, 2000, 200).instantBypass);
+
+    gate.resetRuntime();
+    DashApFirstDiag reset = gate.diag(300);
+    TEST_ASSERT_FALSE(reset.apEngaged);
+    TEST_ASSERT_FALSE(reset.edgePending);
+    TEST_ASSERT_FALSE(reset.debounceSatisfied);
+    TEST_ASSERT_EQUAL_UINT32(1, reset.apEdgeCount);
+    TEST_ASSERT_EQUAL_UINT32(1, reset.apDebounceBypassCount);
+
+    gate.observe(3, 400);
+    TEST_ASSERT_FALSE(gate.decide(true, true, 2000, 400).edgeDetected);
+}
+
+void test_legacy_ap_first_state2_stays_blocked_with_instant_enabled()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, true);
+
+    setDasApState(handler, 2);
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_FALSE(handler.apFirstDiag(dashDiagNowMs()).apEngaged);
+}
+
+void test_legacy_ap_first_real_edge_bypasses_delay_once()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, true);
+
+    setDasApState(handler, 2);
+    setDasApState(handler, 3);
+
+    CanFrame first = legacyMux0Frame();
+    handler.handleMessage(first, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, handler.apFirstDiag(dashDiagNowMs()).apDebounceBypassCount);
+
+    mock.reset();
+    CanFrame sustained = legacyMux0Frame();
+    handler.handleMessage(sustained, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, handler.apFirstDiag(dashDiagNowMs()).apDebounceBypassCount);
+}
+
+void test_legacy_ap_first_instant_disabled_waits_default_2000ms()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, false, 2000);
+
+    setDasApState(handler, 2);
+    setDasApState(handler, 3);
+    const uint32_t edgeMs = handler.apFirstDiag(dashDiagNowMs()).lastApEdgeMs;
+
+    advanceNativeDiagNowMsUntilNextCallReturns(edgeMs + 1999);
+    CanFrame before = legacyMux0Frame();
+    handler.handleMessage(before, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+
+    advanceNativeDiagNowMsUntilNextCallReturns(edgeMs + 2000);
+    CanFrame boundary = legacyMux0Frame();
+    handler.handleMessage(boundary, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_legacy_ap_first_instant_disabled_waits_custom_1000ms()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, false, 1000);
+
+    setDasApState(handler, 2);
+    setDasApState(handler, 3);
+    const uint32_t edgeMs = handler.apFirstDiag(dashDiagNowMs()).lastApEdgeMs;
+
+    advanceNativeDiagNowMsUntilNextCallReturns(edgeMs + 999);
+    CanFrame before = legacyMux0Frame();
+    handler.handleMessage(before, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+
+    advanceNativeDiagNowMsUntilNextCallReturns(edgeMs + 1000);
+    CanFrame boundary = legacyMux0Frame();
+    handler.handleMessage(boundary, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_legacy_ap_first_state8_and_9_clear_stale_edge()
+{
+    for (uint8_t state : {static_cast<uint8_t>(8), static_cast<uint8_t>(9)})
+    {
+        mock.reset();
+        LegacyHandler handler;
+        handler.enablePrint = false;
+        configureLegacyApGate(handler, true);
+
+        setDasApState(handler, 2);
+        setDasApState(handler, 3);
+        TEST_ASSERT_TRUE(handler.apFirstDiag(dashDiagNowMs()).edgePending);
+
+        setDasApState(handler, state);
+        DashApFirstDiag diag = handler.apFirstDiag(dashDiagNowMs());
+        TEST_ASSERT_FALSE(diag.apEngaged);
+        TEST_ASSERT_FALSE(diag.edgePending);
+
+        CanFrame mux0 = legacyMux0Frame();
+        handler.handleMessage(mux0, mock);
+        TEST_ASSERT_EQUAL(0, mock.sent.size());
+    }
+}
+
+void test_legacy_ap_first_observes_only_primary_das_status()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, true);
+
+    setDasApState(handler, 2);
+
+    CanFrame party = {.id = 921, .dlc = 1};
+    party.bus = CAN_BUS_PARTY;
+    party.data[0] = 3;
+    handler.handleMessage(party, mock);
+    DashApFirstDiag afterParty = handler.apFirstDiag(dashDiagNowMs());
+    TEST_ASSERT_FALSE(afterParty.apEngaged);
+    TEST_ASSERT_EQUAL_UINT32(0, afterParty.apEdgeCount);
+
+    setDasApState(handler, 3);
+    DashApFirstDiag afterPrimary = handler.apFirstDiag(dashDiagNowMs());
+    TEST_ASSERT_TRUE(afterPrimary.apEngaged);
+    TEST_ASSERT_EQUAL_UINT32(1, afterPrimary.apEdgeCount);
+
+    handler.handleMessage(party, mock);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.apFirstDiag(dashDiagNowMs()).apEdgeCount);
+}
+
+void test_legacy_ap_first_checkad_blocks_final_send()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, true);
+    handler.checkAD = denyAD;
+
+    setDasApState(handler, 2);
+    setDasApState(handler, 3);
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    DashApFirstDiag diag = handler.apFirstDiag(dashDiagNowMs());
+    TEST_ASSERT_FALSE(diag.edgePending);
+    TEST_ASSERT_TRUE(diag.instantBypassLast);
+    TEST_ASSERT_EQUAL_UINT32(1, diag.apDebounceBypassCount);
+}
+
+void test_legacy_ap_first_can_off_clears_timing_and_blocks_send()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, true);
+
+    setDasApState(handler, 2);
+    setDasApState(handler, 3);
+    legacyApGateHarness.canEnabled = false;
+
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_FALSE(handler.apFirstDiag(dashDiagNowMs()).edgePending);
+}
+
+void test_legacy_ap_first_ota_block_clears_timing_and_blocks_send()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, true);
+
+    setDasApState(handler, 2);
+    setDasApState(handler, 3);
+    legacyApGateHarness.otaAllowed = false;
+
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_FALSE(handler.apFirstDiag(dashDiagNowMs()).edgePending);
+}
+
+void test_legacy_ap_first_abort_guard_blocks_before_bypass()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, true);
+    handler.abortGuard.setEnabled(true);
+
+    setDasApState(handler, 8);
+    setDasApState(handler, 2);
+    setDasApState(handler, 3);
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    DashApFirstDiag diag = handler.apFirstDiag(dashDiagNowMs());
+    TEST_ASSERT_TRUE(diag.edgePending);
+    TEST_ASSERT_EQUAL_UINT32(0, diag.apDebounceBypassCount);
+    TEST_ASSERT_EQUAL_STRING("legacy_fsd_mux0", handler.abortGuard.diag().lastBlockedPath);
+}
+
+void test_legacy_ap_first_soft_engage_off_center_blocks_final_send()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    configureLegacyApGate(handler, true);
+    legacyApGateHarness.softEngageEnabled = true;
+    legacyApGateHarness.steerAngleX10 = 200;
+
+    setDasApState(handler, 2);
+    setDasApState(handler, 3);
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    DashApFirstDiag diag = handler.apFirstDiag(dashDiagNowMs());
+    TEST_ASSERT_FALSE(diag.edgePending);
+    TEST_ASSERT_TRUE(diag.instantBypassLast);
+    TEST_ASSERT_EQUAL_UINT32(1, diag.apDebounceBypassCount);
+}
+
+void test_legacy_ap_first_parent_disable_and_runtime_reset_clear_transient_state()
+{
+    LegacyHandler handler;
+    handler.observeApFirstState(2, 100);
+    handler.observeApFirstState(3, 200);
+    TEST_ASSERT_TRUE(handler.apFirstDiag(200).edgePending);
+
+    TEST_ASSERT_TRUE(handler.decideApFirst(false, true, 2000, 250).allowed);
+    TEST_ASSERT_FALSE(handler.apFirstDiag(250).edgePending);
+
+    handler.observeApFirstState(2, 300);
+    handler.observeApFirstState(3, 400);
+    TEST_ASSERT_TRUE(handler.apFirstDiag(400).edgePending);
+    handler.resetApFirstRuntime();
+    DashApFirstDiag reset = handler.apFirstDiag(500);
+    TEST_ASSERT_FALSE(reset.apEngaged);
+    TEST_ASSERT_FALSE(reset.edgePending);
+    TEST_ASSERT_FALSE(reset.instantBypassLast);
 }
 
 void test_hw3_enhanced_autopilot_waits_for_ap_before_mux1_injection()
@@ -496,6 +1047,33 @@ void test_legacy_mux0_blocks_when_das_state_is_abort_or_fault()
 int main()
 {
     UNITY_BEGIN();
+
+    RUN_TEST(test_ap_first_gate_engaged_state_matrix);
+    RUN_TEST(test_ap_first_gate_edge_age_is_zero_without_edge_and_wrap_safe_after_edge);
+    RUN_TEST(test_ap_first_gate_state2_stays_blocked_with_instant_enabled);
+    RUN_TEST(test_ap_first_gate_startup_engaged_is_baseline_not_edge);
+    RUN_TEST(test_ap_first_gate_real_edge_waits_configured_debounce);
+    RUN_TEST(test_ap_first_gate_instant_bypass_is_one_shot_on_real_edge);
+    RUN_TEST(test_ap_first_gate_pending_edge_can_bypass_after_instant_is_enabled);
+    RUN_TEST(test_ap_first_gate_disengage_clears_timing_and_pending_edge);
+    RUN_TEST(test_ap_first_gate_reengagement_creates_a_new_edge);
+    RUN_TEST(test_ap_first_gate_parent_disable_clears_transient_timing);
+    RUN_TEST(test_ap_first_gate_uint32_wrap_preserves_debounce_elapsed_time);
+    RUN_TEST(test_ap_first_gate_bypass_counter_requires_unsatisfied_debounce);
+    RUN_TEST(test_ap_first_gate_reset_runtime_clears_observation_but_preserves_counters);
+
+    RUN_TEST(test_legacy_ap_first_state2_stays_blocked_with_instant_enabled);
+    RUN_TEST(test_legacy_ap_first_real_edge_bypasses_delay_once);
+    RUN_TEST(test_legacy_ap_first_instant_disabled_waits_default_2000ms);
+    RUN_TEST(test_legacy_ap_first_instant_disabled_waits_custom_1000ms);
+    RUN_TEST(test_legacy_ap_first_state8_and_9_clear_stale_edge);
+    RUN_TEST(test_legacy_ap_first_observes_only_primary_das_status);
+    RUN_TEST(test_legacy_ap_first_checkad_blocks_final_send);
+    RUN_TEST(test_legacy_ap_first_can_off_clears_timing_and_blocks_send);
+    RUN_TEST(test_legacy_ap_first_ota_block_clears_timing_and_blocks_send);
+    RUN_TEST(test_legacy_ap_first_abort_guard_blocks_before_bypass);
+    RUN_TEST(test_legacy_ap_first_soft_engage_off_center_blocks_final_send);
+    RUN_TEST(test_legacy_ap_first_parent_disable_and_runtime_reset_clear_transient_state);
 
     RUN_TEST(test_hw3_enhanced_autopilot_waits_for_ap_before_mux1_injection);
     RUN_TEST(test_hw3_enhanced_autopilot_allows_mux1_injection_while_parked);

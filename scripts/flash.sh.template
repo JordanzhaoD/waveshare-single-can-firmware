@@ -2,8 +2,8 @@
 # 烧录 Waveshare 单 CAN 版 v__VERSION__-atlas-single-can
 #
 # 用法:
-#   ./flash.sh /dev/cu.usbserial-XXXX            # 合并固件一键烧录（推荐）
-#   ./flash.sh --split /dev/cu.usbserial-XXXX    # 逐分区烧录（合并失败时备选）
+#   ./flash.sh --split /dev/cu.usbserial-XXXX    # 常规升级：保留 NVS/SPIFFS
+#   ./flash.sh /dev/cu.usbserial-XXXX            # 工厂式合并烧录：会覆盖 NVS
 #
 # 依赖: esptool.py (pip install esptool)
 #
@@ -32,19 +32,35 @@ if ! command -v esptool.py >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ ! -f "$DIR/SHA256SUMS" ]; then
+  echo "❌ 缺少 $DIR/SHA256SUMS，拒绝烧录未校验的资产包"
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$DIR" && sha256sum -c SHA256SUMS)
+elif command -v shasum >/dev/null 2>&1; then
+  (cd "$DIR" && shasum -a 256 -c SHA256SUMS)
+else
+  echo "❌ 未找到 sha256sum 或 shasum，无法校验固件资产"
+  exit 1
+fi
+
+echo "✅ SHA256SUMS 校验通过"
 echo "🔑 烧录端口: $PORT"
 echo "⚠️  烧录前 esptool 会先读 chip_id，请确认连接的是你的开发板"
 echo ""
 
 if [ "$SPLIT" = "1" ]; then
-  echo "📦 逐分区烧录（bootloader + partitions + ota_data_initial + firmware）..."
+  echo "📦 --split：保留现有 NVS/SPIFFS，更新 bootloader、partition、OTA data 与 app0..."
   esptool.py --chip esp32s3 --port "$PORT" --baud 921600 write_flash -z \
     0x0 bootloader.bin \
     0x8000 partitions.bin \
     0x19000 ota_data_initial.bin \
     0x20000 firmware.bin
 else
-  echo "📦 合并固件一键烧录（merged-flash.bin @ 0x0，推荐）..."
+  echo "⚠️  merged-flash.bin 从 0x0 连续写入，会覆盖并清空 NVS 配置。"
+  echo "⚠️  如需保留 WiFi、CAN 与运行时设置，请停止并改用 --split。"
+  echo "📦 工厂式合并烧录（merged-flash.bin @ 0x0）..."
   esptool.py --chip esp32s3 --port "$PORT" --baud 921600 write_flash -z \
     0x0 merged-flash.bin
 fi
