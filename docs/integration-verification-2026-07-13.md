@@ -260,3 +260,140 @@ The following actions were intentionally not performed:
 - Partition CSV modification
 - Release workflow modification
 - Protected PDF regeneration
+
+---
+
+# v1.0.9 Release Readiness Addendum
+
+Date: 2026-07-14
+
+This addendum supersedes the earlier flash-geometry warning and release-workflow boundary for the local **v1.0.9** preparation phase. The original Task 16 evidence above remains the historical beta16 integration result.
+
+## Candidate source
+
+- Product candidate source commit: `962ed569e972ae87831fe3f152869ca4a2606320`
+- Version: `1.0.9`
+- Release tag reserved for later authorization: `v1.0.9-atlas-single-can`
+- Release-equivalent profile: `DRIVER_TWAI + HW4 + EMERGENCY_VEHICLE_DETECTION + ENHANCED_AUTOPILOT + INJECTION_AFTER_AP`
+- Toolchain: Python `3.12`, isolated PlatformIO Core `6.1.19`, Espressif32 `7.0.0`, ESP-IDF `6.0.1`
+
+The evidence/report commit follows the product candidate commit and changes documentation only. GitHub Release CI will rebuild from the eventual authorized tag and run the same generated/release artifact checker.
+
+## Flash geometry correction
+
+Root cause was configuration drift rather than physical Flash detection:
+
+- PlatformIO board/profile and `partitions_16mb_ota_4096k_nvs64.csv` already selected 16MB.
+- ESP-IDF defaults omitted flash-size/custom-partition Kconfig, so generated sdkconfig selected 2MB/single-app and produced app `0x10000` flasher metadata.
+
+`sdkconfig.defaults` now locks:
+
+```text
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_16mb_ota_4096k_nvs64.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_16mb_ota_4096k_nvs64.csv"
+```
+
+After deleting only the per-environment generated sdkconfig and build directory, a clean build produced:
+
+```text
+flash size: 16MB
+bootloader: 0x0
+partition table: 0x8000
+ota data: 0x19000
+app0: 0x20000
+```
+
+The previous `Expected 16MB, found 2MB` warning did not appear.
+
+## Automated artifact gates
+
+New source and fixture tests cover:
+
+- PlatformIO/defaults/CSV geometry consistency;
+- generated sdkconfig/header/JSON 16MB and custom-partition state;
+- `flasher_args.json` offsets and 16MB setting;
+- bootloader/firmware image headers;
+- ESP-IDF partition-table MD5 records;
+- partition binary equality with CSV;
+- OTA-data and app-slot bounds;
+- standard 8-asset bundle, checksums, aliases and merged offsets;
+- esptool merge-time header/hash rewrites.
+
+`tests.yml` now runs all 18 native environments and validates generated artifacts after the Waveshare build. `release.yml` now uses `INJECTION_AFTER_AP`, validates generated and packaged artifacts, and leaves the GitHub Release as a draft for separate human approval.
+
+## Final automated results
+
+### Python
+
+```text
+Ran 296 tests
+OK (skipped=3)
+```
+
+- Passed: `293`
+- Skipped: `3`
+- Failures/errors: `0`
+
+### Native PlatformIO
+
+All 18 environments passed. Executed command test cases total `627/627`; this includes overlap between the aggregate `native` environment and focused environments.
+
+### Release-equivalent firmware build
+
+```text
+ui build: 1.0.9-waveshare_single_can_standalone-962ed569e972-2026-07-14T05:58:43Z
+RAM:   15.1% (49408 / 327680 bytes)
+Flash: 28.4% (1193031 / 4194304 bytes)
+firmware.bin: 1208464 bytes
+app slot remaining: 2985840 bytes
+SUCCESS: 32.42 seconds
+```
+
+The CMake project description was clean (`v1.0.8-atlas-single-can-27-g962ed56`, without `-dirty`). The older tag prefix is expected before creation of the reserved v1.0.9 tag; the product/UI version is driven by `VERSION=1.0.9`.
+
+### Other gates
+
+- release metadata: PASS
+- clang-format dry run: PASS
+- modified workflow YAML parse: PASS
+- deterministic Dashboard source/header check: PASS after restoring `manual/manual`
+- generated flash artifact checker: PASS
+- 8-asset release bundle checker: PASS
+- `SHA256SUMS`: PASS
+- merged image: ESP32-S3, DIO, 40MHz, 16MB, valid checksum/hash
+- partition CSV: unchanged
+- `auto-tag-release.yml`: unchanged
+
+## Local release assets
+
+Local, ignored output directory:
+
+```text
+.pio/release-assets-v1.0.9
+```
+
+| Asset | Bytes | SHA-256 |
+|---|---:|---|
+| `bootloader.bin` | 18,576 | `f1710c920fe3410adf39385d7f65b2014f673eeb28169f0fcabea45036646a80` |
+| `partitions.bin` | 3,072 | `d7cca4968173011e2563bc81b8969ff183af13b2e494ed61ec4016d007d8e946` |
+| `ota_data_initial.bin` | 8,192 | `7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f` |
+| `firmware.bin` | 1,208,464 | `eadcc8aa168eb8a66988724ed2a41bdf9bf250997c066897483bf44114a37ee4` |
+| `firmware-waveshare-single-can.bin` | 1,208,464 | `eadcc8aa168eb8a66988724ed2a41bdf9bf250997c066897483bf44114a37ee4` |
+| `merged-flash.bin` | 1,339,536 | `80da192b48b06c135c5471cdc7d0c60f9e4ceb9087f38c0c035a0eb8a73afafc` |
+| `flash.sh` | 2,762 | `9bbeb00232532cf9829b435656149b4d1d8d8fa5530b35328178aea09c442fba` |
+
+The generated `flash.sh` verifies `SHA256SUMS` before writing. `--split` is the documented normal upgrade path that preserves NVS/SPIFFS; merged flashing explicitly warns that it overwrites NVS.
+
+## Still not performed
+
+- Push or PR creation
+- Merge to `main`
+- Local or remote tag creation
+- Draft or public GitHub Release creation
+- Flash or OTA
+- USB device access
+- CAN bench or vehicle test
+- Protected PDF regeneration
