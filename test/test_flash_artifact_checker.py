@@ -286,6 +286,15 @@ class FlashArtifactCheckerTest(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertIn("16MB", result.stderr)
 
+    def test_accepts_partition_binary_md5_record(self) -> None:
+        temp, fixture = self.with_fixture()
+        with temp:
+            partition = bytearray((fixture.build / "partitions.bin").read_bytes())
+            partition[0xC0:0xE0] = struct.pack("<H", 0xEBEB) + b"\0" * 30
+            (fixture.build / "partitions.bin").write_bytes(partition)
+            result = self.run_checker(fixture)
+            self.assertEqual(0, result.returncode, result.stderr)
+
     def test_rejects_partition_binary_mismatch(self) -> None:
         temp, fixture = self.with_fixture()
         with temp:

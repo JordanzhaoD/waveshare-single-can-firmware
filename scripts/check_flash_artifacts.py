@@ -104,7 +104,7 @@ def parse_partition_binary(path: Path) -> list[dict[str, int | str]]:
     for start in range(0, len(data) - 31, 32):
         record = data[start : start + 32]
         magic = struct.unpack_from("<H", record)[0]
-        if magic == 0xFFFF:
+        if magic in {0xFFFF, 0xEBEB}:
             break
         if magic != 0x50AA:
             fail(f"partition binary has invalid magic at {start:#x}: {magic:#06x}")
