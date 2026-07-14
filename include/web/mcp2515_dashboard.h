@@ -5661,8 +5661,8 @@ static void dashSerialPrintSystemStatus()
 {
     const uint32_t now = millis();
     const DashApFirstDiag ap = dashHandler
-                                  ? dashHandler->apFirstDiag(now)
-                                  : DashApFirstDiag{};
+                                   ? dashHandler->apFirstDiag(now)
+                                   : DashApFirstDiag{};
     const uint32_t lastApEdgeAgeMs = ap.hasApEdge
                                          ? dashAgeMs(now, ap.lastApEdgeMs)
                                          : 0;
