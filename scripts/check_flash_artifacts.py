@@ -333,8 +333,15 @@ def check_release(release: Path, version: str) -> None:
     if len(merged) > FLASH_SIZE_BYTES:
         fail(f"merged-flash.bin exceeds 16MB: {len(merged)} bytes")
     check_image_header(release / "merged-flash.bin")
+    bootloader = read_bytes(release / "bootloader.bin")
+    merged_bootloader = merged[: len(bootloader)]
+    if (
+        merged_bootloader[:2] != bootloader[:2]
+        or merged_bootloader[4:] != bootloader[4:]
+    ):
+        fail("merged-flash.bin does not contain bootloader.bin at 0x0")
+
     for offset, name in (
-        (0x0, "bootloader.bin"),
         (PARTITION_OFFSET, "partitions.bin"),
         (OTA_DATA_OFFSET, "ota_data_initial.bin"),
         (APP_OFFSET, "firmware.bin"),
@@ -362,13 +369,25 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--release-dir", type=Path)
     parser.add_argument("--version")
+    parser.add_argument(
+        "--release-only",
+        action="store_true",
+        help="check a packaged release without requiring the original build tree",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     try:
-        check_generated(args.root.resolve(), args.build_dir.resolve(), args.partition_csv.resolve())
+        if args.release_only and args.release_dir is None:
+            fail("--release-only requires --release-dir")
+        if not args.release_only:
+            check_generated(
+                args.root.resolve(),
+                args.build_dir.resolve(),
+                args.partition_csv.resolve(),
+            )
         if args.release_dir is not None:
             version = args.version or read_text(args.root / "VERSION").strip()
             check_release(args.release_dir.resolve(), version)

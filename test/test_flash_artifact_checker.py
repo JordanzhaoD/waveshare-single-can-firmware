@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import json
+import shutil
 import struct
 import subprocess
 import sys
@@ -218,7 +219,12 @@ class FlashArtifactFixture:
 
 
 class FlashArtifactCheckerTest(unittest.TestCase):
-    def run_checker(self, fixture: FlashArtifactFixture, release: bool = False):
+    def run_checker(
+        self,
+        fixture: FlashArtifactFixture,
+        release: bool = False,
+        release_only: bool = False,
+    ):
         args = [
             sys.executable,
             str(CHECKER),
@@ -231,6 +237,8 @@ class FlashArtifactCheckerTest(unittest.TestCase):
         ]
         if release:
             args.extend(["--release-dir", str(fixture.release), "--version", "1.0.9"])
+        if release_only:
+            args.append("--release-only")
         return subprocess.run(args, capture_output=True, text=True)
 
     def with_fixture(self):
@@ -312,6 +320,27 @@ class FlashArtifactCheckerTest(unittest.TestCase):
             result = self.run_checker(fixture, release=True)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIn("release bundle check passed", result.stdout)
+
+    def test_accepts_release_bundle_without_build_tree(self) -> None:
+        temp, fixture = self.with_fixture()
+        with temp:
+            fixture.create_release()
+            shutil.rmtree(fixture.build)
+            fixture.sdkconfig.unlink()
+            result = self.run_checker(fixture, release=True, release_only=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("release bundle check passed", result.stdout)
+
+    def test_accepts_esptool_rewritten_merged_header_frequency(self) -> None:
+        temp, fixture = self.with_fixture()
+        with temp:
+            fixture.create_release()
+            merged = bytearray((fixture.release / "merged-flash.bin").read_bytes())
+            merged[3] = (merged[3] & 0xF0) | 0x00
+            (fixture.release / "merged-flash.bin").write_bytes(merged)
+            fixture.write_checksums()
+            result = self.run_checker(fixture, release=True)
+            self.assertEqual(0, result.returncode, result.stderr)
 
     def test_rejects_release_checksum_mismatch(self) -> None:
         temp, fixture = self.with_fixture()

@@ -34,6 +34,40 @@ class ReleaseReadinessContractTest(unittest.TestCase):
         )
         self.assertGreater(checker, build)
 
+    def test_release_profile_enables_ap_injection_gate(self) -> None:
+        profile = re.search(
+            r"profile: (.*?)(?=\n\s+project_dir:)",
+            self.release_workflow,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(profile)
+        self.assertIn("--enable INJECTION_AFTER_AP", profile.group(1))
+
+    def test_release_checks_generated_and_bundled_artifacts(self) -> None:
+        build = self.release_workflow.index("pio run -e ${{ matrix.env }}")
+        generated_check = self.release_workflow.index(
+            "python scripts/check_flash_artifacts.py", build
+        )
+        bundle = self.release_workflow.index("scripts/build_release_assets.sh")
+        release_check = self.release_workflow.index(
+            "--release-dir release-assets", bundle
+        )
+        self.assertGreater(generated_check, build)
+        self.assertGreater(release_check, bundle)
+
+    def test_release_remains_draft_until_manual_approval(self) -> None:
+        self.assertRegex(self.release_workflow, r"(?m)^\s+draft: true\s*$")
+        self.assertNotIn("Publish draft release", self.release_workflow)
+        self.assertNotIn("--draft=false", self.release_workflow)
+
+    def test_flash_script_verifies_bundle_checksums(self) -> None:
+        self.assertIn("SHA256SUMS", self.flash_template)
+        self.assertRegex(self.flash_template, r"sha256sum|shasum")
+
+    def test_flash_script_explains_nvs_behavior(self) -> None:
+        self.assertRegex(self.flash_template, r"(?i)merged.*NVS")
+        self.assertRegex(self.flash_template, r"(?i)--split.*NVS")
+
 
 if __name__ == "__main__":
     unittest.main()

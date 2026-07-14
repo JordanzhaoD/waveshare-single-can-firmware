@@ -29,7 +29,7 @@ jobs:
         include:
           - env: waveshare_single_can_standalone
             profile: --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
-              --enable ENHANCED_AUTOPILOT
+              --enable ENHANCED_AUTOPILOT --enable INJECTION_AFTER_AP
             project_dir: .
             artifact_name: firmware-waveshare-single-can
             artifact_path: .pio/build/waveshare_single_can_standalone/firmware.bin
@@ -50,6 +50,8 @@ jobs:
         working-directory: ${{ matrix.project_dir }}
         env:
           SKIP_DASH_CREDENTIAL_CHECK: "1"
+      - run: python scripts/check_flash_artifacts.py
+        working-directory: ${{ matrix.project_dir }}
       - if: matrix.artifact_path != ''
         uses: actions/upload-artifact@v7
         with:
@@ -80,6 +82,12 @@ jobs:
           path: build
       - name: Build standard 8-asset bundle (merged-flash.bin + flash.sh + SHA256SUMS)
         run: bash scripts/build_release_assets.sh build release-assets
+      - name: Verify standard release bundle
+        run: >-
+          python scripts/check_flash_artifacts.py
+          --release-only
+          --release-dir release-assets
+          --version "$(tr -d '[:space:]' < VERSION)"
       - name: Extract changelog section for this tag
         run: |
           TAG="${GITHUB_REF_NAME}"
@@ -107,7 +115,3 @@ jobs:
             release-assets/merged-flash.bin
             release-assets/flash.sh
             release-assets/SHA256SUMS
-      - name: Publish draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "${{ github.ref_name }}" --draft=false
