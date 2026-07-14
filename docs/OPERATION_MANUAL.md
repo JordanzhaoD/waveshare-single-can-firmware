@@ -1,15 +1,15 @@
 ---
 title: Atlas-FSD 操作手册
-version: v1.0.8-beta16-integration-unreleased
+version: v1.0.9-atlas-single-can
 date: 2026-07-14
 ---
 
 # 📗 Atlas-FSD 操作手册
 
 > [!info] 文档信息
-> **版本**：v1.0.8 beta16 integration（Unreleased）｜ **适用固件**：Waveshare 单 CAN standalone
+> **版本**：v1.0.9-atlas-single-can ｜ **适用固件**：Waveshare 单 CAN standalone
 > **仓库**：<https://github.com/JordanzhaoD/waveshare-single-can-firmware>
-> **验证状态**：仅本地自动化测试与编译；未发布、未烧录、未 OTA、未实车验证
+> **验证状态**：发布候选已完成本地自动化、16MB clean build 与资产校验；尚未公开发布、烧录、OTA 或实车验证
 > **协议**：GPL-3.0 ｜ **最新版**：见仓库
 
 > [!danger] 免责声明
@@ -92,14 +92,14 @@ date: 2026-07-14
 
 从 [Release 页面](https://github.com/JordanzhaoD/waveshare-single-can-firmware/releases/latest)下载资产包（含 `merged-flash.bin`、分区 bin、`flash.sh`、`SHA256SUMS`），解压后进入目录。
 
-### 4.2 方式一：一键合并烧录（推荐）
+### 4.2 方式一：逐分区升级（推荐）
 
-> [!tip] merged-flash.bin 一键烧录
+> [!tip] 保留 NVS / SPIFFS 的常规升级
 > ```bash
-> ./flash.sh /dev/cu.usbserial-XXXX
+> ./flash.sh --split /dev/cu.usbserial-XXXX
 > ```
 
-`flash.sh` 自动用 esptool 烧录 `merged-flash.bin`（含 bootloader + 分区表 + OTA 数据 + 固件）到偏移 `0x0`，一次完成。
+`--split` 分别更新 bootloader、partition table、OTA data 与 app0；在分区布局不变时保留 NVS 和 SPIFFS，适合已有 WiFi、CAN 与运行时配置的设备。脚本会先自动校验 `SHA256SUMS`，校验失败时拒绝写入。
 
 > [!example] 串口名（按系统替换）
 > | 系统 | 串口示例 |
@@ -108,14 +108,14 @@ date: 2026-07-14
 > | Linux | `/dev/ttyUSB0` |
 > | Windows | `COM3` |
 
-### 4.3 方式二：逐分区烧录（备选）
+### 4.3 方式二：工厂式合并烧录
 
-合并烧录失败时使用：
-
-> [!tip] 逐分区烧录
+> [!danger] merged-flash.bin 会覆盖 NVS
 > ```bash
-> ./flash.sh --split /dev/cu.usbserial-XXXX
+> ./flash.sh /dev/cu.usbserial-XXXX
 > ```
+>
+> `merged-flash.bin` 从 `0x0` 连续写入，会覆盖并清空 NVS 配置。仅在需要验证全新默认值、恢复完整固件布局或明确接受配置丢失时使用；烧录前先导出设置备份。SPIFFS 位于更高地址，当前 merged image 通常不会覆盖它。
 
 分区布局（**地址必须准确**）：
 
@@ -449,4 +449,4 @@ Dashboard 的 CAN 诊断页用于总线健康监测与调试：
 ---
 
 > [!info] 文档版本
-> 本手册已更新到 **v1.0.8 beta16 integration（Unreleased）** 的代码行为。受保护的历史 PDF 本轮未重新生成；当前 Markdown 是本集成分支的权威说明。本轮只完成本地测试与编译，未发布、未烧录、未 OTA、未实车验证。
+> 本手册对应 **v1.0.9-atlas-single-can** 发布候选。受保护的历史 PDF 本轮未重新生成；当前 Markdown 是候选分支的权威说明。候选已完成本地自动化、16MB release-equivalent clean build 与 8 资产校验，但尚未 push/tag、公开 Release、烧录、OTA、台架或实车验证。
