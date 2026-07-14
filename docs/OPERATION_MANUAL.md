@@ -1,14 +1,15 @@
 ---
 title: Atlas-FSD 操作手册
-version: v1.0.1-atlas-single-can
-date: 2026-06-21
+version: v1.0.8-beta16-integration-unreleased
+date: 2026-07-14
 ---
 
 # 📗 Atlas-FSD 操作手册
 
 > [!info] 文档信息
-> **版本**：v1.0.1-atlas-single-can ｜ **适用固件**：Waveshare 单 CAN standalone
+> **版本**：v1.0.8 beta16 integration（Unreleased）｜ **适用固件**：Waveshare 单 CAN standalone
 > **仓库**：<https://github.com/JordanzhaoD/waveshare-single-can-firmware>
+> **验证状态**：仅本地自动化测试与编译；未发布、未烧录、未 OTA、未实车验证
 > **协议**：GPL-3.0 ｜ **最新版**：见仓库
 
 > [!danger] 免责声明
@@ -222,7 +223,7 @@ FSD 协议模式切换（运行时）：
 
 实时 CAN 总线诊断面板：
 
-- **CAN1 / CAN2**：RX/TX 计数、EFLG 错误标志
+- **单路 TWAI CAN**：RX/TX 计数、控制器状态与错误标志（本产品不提供 CAN2）
 - **错误优先实时帧**：异常帧优先显示
 - **LIVE TIMELINE**：总线事件时间线
 - **CAN 引脚信息**：引脚状态
@@ -232,26 +233,48 @@ FSD 协议模式切换（运行时）：
 > [!tip] 诊断价值
 > CAN 诊断用于验证接线、排查通信问题。若 **RX=0**，检查接线 / 波特率 / 极性 / 共地。
 
-### 6.6 FSD 防护
+### 6.6 FSD 防护与四模式 NAG
 
-安全防护开关面板：
+FSD 防护总开关是 NAG 算法的父 enable。历史字段 `bionicSteering` 继续用于兼容旧配置，但它**不是第五种算法**；实际算法由以下四模式选择器决定：
+
+| 编号 | Dashboard 名称 | 运行语义 |
+|------|----------------|----------|
+| `0` | **Off** | 不运行 Legacy NAG 算法 |
+| `1` | **Human Replay TSL6P** | 使用既有 TSL6P burst/replay 行为 |
+| `2` | **EPAS Late Echo** | 使用 cadence-aware 延迟 echo |
+| `3` | **Reactive Sustained Hold** | 包含 proactive 与 reactive 两个阶段的持续 hold |
+
+父开关关闭时，运行时按 Off 处理，但已保存的模式选择不会被擦除；重新开启父开关后恢复所选模式。所有模式仍受 CAN/FSD 总开关、AP/checkAD、Abort Guard 与各自 feature gate 约束。
+
+其它防护项包括：
 
 - **slew rate 限制**：扭矩变化率限制（防止突变）
-- **仿生方向盘**：模拟人手扭矩曲线
 - **bit-19 baseline**：方向盘检测屏蔽的安全路径
+- **Soft Engage**：Legacy `0x3EE mux0` 最终发送前的方向盘近居中/超时门控
 
 ![FSD 防护开关](screenshots/fsd-defense.png)
 
-> [!danger] 防护开关谨慎
-> 防护功能是安全设计，**不建议随意关闭**。关闭可能影响车辆安全系统行为，务必清楚每个开关的影响。
+> [!danger] NAG 与防护模式谨慎
+> 四种 NAG 模式均为 opt-in 研究功能。历史事故记录和旧策略文档继续保留作为背景，但不再代表对当前 `0x370` 模式的 blanket ban。请以当前模式选择、父开关、运行诊断和既有安全门控为准。
 
-### 6.7 DNS / 过滤
+### 6.7 AP Injection Gate 与 Instant Engage
+
+Legacy AP-First gate 使用 primary AP status frame 判断状态：state `2` 不算 engaged，只有 state `3..6` 算 engaged；state `8/9`、disengage 或 runtime reset 会清除 transient timing。
+
+- **AP 延迟**：可配置 `0–3000ms`，默认 `2000ms`。
+- **Instant Engage (experimental)**：默认关闭。开启后，真实的 non-engaged → engaged 边沿可以**一次性**绕过尚未满足的 AP 延迟；持续 state `3..6` 不会重复 bypass。
+- **父 gate 关闭**：Instant Engage 控件显示 inactive/disabled，但保存值保持不变。
+- **不能绕过的门控**：CAN/FSD enablement、OTA blocking、父 AP gate、`checkAD`、gear logic、Abort Guard、Soft Engage、插件与功能 enablement。
+
+`/status.fsdDiag.gate` 和串口 `system_status` 会报告 `instantEngageEnabled`、`apEngaged`、`apEdgeCount`、`lastApEdgeAgeMs`、`apDebounceBypassCount`、`edgePending`、`debounceSatisfied` 与 `instantBypassLast`，用于区分“检测到边沿”“实际消费 bypass”以及“被其它最终门控阻断”。
+
+### 6.8 DNS / 过滤
 
 上游 DNS 设置与黑/白名单域名过滤规则管理（DNS 过滤功能）。
 
 ![DNS 与过滤规则](screenshots/dns-filter.png)
 
-### 6.8 手机端（现场遥控）
+### 6.9 手机端（现场遥控）
 
 手机浏览器自动切换竖屏布局，提供现场遥控视图：FSD 注入状态、CAN 总线状态、硬件模式、实时帧率，便于车旁操作。
 
@@ -280,9 +303,11 @@ FSD 协议模式切换（运行时）：
 - Legacy 速度偏移
 - 重写限速（Legacy / HW4）
 - 视觉限速识别开关
+- 四模式 Legacy NAG 与父防护开关
+- AP Injection Gate、`0–3000ms` 延迟与 Instant Engage
 
 > [!tip] 配置持久化
-> 运行时配置持久化到 NVS，重启保留。Dashboard 通过 `GET /config` 回填显示，`POST /config` 保存。
+> 运行时配置持久化到 NVS，重启保留。Dashboard 通过 `GET /config` 回填显示，`POST /config` 保存。Instant Engage 使用 API 字段 `ap_first_edge`、NVS key `apfe`，默认 `false`；设置备份/恢复字段为 `device.apFirstEdge`。
 
 ### 7.3 OTA 更新仓库
 
@@ -368,7 +393,7 @@ Dashboard 的 CAN 诊断页用于总线健康监测与调试：
 > # 或
 > esptool.py --port /dev/cu.usbserial-XXXX run   # 复位 + 看
 > ```
-> 启动日志含 `build_id`（版本）、`canActive`、`epas_nag` 等关键状态。
+> 启动日志含 `build_id`（版本）、`canActive` 等关键状态；`system_status` 还会输出 Instant Engage/AP edge/bypass 证据，NAG 诊断会输出 `selectedMode`、`selectedModeName` 与 `runtimePhase`。
 
 ---
 
@@ -424,4 +449,4 @@ Dashboard 的 CAN 诊断页用于总线健康监测与调试：
 ---
 
 > [!info] 文档版本
-> 本手册对应固件 **v1.0.1-atlas-single-can**。最新版本与电子档（PDF）见仓库 `docs/`。
+> 本手册已更新到 **v1.0.8 beta16 integration（Unreleased）** 的代码行为。受保护的历史 PDF 本轮未重新生成；当前 Markdown 是本集成分支的权威说明。本轮只完成本地测试与编译，未发布、未烧录、未 OTA、未实车验证。
