@@ -335,9 +335,11 @@ def check_release(release: Path, version: str) -> None:
     check_image_header(release / "merged-flash.bin")
     bootloader = read_bytes(release / "bootloader.bin")
     merged_bootloader = merged[: len(bootloader)]
+    if len(bootloader) < 36:
+        fail("bootloader.bin is too small to contain a validated image hash")
     if (
         merged_bootloader[:2] != bootloader[:2]
-        or merged_bootloader[4:] != bootloader[4:]
+        or merged_bootloader[4:-32] != bootloader[4:-32]
     ):
         fail("merged-flash.bin does not contain bootloader.bin at 0x0")
 

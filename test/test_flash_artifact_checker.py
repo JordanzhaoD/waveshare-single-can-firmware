@@ -39,7 +39,7 @@ class FlashArtifactFixture:
         )
         self.write_configs()
         self.write_flasher_args()
-        (self.build / "bootloader.bin").write_bytes(self.image_bytes(b"boot"))
+        (self.build / "bootloader.bin").write_bytes(self.image_bytes(b"boot" * 20))
         (self.build / "firmware.bin").write_bytes(self.image_bytes(b"firmware"))
         (self.build / "partitions.bin").write_bytes(self.partition_binary())
         (self.build / "ota_data_initial.bin").write_bytes(b"\xff" * 0x2000)
@@ -346,6 +346,8 @@ class FlashArtifactCheckerTest(unittest.TestCase):
             fixture.create_release()
             merged = bytearray((fixture.release / "merged-flash.bin").read_bytes())
             merged[3] = (merged[3] & 0xF0) | 0x00
+            bootloader_size = (fixture.release / "bootloader.bin").stat().st_size
+            merged[bootloader_size - 32 : bootloader_size] = b"\xaa" * 32
             (fixture.release / "merged-flash.bin").write_bytes(merged)
             fixture.write_checksums()
             result = self.run_checker(fixture, release=True)
