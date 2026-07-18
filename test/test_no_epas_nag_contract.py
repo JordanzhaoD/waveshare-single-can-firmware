@@ -188,7 +188,7 @@ class NoEpasNagContract(unittest.TestCase):
         self.assertIn("DashAbortGuardBlockPath::Nag", reactive[:send_idx])
 
     def test_legacy_speed_safety_v2_does_not_add_forbidden_writes(self) -> None:
-        """Smart Legacy speed may only write 0x2F8; Abort Guard may not introduce new write paths."""
+        """Smart Legacy speed reads 0x2F8 and may only extend the already-gated 0x3EE path."""
         forbidden_ids = [921, 0x399, 817, 0x331, 1016, 0x3F8]
         for frame_id in forbidden_ids:
             for branch in frame_id_blocks(self.legacy, frame_id):
@@ -198,11 +198,17 @@ class NoEpasNagContract(unittest.TestCase):
         legacy_760 = re.search(r'if \(frame\.id == 760\).*?if \(frame\.id == 1080\)', self.legacy, re.S)
         self.assertIsNotNone(legacy_760)
         block = legacy_760.group(0)
-        self.assertRegex(block, r'frame\.data\[5\]\s*(?:=|[|&^+\-]=)')
-        for var_name in ['frame', 'out', 'echo']:
-            for idx in [0, 1, 2, 3, 4, 6, 7]:
-                with self.subTest(var_name=var_name, idx=idx):
-                    self.assertIsNone(re.search(rf'\b{var_name}\.data\[{idx}\]\s*(?:=|[|&^+\-]=)', block))
+        self.assertNotRegex(block, r'\bdriver\.send\s*\(')
+        self.assertNotRegex(block, r'frame\.data\[\d+\]\s*(?:=|[|&^+\-]=)')
+
+        mux0 = re.search(
+            r'legacyFsdDiag\.mux0\.recordBefore\(frame\.data\);.*?legacyFsdDiag\.mux0\.recordAfter',
+            self.legacy,
+            re.S,
+        )
+        self.assertIsNotNone(mux0)
+        self.assertIn('dashWriteLegacyOffsetTo3eeMux0', mux0.group(0))
+        self.assertIn('abortGuard.allowsInjection()', self.legacy[: mux0.start()])
 
 
 class Tsl6pBurstNagV4Contract(unittest.TestCase):

@@ -2807,6 +2807,8 @@ static void handleStatus()
     j += ",\"rawTargetKph\":" + String(legacySpeed.result.rawTargetKph);
     j += ",\"smoothedTargetKph\":" + String(legacySpeed.result.smoothedTargetKph);
     j += ",\"outputOffsetKph\":" + String(legacySpeed.result.outputOffsetKph);
+    j += ",\"outputOffsetPct\":" + String(legacySpeed.outputOffsetPct);
+    j += ",\"limitSource\":" + String(static_cast<uint8_t>(legacySpeed.limitSource));
     j += ",\"fallbackUsed\":" + String(legacySpeed.result.fallbackUsed ? "true" : "false");
     j += ",\"smoothingActive\":" + String(legacySpeed.result.smoothingActive ? "true" : "false");
     j += ",\"gpsSpeedSeen\":" + String(legacySpeed.gpsSpeedSeen ? "true" : "false");
@@ -2818,6 +2820,10 @@ static void handleStatus()
     j += ",\"gpsMppLimitKph\":" + String(legacySpeed.gpsMppLimitKph);
     j += ",\"lastSentOffsetRaw\":" + String(legacySpeed.lastSentOffsetRaw);
     j += ",\"lastSentOffsetKph\":" + String(legacySpeed.lastSentOffsetKph);
+    j += ",\"mux0Count\":" + String(legacySpeed.mux0Count);
+    j += ",\"mux0RxByte3\":" + String(legacySpeed.mux0RxByte3);
+    j += ",\"mux0TxByte3\":" + String(legacySpeed.mux0TxByte3);
+    j += ",\"speedFixId\":\"legacy_reference_0x3ee_v1\"";
     j += ",\"txOk\":" + String(legacySpeed.txOk);
     j += ",\"txFail\":" + String(legacySpeed.txFail);
     j += ",\"blockedReason\":\"" + String(legacySpeed.blockedReason) + "\"}";

@@ -580,32 +580,34 @@ void test_legacy_vision_clear_disabled_does_not_clear_bit48()
     TEST_ASSERT_TRUE(mock.sent[1].data[6] & 0x01);         // bit48 PRESERVED (flag off)
 }
 
-// --- CAN 760 offset write ---
+// --- Shared three-mode offset compatibility on the 0x3EE output path ---
 
-void test_legacy_can760_writes_offset()
+void test_legacy_can3ee_writes_fixed_offset()
 {
     handler.legacyOffset = 10;
-    CanFrame f = {.id = 760};
-    f.dlc = 8;
-    f.data[5] = 0xC0;
-    const uint8_t originalByte5 = f.data[5];
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[3] = 0x81;
+    f.data[4] = 0x40;
+    const uint8_t originalByte3 = f.data[3];
 
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_HEX8(0xC0 | 40, mock.sent[0].data[5]);
-    TEST_ASSERT_NOT_EQUAL(originalByte5, mock.sent[0].data[5]);
-    TEST_ASSERT_EQUAL_HEX8(originalByte5, handler.legacyFsdDiag.aux760.before[5]);
-    TEST_ASSERT_EQUAL_HEX8(mock.sent[0].data[5], handler.legacyFsdDiag.aux760.after[5]);
+    TEST_ASSERT_EQUAL_HEX8(0x81 | (40 << 1), mock.sent[0].data[3]);
+    TEST_ASSERT_NOT_EQUAL(originalByte3, mock.sent[0].data[3]);
+    TEST_ASSERT_EQUAL_HEX8(originalByte3, handler.legacyFsdDiag.mux0.before[3]);
+    TEST_ASSERT_EQUAL_HEX8(mock.sent[0].data[3], handler.legacyFsdDiag.mux0.after[3]);
 }
 
-void test_legacy_can760_skips_when_offset_zero()
+void test_legacy_can3ee_preserves_byte3_when_offset_zero()
 {
     handler.legacyOffset = 0;
-    CanFrame f = {.id = 760};
-    f.dlc = 8;
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[3] = 0x55;
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x55, mock.sent[0].data[3]);
 }
 
 void test_legacy_can921_captures_fused_speed_limit()
@@ -617,97 +619,94 @@ void test_legacy_can921_captures_fused_speed_limit()
     TEST_ASSERT_EQUAL_UINT8(12, fusedSpeedLimitRaw);
 }
 
-void test_legacy_can760_fixed_pct_writes_simple_offset()
+void test_legacy_can3ee_fixed_pct_writes_simple_offset()
 {
     fusedSpeedLimitRaw = 12; // 60 kph
     offsetMode = 0;
     manualOffsetPct = 20;
     handler.legacyOffset = 0;
 
-    CanFrame f = {.id = 760};
-    f.dlc = 8;
-    f.data[5] = 0xC0;
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_HEX8(0xC0 | 42, mock.sent[0].data[5]);
+    TEST_ASSERT_EQUAL_HEX8(42, (mock.sent[0].data[3] >> 1) & 0x3F);
     TEST_ASSERT_FLOAT_WITHIN(0.1f, 12.0f, actualOffset);
 }
 
-void test_legacy_can760_auto_writes_simple_offset()
+void test_legacy_can3ee_auto_writes_simple_offset()
 {
     fusedSpeedLimitRaw = 12; // 60 kph -> target 90, offset 30
     offsetMode = 1;
     handler.legacyOffset = 0;
 
-    CanFrame f = {.id = 760};
-    f.dlc = 8;
-    f.data[5] = 0x80;
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_HEX8(0x80 | 60, mock.sent[0].data[5]);
+    TEST_ASSERT_EQUAL_HEX8(60, (mock.sent[0].data[3] >> 1) & 0x3F);
     TEST_ASSERT_FLOAT_WITHIN(0.1f, 30.0f, actualOffset);
 }
 
-void test_legacy_can760_custom_writes_simple_offset()
+void test_legacy_can3ee_custom_writes_simple_offset()
 {
     fusedSpeedLimitRaw = 16; // 80 kph
     offsetMode = 2;
     customPct[2] = 10;
     handler.legacyOffset = 0;
 
-    CanFrame f = {.id = 760};
-    f.dlc = 8;
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_HEX8(38, mock.sent[0].data[5] & 0x3F);
+    TEST_ASSERT_EQUAL_HEX8(38, (mock.sent[0].data[3] >> 1) & 0x3F);
     TEST_ASSERT_FLOAT_WITHIN(0.1f, 8.0f, actualOffset);
 }
 
-void test_legacy_can760_clamps_simple_offset_to_wire_max()
+void test_legacy_can3ee_clamps_simple_offset_to_wire_max()
 {
     fusedSpeedLimitRaw = 20; // 100 kph
     offsetMode = 0;
     manualOffsetPct = 50;
     handler.legacyOffset = 0;
 
-    CanFrame f = {.id = 760};
-    f.dlc = 8;
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_HEX8(63, mock.sent[0].data[5] & 0x3F);
+    TEST_ASSERT_EQUAL_HEX8(63, (mock.sent[0].data[3] >> 1) & 0x3F);
 }
 
-void test_legacy_can760_checkAD_blocks_computed_offset()
+void test_legacy_can3ee_checkAD_blocks_computed_offset()
 {
     fusedSpeedLimitRaw = 12;
     offsetMode = 0;
     manualOffsetPct = 20;
     handler.checkAD = denyAD;
 
-    CanFrame f = {.id = 760};
-    f.dlc = 8;
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
-void test_legacy_can760_records_tx_fail()
+void test_legacy_can3ee_records_tx_fail()
 {
     handler.legacyOffset = 10;
     mock.sendOk = false;
 
-    CanFrame f = {.id = 760};
-    f.dlc = 8;
-    f.data[5] = 0xC0;
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT32(1, handler.legacyFsdDiag.aux760.err);
-    TEST_ASSERT_EQUAL(FsdSkipReason::TxFail, handler.legacyFsdDiag.aux760.lastSkip);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacyFsdDiag.mux0.err);
+    TEST_ASSERT_EQUAL(FsdSkipReason::TxFail, handler.legacyFsdDiag.mux0.lastSkip);
 }
 
 // --- CAN 1080 visionSpeedSlider override ---
@@ -875,67 +874,73 @@ void test_legacy_health_gate_blocked_when_last_blocked()
     TEST_ASSERT_EQUAL(FsdHealthState::GateBlocked, s);
 }
 
-void test_legacy_0x2f8_preserves_upper_bits_and_writes_smart_offset()
+void test_legacy_0x2f8_is_read_only_limit_source()
 {
-    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Manual;
-    handler.legacySmartOffsetConfig.manualOffsetKph = 12;
-
     CanFrame f = makeGpsSpeedFrame(0xC0, 0x0C);
     handler.handleMessage(f, mock);
 
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT32(760, mock.sent[0].id);
-    TEST_ASSERT_EQUAL_HEX8(0xC0 | 42, mock.sent[0].data[5]);
-    TEST_ASSERT_TRUE(handler.legacySpeedDiag.gpsSpeedSeen);
-    TEST_ASSERT_EQUAL_UINT8(42, handler.legacySpeedDiag.lastSentOffsetRaw);
-    TEST_ASSERT_EQUAL_UINT8(12, handler.legacySpeedDiag.lastSentOffsetKph);
-    TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.txOk);
-}
-
-void test_legacy_0x2f8_output_zero_sends_nothing_but_sniffs()
-{
-    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Off;
-
-    CanFrame f = makeGpsSpeedFrame(0x80, 0x0C);
-    handler.handleMessage(f, mock);
-
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     TEST_ASSERT_TRUE(handler.legacySpeedDiag.gpsSpeedSeen);
-    TEST_ASSERT_EQUAL_UINT8(0, handler.legacySpeedDiag.lastSentOffsetRaw);
+    TEST_ASSERT_EQUAL_UINT8(0x0C, handler.legacySpeedDiag.gpsMppLimitRaw);
+    TEST_ASSERT_EQUAL_UINT16(60, handler.legacySpeedDiag.gpsMppLimitKph);
 }
 
-void test_legacy_0x399_updates_smart_limit_and_auto_0x2f8_output()
+void test_legacy_0x3ee_manual_offset_preserves_byte3_edges()
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Manual;
+    handler.legacySmartOffsetConfig.manualOffsetKph = 12;
+    CanFrame gps = makeGpsSpeedFrame(0x80, 0x0C);
+    handler.handleMessage(gps, mock);
+
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0;
+    f.data[3] = 0x81;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1006, mock.sent[0].id);
+    TEST_ASSERT_EQUAL_HEX8(0x81 | (42 << 1), mock.sent[0].data[3]);
+    TEST_ASSERT_EQUAL_UINT8(42, handler.legacySpeedDiag.lastSentOffsetRaw);
+    TEST_ASSERT_EQUAL_UINT8(12, handler.legacySpeedDiag.lastSentOffsetKph);
+    TEST_ASSERT_EQUAL(LegacySpeedLimitSource::Gps2F8, handler.legacySpeedDiag.limitSource);
+}
+
+void test_legacy_0x3ee_auto_prefers_2f8_limit()
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Auto;
+    CanFrame gps = makeGpsSpeedFrame(0x80, 0x0C); // 60 -> target 90 -> +30
+    handler.handleMessage(gps, mock);
+
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1006, mock.sent[0].id);
+    TEST_ASSERT_EQUAL_UINT8(60, (mock.sent[0].data[3] >> 1) & 0x3F);
+    TEST_ASSERT_EQUAL_UINT8(30, handler.legacySpeedDiag.lastSentOffsetKph);
+    TEST_ASSERT_EQUAL_UINT16(60, handler.legacySpeedDiag.result.speedLimitKph);
+    TEST_ASSERT_EQUAL_UINT16(90, handler.legacySpeedDiag.result.rawTargetKph);
+    TEST_ASSERT_EQUAL(LegacySpeedLimitSource::Gps2F8, handler.legacySpeedDiag.limitSource);
+}
+
+void test_legacy_0x3ee_falls_back_to_fused_limit()
 {
     handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Auto;
     CanFrame das = makeDasFrameWithState(0, 6);
-    das.data[1] = 12; // 60 km/h -> cap 90 -> +30
+    das.data[1] = 12;
     handler.handleMessage(das, mock);
 
-    CanFrame gps = makeGpsSpeedFrame(0x80, 0x0C);
-    handler.handleMessage(gps, mock);
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_HEX8(0x80 | 60, mock.sent[0].data[5]);
-    TEST_ASSERT_EQUAL_UINT8(30, handler.legacySpeedDiag.lastSentOffsetKph);
+    TEST_ASSERT_EQUAL(LegacySpeedLimitSource::Fused, handler.legacySpeedDiag.limitSource);
     TEST_ASSERT_EQUAL_UINT16(60, handler.legacySpeedDiag.result.speedLimitKph);
-}
-
-void test_abort_guard_latched_blocks_legacy_0x2f8()
-{
-    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Manual;
-    handler.legacySmartOffsetConfig.manualOffsetKph = 10;
-    handler.abortGuard.setEnabled(true);
-    CanFrame das = makeDasFrameWithState(0, 8);
-    handler.handleMessage(das, mock);
-    mock.sent.clear();
-
-    CanFrame gps = makeGpsSpeedFrame(0x80, 0x0C);
-    handler.handleMessage(gps, mock);
-
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-    TEST_ASSERT_EQUAL_STRING("abortGuard", handler.legacySpeedDiag.blockedReason);
-    TEST_ASSERT_EQUAL_UINT32(1, handler.abortGuard.diag().blocks);
-    TEST_ASSERT_EQUAL_STRING("legacy_speed_0x2f8", handler.abortGuard.diag().lastBlockedPath);
 }
 
 void test_abort_guard_latched_blocks_legacy_mux0_activation()
@@ -1549,25 +1554,25 @@ int main()
     RUN_TEST(test_legacy_gate_block_records_gate_blocked_health);
     RUN_TEST(test_legacy_gate_block_uses_resolver_reason);
 
-    RUN_TEST(test_legacy_can760_writes_offset);
-    RUN_TEST(test_legacy_can760_skips_when_offset_zero);
+    RUN_TEST(test_legacy_can3ee_writes_fixed_offset);
+    RUN_TEST(test_legacy_can3ee_preserves_byte3_when_offset_zero);
     RUN_TEST(test_legacy_can921_captures_fused_speed_limit);
-    RUN_TEST(test_legacy_can760_fixed_pct_writes_simple_offset);
-    RUN_TEST(test_legacy_can760_auto_writes_simple_offset);
-    RUN_TEST(test_legacy_can760_custom_writes_simple_offset);
-    RUN_TEST(test_legacy_can760_clamps_simple_offset_to_wire_max);
-    RUN_TEST(test_legacy_can760_checkAD_blocks_computed_offset);
-    RUN_TEST(test_legacy_can760_records_tx_fail);
+    RUN_TEST(test_legacy_can3ee_fixed_pct_writes_simple_offset);
+    RUN_TEST(test_legacy_can3ee_auto_writes_simple_offset);
+    RUN_TEST(test_legacy_can3ee_custom_writes_simple_offset);
+    RUN_TEST(test_legacy_can3ee_clamps_simple_offset_to_wire_max);
+    RUN_TEST(test_legacy_can3ee_checkAD_blocks_computed_offset);
+    RUN_TEST(test_legacy_can3ee_records_tx_fail);
     RUN_TEST(test_legacy_can1080_sets_vision_slider);
     RUN_TEST(test_legacy_can1080_skips_when_disabled);
     RUN_TEST(test_legacy_can1080_records_tx_fail);
 
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
 
-    RUN_TEST(test_legacy_0x2f8_preserves_upper_bits_and_writes_smart_offset);
-    RUN_TEST(test_legacy_0x2f8_output_zero_sends_nothing_but_sniffs);
-    RUN_TEST(test_legacy_0x399_updates_smart_limit_and_auto_0x2f8_output);
-    RUN_TEST(test_abort_guard_latched_blocks_legacy_0x2f8);
+    RUN_TEST(test_legacy_0x2f8_is_read_only_limit_source);
+    RUN_TEST(test_legacy_0x3ee_manual_offset_preserves_byte3_edges);
+    RUN_TEST(test_legacy_0x3ee_auto_prefers_2f8_limit);
+    RUN_TEST(test_legacy_0x3ee_falls_back_to_fused_limit);
     RUN_TEST(test_abort_guard_latched_blocks_legacy_mux0_activation);
     RUN_TEST(test_abort_guard_default_off_preserves_mux0_activation);
 

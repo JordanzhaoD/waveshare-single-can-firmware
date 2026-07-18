@@ -1533,15 +1533,17 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('offsetMode = dashSpeedStrategy;', body)
         self.assertIn('dashSyncLegacyShims();', body)
 
-    def test_legacy_can760_uses_simple_offset_helper_not_mpp(self) -> None:
-        """Legacy speed offset must use the verified CAN760 byte5 UI_userSpeedOffset path."""
+    def test_legacy_can760_is_read_only_and_3ee_is_the_offset_output(self) -> None:
+        """Reference Legacy path reads 0x2F8 and writes the offset on gated 0x3EE mux0."""
         can760 = re.search(r"if \(frame\.id == 760\).*?if \(frame\.id == 1080\)", self.handlers, re.S)
         self.assertIsNotNone(can760)
         body = can760.group(0)
-        self.assertIn('dashComputeLegacySimpleOffsetKph', body)
-        self.assertIn('frame.data[5]', body)
-        self.assertNotIn('dashComputeLegacyMppTargetKph', body)
-        self.assertNotIn('frame.data[6]', body)
+        self.assertIn('legacySpeedDiag.gpsMppLimitRaw = frame.data[6] & 0x1F;', body)
+        self.assertNotIn('driver.send(frame)', body)
+        mux0 = re.search(r"legacyFsdDiag\.mux0\.recordBefore\(frame\.data\);.*?legacyFsdDiag\.mux0\.recordAfter", self.handlers, re.S)
+        self.assertIsNotNone(mux0)
+        self.assertIn('dashWriteLegacyOffsetTo3eeMux0', mux0.group(0))
+        self.assertIn('LegacySpeedLimitSource::Gps2F8', mux0.group(0))
 
     def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
         """Legacy/HW0 needs the same fused speed limit input as the 3-mode speed UI."""
@@ -1660,7 +1662,8 @@ class DashboardApiContractTests(unittest.TestCase):
         """UI must explain smart speed and frame visibility."""
         for token in [
             '智能速度偏移',
-            '0x2F8 未检测到',
+            '0x2F8 / 760 只读地图限速',
+            '0x3EE mux0',
             '降速平滑',
             'Abort Guard',
             '实验',
@@ -2655,8 +2658,9 @@ class DashboardApiContractTests(unittest.TestCase):
     def test_release_metadata_and_waveshare_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the waveshare single CAN standalone artifact."""
         version = self.version.strip()
-        # VERSION file must hold a stable semver (the format auto-tag-release.yml gates on).
-        self.assertRegex(version, r"^\d+\.\d+\.\d+$", f"VERSION file malformed: {version!r}")
+        # VERSION accepts the project's two-part release form (1.10) and the
+        # existing three-part form used by older releases.
+        self.assertRegex(version, r"^\d+\.\d+(?:\.\d+)?$", f"VERSION file malformed: {version!r}")
         # CHANGELOG must have a section for the current VERSION (VERSION ↔ CHANGELOG consistency,
         # so bumping VERSION without a CHANGELOG entry is caught). Version-agnostic by design:
         # this must not break on every release bump.

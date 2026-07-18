@@ -10,6 +10,15 @@ enum class LegacySmartOffsetMode : uint8_t
     Custom = 3,
 };
 
+enum class LegacySpeedLimitSource : uint8_t
+{
+    None = 0,
+    Gps2F8 = 1,
+    Fused = 2,
+};
+
+inline constexpr uint32_t kLegacyGpsLimitFreshMs = 2000;
+
 struct LegacySmartOffsetConfig
 {
     LegacySmartOffsetMode mode = LegacySmartOffsetMode::Off;
@@ -45,6 +54,15 @@ inline uint8_t dashClampLegacySmartOffsetKph(int v)
     if (v > 33)
         v = 33;
     return static_cast<uint8_t>(v);
+}
+
+// The v1.4.35-legacy3ee reference firmware treats 0x2F8 as a read-only
+// speed-limit source and applies the effective Legacy offset on 0x3EE mux 0.
+// byte 3 bits 1..6 use the same +30 encoding; bit 0 and bit 7 are preserved.
+inline void dashWriteLegacyOffsetTo3eeMux0(uint8_t data[8], uint8_t offsetKph)
+{
+    const uint8_t raw = static_cast<uint8_t>(dashClampLegacySmartOffsetKph(offsetKph) + 30U);
+    data[3] = static_cast<uint8_t>((data[3] & 0x81U) | ((raw & 0x3FU) << 1U));
 }
 
 inline uint8_t dashClampLegacySmartPct(int v)

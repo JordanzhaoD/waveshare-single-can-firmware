@@ -51,6 +51,7 @@ static inline bool framePayloadChanged(const CanFrame &original, const CanFrame 
 struct LegacySpeedRuntimeDiag
 {
     LegacySmartOffsetResult result{};
+    LegacySpeedLimitSource limitSource = LegacySpeedLimitSource::None;
     bool gpsSpeedSeen = false;
     bool gpsSpeedFresh = false;
     uint32_t gpsSpeedPeriodMs = 0;
@@ -62,6 +63,10 @@ struct LegacySpeedRuntimeDiag
     uint16_t gpsMppLimitKph = 0;
     uint8_t lastSentOffsetRaw = 0;
     uint8_t lastSentOffsetKph = 0;
+    uint8_t outputOffsetPct = 0;
+    uint32_t mux0Count = 0;
+    uint8_t mux0RxByte3 = 0;
+    uint8_t mux0TxByte3 = 0;
     uint32_t txOk = 0;
     uint32_t txFail = 0;
     const char *blockedReason = "none";
@@ -676,89 +681,25 @@ struct LegacyHandler : public CarManagerBase
                 speedProfile = 0;
             return;
         }
-        // UI_gpsVehicleSpeed (0x2F8 = 760): write UI_userSpeedOffset (bit40|6,
-        // raw = kph+30). Byte 5 layout: bits 0-5 = offset (0-63), bit 6 reserved,
-        // bit 7 = UI_userSpeedOffsetUnits (0=MPH, 1=KPH). We preserve bits 6-7
-        // so the offset unit follows the car's setting.
+        // UI_gpsVehicleSpeed (0x2F8 = 760) is read-only in the recovered
+        // reference path. Its UI_mppSpeedLimit becomes the preferred Legacy
+        // limit source; the actual offset is written on gated 0x3EE mux 0.
         if (frame.id == 760)
         {
+            if (frame.dlc < 7)
+                return;
             uint32_t nowMs = dashDiagNowMs();
             legacySpeedDiag.gpsSpeedSeen = true;
             legacySpeedDiag.gpsSpeedFresh = true;
-            if (frame.dlc >= 6)
-            {
-                legacySpeedDiag.gpsUserOffsetRaw = frame.data[5] & 0x3F;
-                legacySpeedDiag.gpsUserOffsetKph = static_cast<int>(legacySpeedDiag.gpsUserOffsetRaw) - 30;
-            }
-            if (frame.dlc >= 7)
-            {
-                const uint8_t *bytes = frame.data;
-                legacySpeedDiag.gpsMppLimitRaw = bytes[6] & 0x1F;
-                legacySpeedDiag.gpsMppLimitKph = static_cast<uint16_t>(legacySpeedDiag.gpsMppLimitRaw) * 5U;
-            }
+            legacySpeedDiag.gpsUserOffsetRaw = frame.data[5] & 0x3F;
+            legacySpeedDiag.gpsUserOffsetKph = static_cast<int>(legacySpeedDiag.gpsUserOffsetRaw) - 30;
+            legacySpeedDiag.gpsMppLimitRaw = frame.data[6] & 0x1F;
+            legacySpeedDiag.gpsMppLimitKph = static_cast<uint16_t>(legacySpeedDiag.gpsMppLimitRaw) * 5U;
             if (legacySpeedDiag.gpsSpeedLastMs != 0)
                 legacySpeedDiag.gpsSpeedPeriodMs = nowMs - legacySpeedDiag.gpsSpeedLastMs;
             legacySpeedDiag.gpsSpeedLastMs = nowMs;
             ++legacySpeedDiag.gpsSpeedCount;
             legacySpeedDiag.blockedReason = "none";
-            if (checkAD && !checkAD())
-            {
-                legacySpeedDiag.blockedReason = "checkAD";
-                return;
-            }
-            if (frame.dlc < 6)
-                return;
-
-            LegacySmartOffsetMode smartMode = dashClampLegacySmartMode(static_cast<int>(legacySmartOffsetConfig.mode));
-            uint8_t effectiveOffset = 0;
-            if (smartMode == LegacySmartOffsetMode::Off)
-            {
-                legacySpeedDiag.result = LegacySmartOffsetResult{};
-                legacySpeedDiag.result.mode = LegacySmartOffsetMode::Off;
-                legacySpeedDiag.result.speedLimitRaw = fusedSpeedLimitRaw;
-                legacySpeedDiag.result.lastUpdateMs = nowMs;
-                effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
-            }
-            else
-            {
-                legacySpeedDiag.result = legacySmartOffsetEngine.compute(legacySmartOffsetConfig,
-                                                                         fusedSpeedLimitRaw,
-                                                                         nowMs,
-                                                                         (bool)APActive || (bool)ADEnabled);
-                effectiveOffset = legacySpeedDiag.result.outputOffsetKph;
-            }
-
-            if (effectiveOffset == 0)
-                return;
-            if (!abortGuard.allowsInjection())
-            {
-                legacySpeedDiag.blockedReason = "abortGuard";
-                abortGuard.recordBlock(DashAbortGuardBlockPath::LegacySpeed0x2f8);
-                return;
-            }
-
-            uint8_t raw = (uint8_t)(dashClampLegacySimpleOffsetKph(effectiveOffset) + 30);
-            legacyFsdDiag.aux760.recordBefore(frame.data);
-            frame.data[5] = (frame.data[5] & 0xC0) | (raw & 0x3F);
-            legacyFsdDiag.aux760.recordAfter(frame.data);
-            legacyFsdDiag.aux760.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
-            bool ok = driver.send(frame);
-            legacySpeedDiag.lastSentOffsetRaw = static_cast<uint8_t>(raw & 0x3F);
-            legacySpeedDiag.lastSentOffsetKph = effectiveOffset;
-            if (ok)
-            {
-                framesSent++;
-                legacySpeedDiag.txOk++;
-                legacySpeedDiag.blockedReason = "none";
-            }
-            else
-            {
-                legacySpeedDiag.txFail++;
-                legacySpeedDiag.blockedReason = "txFail";
-            }
-            legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux760, ok, nowMs);
-            if (onSend)
-                onSend(0, ok);
             return;
         }
         // 0x438 (1080) — UI_driverAssistAnonDebugParams: visionSpeedSlider = 100
@@ -917,12 +858,76 @@ struct LegacyHandler : public CarManagerBase
 
                 legacyFsdDiag.mux0.recordBefore(frame.data);
                 setBit(frame, 46, true);
+                legacySpeedDiag.gpsSpeedFresh = legacySpeedDiag.gpsSpeedSeen &&
+                                                static_cast<uint32_t>(nowMs - legacySpeedDiag.gpsSpeedLastMs) <=
+                                                    kLegacyGpsLimitFreshMs;
+                uint8_t legacyLimitRaw = fusedSpeedLimitRaw;
+                legacySpeedDiag.limitSource = dashLegacySmartLimitValid(fusedSpeedLimitRaw)
+                                                  ? LegacySpeedLimitSource::Fused
+                                                  : LegacySpeedLimitSource::None;
+                if (legacySpeedDiag.gpsSpeedFresh &&
+                    dashLegacySmartLimitValid(legacySpeedDiag.gpsMppLimitRaw))
+                {
+                    legacyLimitRaw = legacySpeedDiag.gpsMppLimitRaw;
+                    legacySpeedDiag.limitSource = LegacySpeedLimitSource::Gps2F8;
+                }
+
+                LegacySmartOffsetMode smartMode =
+                    dashClampLegacySmartMode(static_cast<int>(legacySmartOffsetConfig.mode));
+                uint8_t effectiveOffset = 0;
+                if (smartMode == LegacySmartOffsetMode::Off)
+                {
+                    legacySpeedDiag.result = LegacySmartOffsetResult{};
+                    legacySpeedDiag.result.mode = LegacySmartOffsetMode::Off;
+                    legacySpeedDiag.result.speedLimitRaw = legacyLimitRaw;
+                    legacySpeedDiag.result.speedLimitKph = dashLegacySmartLimitValid(legacyLimitRaw)
+                                                               ? static_cast<uint16_t>(legacyLimitRaw) * 5U
+                                                               : 0;
+                    legacySpeedDiag.result.lastUpdateMs = nowMs;
+                    effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
+                }
+                else
+                {
+                    legacySpeedDiag.result = legacySmartOffsetEngine.compute(
+                        legacySmartOffsetConfig,
+                        legacyLimitRaw,
+                        nowMs,
+                        (bool)APActive || (bool)ADEnabled);
+                    effectiveOffset = legacySpeedDiag.result.outputOffsetKph;
+                }
+                if (effectiveOffset > 0)
+                    dashWriteLegacyOffsetTo3eeMux0(frame.data, effectiveOffset);
+                legacySpeedDiag.outputOffsetPct = legacySpeedDiag.result.speedLimitKph > 0
+                                                      ? static_cast<uint8_t>(
+                                                            (static_cast<uint32_t>(effectiveOffset) * 100U +
+                                                             legacySpeedDiag.result.speedLimitKph / 2U) /
+                                                            legacySpeedDiag.result.speedLimitKph)
+                                                      : 0;
                 if (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
                     (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.profileWriteEnable))
                     setSpeedProfileV12V13(frame, speedProfile);
+                legacySpeedDiag.mux0Count++;
+                legacySpeedDiag.mux0RxByte3 = legacyFsdDiag.mux0.before[3];
+                legacySpeedDiag.mux0TxByte3 = frame.data[3];
                 legacyFsdDiag.mux0.recordAfter(frame.data);
                 framesSent++;
                 bool ok = driver.send(frame);
+                if (effectiveOffset > 0)
+                {
+                    legacySpeedDiag.lastSentOffsetRaw =
+                        static_cast<uint8_t>(dashClampLegacySmartOffsetKph(effectiveOffset) + 30U);
+                    legacySpeedDiag.lastSentOffsetKph = effectiveOffset;
+                    if (ok)
+                    {
+                        legacySpeedDiag.txOk++;
+                        legacySpeedDiag.blockedReason = "none";
+                    }
+                    else
+                    {
+                        legacySpeedDiag.txFail++;
+                        legacySpeedDiag.blockedReason = "txFail";
+                    }
+                }
                 legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux0, ok, nowMs);
                 legacyFsdDiag.markTxResult(ok, nowMs);
                 if (onSend)

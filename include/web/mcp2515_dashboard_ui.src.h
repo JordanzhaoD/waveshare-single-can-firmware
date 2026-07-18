@@ -823,7 +823,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
             <label class="tgl"><input type="checkbox" id="legacy-fsd-vision" onchange="saveLegacyVision()"><div class="tgl-track"></div></label>
           </div>
           <div class="setting-row">
-            <div><div class="setting-name">Legacy 速度偏移</div><div class="setting-desc">0x2F8 UI_userSpeedOffset，0-33 km/h（0=关）</div></div>
+            <div><div class="setting-name">Legacy 速度偏移</div><div class="setting-desc">0x3EE mux0 偏移，0-33 km/h（0=关）；0x2F8 仅作限速源</div></div>
             <input class="inp" type="number" min="0" max="33" id="legacy-offset-inp" value="0" data-def="0" style="display:none" onchange="saveLegacyOffset()">
             <div class="stepper" data-for="legacy-offset-inp">
               <div class="stepper-btn" data-for="legacy-offset-inp" data-dir="-">−</div>
@@ -1075,8 +1075,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 
 <div class="card cockpit-card" id="legacy-smart-speed-card">
-  <div class="card-title">Legacy 智能速度偏移 <span class="exp-badge" id="legacy-speed-chip">0x2F8 未检测到</span></div>
-  <div class="card-subtitle">仅写 0x2F8 / 760 UI_userSpeedOffset；读取 GPS 限速后自动计算目标，降速平滑避免突然回落。</div>
+  <div class="card-title">Legacy 智能速度偏移 <span class="exp-badge" id="legacy-speed-chip">等待限速源</span></div>
+  <div class="card-subtitle">0x2F8 / 760 只读地图限速，缺失时回退 fused limit；最终偏移写入通过安全门控的 0x3EE mux0。</div>
   <div class="setting-row">
     <div><div class="setting-name">智能速度偏移模式</div><div class="setting-desc">默认关闭；手动模式使用固定 km/h 偏移。</div></div>
     <select id="legacy-offset-mode" style="display:none" onchange="saveLegacySmartSpeed()"><option value="off">关闭</option><option value="manual">手动</option><option value="auto">自动</option><option value="custom">自定义百分比</option></select>
@@ -1116,11 +1116,11 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="diag-item"><span class="lbl">超高速 %</span><input class="inp" type="number" min="0" max="63" id="legacy-pct-vhigh" value="10" data-def="10" style="display:none" onchange="saveLegacySmartSpeed()"><div class="stepper compact" data-for="legacy-pct-vhigh"><div class="stepper-btn" data-for="legacy-pct-vhigh" data-dir="-">−</div><div><div class="stepper-val">10</div><div class="stepper-unit">%</div></div><div class="stepper-btn" data-for="legacy-pct-vhigh" data-dir="+">+</div></div></div>
   </div>
   <div class="diag-grid" style="margin-top:12px">
-    <div class="diag-item"><span class="lbl">GPS 限速</span><span class="v-info" id="legacy-limit-kph">--</span></div>
+    <div class="diag-item"><span class="lbl">当前限速</span><span class="v-info" id="legacy-limit-kph">--</span></div>
     <div class="diag-item"><span class="lbl">目标限速</span><span class="v-acc" id="legacy-target-kph">--</span></div>
     <div class="diag-item"><span class="lbl">平滑限速</span><span class="v-dim" id="legacy-smooth-kph">--</span></div>
-    <div class="diag-item"><span class="lbl">输出限速</span><span class="v-info" id="legacy-output-kph">--</span></div>
-    <div class="diag-item"><span class="lbl">0x2F8 状态</span><span class="v-warn" id="legacy-gps-seen">0x2F8 未检测到</span></div>
+    <div class="diag-item"><span class="lbl">输出偏移</span><span class="v-info" id="legacy-output-kph">--</span></div>
+    <div class="diag-item"><span class="lbl">限速来源</span><span class="v-warn" id="legacy-gps-seen">等待数据</span></div>
     <div class="diag-item"><span class="lbl">最后原始值</span><span class="v-dim" id="legacy-last-raw">--</span></div>
   </div>
 </div>
@@ -2682,10 +2682,11 @@ function updateSpeedPage(d){
   setText('sp-raw',d.fusedSpeedLimitRaw!==undefined?d.fusedSpeedLimitRaw:'--');
   var ls=d.legacySpeed||{};
   var seen=!!ls.gpsSpeedSeen;
+  var source=ls.limitSource===1?'0x2F8':(ls.limitSource===2?'fused':'等待数据');
   var gpsText=seen?'已检测 0x2F8':'0x2F8 未检测到';
-  setText('legacy-speed-chip',gpsText);
-  setText('legacy-gps-seen',gpsText);
-  setCls('legacy-gps-seen','v-'+(seen?'ok':'warn'));
+  setText('legacy-speed-chip','输出 0x3EE · '+source);
+  setText('legacy-gps-seen',source+(seen?' · '+gpsText:''));
+  setCls('legacy-gps-seen','v-'+(ls.limitSource?'ok':'warn'));
   setText('legacy-limit-kph',ls.speedLimitKph!==undefined?ls.speedLimitKph+' kph':'--');
   setText('legacy-target-kph',ls.rawTargetKph!==undefined?ls.rawTargetKph+' kph':'--');
   setText('legacy-smooth-kph',ls.smoothedTargetKph!==undefined?ls.smoothedTargetKph+' kph':'--');
@@ -4058,7 +4059,7 @@ async function saveLegacySmartSpeed(){
     poll();
   }catch(e){showToast('保存失败');}
 }
-// 功能1：Legacy 速度偏移（0x2F8 UI_userSpeedOffset，0-33 km/h）
+// 功能1：Legacy 速度偏移（0x3EE mux0，0-33 km/h；0x2F8 只读限速源）
 async function saveLegacyOffset(){
   syncLegacyOffsetInputs('legacy-offset-inp');
   var el=document.getElementById('legacy-offset-inp');

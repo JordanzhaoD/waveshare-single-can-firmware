@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.10] - 2026-07-18
+
+### Added
+- **Legacy `0x2F8` → `0x3EE` 智能速度偏移**：依据 `firmware20260718.bin`（`tesla-fsd-controller v1.4.35-legacy3ee`）还原真实链路。`0x2F8 / 760` 仅作为 `UI_mppSpeedLimit` 只读首选限速源；有效值超时或无效时回退到 `0x399 / 921` fused limit；最终 `offset + 30` 写入 `0x3EE mux0 byte3[6:1]`，并保留 byte3 的 bit0/bit7。
+- `/status.legacySpeed` 新增限速来源、输出百分比、`0x3EE` mux0 byte3 前后值和 `legacy_reference_0x3ee_v1` 实现标识；速度策略页同步展示实际输出帧与限速来源。
+- Legacy native 回归覆盖 `0x2F8` 只读、`0x3EE` 手动/自动/自定义/共享三模式输出、fused fallback、位保留、线值钳位和 TX 失败诊断。
+
+### Changed
+- 移除旧的 `0x2F8 byte5 UI_userSpeedOffset` 重发路径，避免高频源帧覆盖导致偏移不稳定；复用 1.0.9 已有自动目标表、绝对上限和可配置降速平滑引擎，不引入重复算法。
+- 项目稳定版本格式同时接受两段版本（如 `1.10`）和既有三段版本，自动发布标签为 `v1.10-atlas-single-can`。
+
+### Safety
+- 速度偏移不再拥有独立 TX 路径，只能随通过现有 CAN/FSD enable、OTA、AP-First、Instant Engage、Soft Engage、`checkAD`、Abort Guard 与插件所有权检查后的 `0x3EE mux0` 一起发送；智能模式仍默认关闭。
+- 已完成 native 与 Dashboard/API 契约测试和 Waveshare ESP32-S3 16MB release 构建；尚未进行实车道路闭环验证，首次使用应先观察 `legacySpeed.limitSource` 与 `mux0RxByte3/mux0TxByte3`。
+
 ## [1.0.9] - 2026-07-14
 
 ### Added

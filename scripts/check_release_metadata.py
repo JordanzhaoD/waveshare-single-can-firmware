@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = ROOT / "VERSION"
 CHANGELOG_FILE = ROOT / "CHANGELOG.md"
 
-SEMVER_RE = re.compile(
-    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+RELEASE_VERSION_RE = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?"
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
@@ -95,8 +95,8 @@ def main() -> None:
     version = read_text(VERSION_FILE).strip()
     if not version:
         fail("VERSION must not be empty")
-    if not SEMVER_RE.fullmatch(version):
-        fail(f"VERSION must contain a valid Semantic Version, got {version!r}")
+    if not RELEASE_VERSION_RE.fullmatch(version):
+        fail(f"VERSION must contain a valid two- or three-part release version, got {version!r}")
 
     changelog = read_text(CHANGELOG_FILE)
     if "## [Unreleased]" not in changelog:

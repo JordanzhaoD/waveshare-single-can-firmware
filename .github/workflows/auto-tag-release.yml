@@ -28,13 +28,13 @@ jobs:
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
 
-          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
             echo "VERSION ${VERSION} is not a stable release version; skipping tag."
             echo "created=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
-          # Suffixed tag to match the release convention (v<X.Y.Z>-atlas-single-can),
+          # Suffixed tag to match the release convention (v<VERSION>-atlas-single-can),
           # so the auto-created tag triggers release.yml and produces a suffixed release
           # consistent with prior versions (v1.0.1/v1.0.2-atlas-single-can).
           TAG="v${VERSION}-atlas-single-can"
