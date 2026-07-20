@@ -1563,7 +1563,26 @@ class DashboardApiContractTests(unittest.TestCase):
         mux0 = re.search(r"legacyFsdDiag\.mux0\.recordBefore\(frame\.data\);.*?legacyFsdDiag\.mux0\.recordAfter", self.handlers, re.S)
         self.assertIsNotNone(mux0)
         self.assertIn('dashWriteLegacyOffsetTo3eeMux0', mux0.group(0))
-        self.assertIn('LegacySpeedLimitSource::Gps2F8', mux0.group(0))
+        resolver = re.search(r"uint8_t computeLegacySpeedOffset\(.*?\n    \}", self.handlers, re.S)
+        self.assertIsNotNone(resolver)
+        self.assertIn('LegacySpeedLimitSource::Gps2F8', resolver.group(0))
+        self.assertIn('kLegacyGpsLimitFreshMs', resolver.group(0))
+
+    def test_shared_speed_strategy_really_arms_legacy_auto(self) -> None:
+        """The main Auto button must not update HW3/HW4 while leaving Legacy Off."""
+        strategy = re.search(
+            r"static void dashSyncSharedSpeedStrategyToLegacy\(\).*?static void handleSpeedStrategy\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(strategy)
+        body = strategy.group(0)
+        self.assertIn("LegacySmartOffsetMode::Auto", body)
+        self.assertIn("LegacySmartOffsetMode::Custom", body)
+        self.assertIn("dashLegacySpeedSharedStrategy = true", body)
+        self.assertIn("dashSyncSharedSpeedStrategyToLegacy();", self.dash)
+        self.assertIn('prefs.putBool("lo_shared", dashLegacySpeedSharedStrategy);', self.dash)
+        self.assertIn("启用共享自动偏移（含 Legacy）", self.ui)
 
     def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
         """Legacy/HW0 needs the same fused speed limit input as the 3-mode speed UI."""

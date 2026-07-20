@@ -33,6 +33,11 @@ static bool allowLegacyActivation(uint32_t)
     return true;
 }
 
+static bool denyLegacyActivation(uint32_t)
+{
+    return false;
+}
+
 static FsdGateBlockReason denyByApGate()
 {
     return FsdGateBlockReason::ApGate;
@@ -927,6 +932,62 @@ void test_legacy_0x3ee_auto_prefers_2f8_limit()
     TEST_ASSERT_EQUAL(LegacySpeedLimitSource::Gps2F8, handler.legacySpeedDiag.limitSource);
 }
 
+void test_legacy_0x3ee_auto_offset_is_independent_of_fsd_ui_selection()
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Auto;
+    CanFrame gps = makeGpsSpeedFrame(0x80, 0x0C); // 60 -> target 90 -> +30
+    handler.handleMessage(gps, mock);
+
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0;
+    f.data[3] = 0x81;
+    f.data[4] = 0; // FSD UI selection is explicitly absent
+    f.data[5] = 0; // activation bit starts clear
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_FALSE(handler.fsdTriggered);
+    TEST_ASSERT_EQUAL_HEX8(0x00, mock.sent[0].data[5] & 0x40);
+    TEST_ASSERT_EQUAL_HEX8(0x81 | (60 << 1), mock.sent[0].data[3]);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.offsetOnlyTxOk);
+    TEST_ASSERT_EQUAL_STRING("none", handler.legacySpeedDiag.blockedReason);
+}
+
+void test_legacy_0x3ee_auto_offset_bypasses_activation_settle_only()
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Auto;
+    handler.legacyFsdActivationAllowed = denyLegacyActivation;
+    CanFrame gps = makeGpsSpeedFrame(0x80, 0x0C);
+    handler.handleMessage(gps, mock);
+
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0;
+    f.data[4] = 0x40; // FSD selected, but activation settle denies bit46
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_TRUE(handler.fsdTriggered);
+    TEST_ASSERT_EQUAL_HEX8(0x00, mock.sent[0].data[5] & 0x40);
+    TEST_ASSERT_EQUAL_UINT8(60, (mock.sent[0].data[3] >> 1) & 0x3F);
+    TEST_ASSERT_EQUAL(FsdHealthState::GateBlocked, handler.legacyFsdDiag.health);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.offsetOnlyTxOk);
+}
+
+void test_legacy_smart_off_does_not_inherit_unarmed_global_auto()
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Off;
+    offsetMode = 1; // dashboard's global default must not silently arm Legacy
+    fusedSpeedLimitRaw = 12;
+
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0;
+    f.data[4] = 0;
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_STRING("off", handler.legacySpeedDiag.blockedReason);
+}
+
 void test_legacy_0x3ee_falls_back_to_fused_limit()
 {
     handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Auto;
@@ -1573,6 +1634,9 @@ int main()
     RUN_TEST(test_legacy_0x2f8_is_read_only_limit_source);
     RUN_TEST(test_legacy_0x3ee_manual_offset_preserves_byte3_edges);
     RUN_TEST(test_legacy_0x3ee_auto_prefers_2f8_limit);
+    RUN_TEST(test_legacy_0x3ee_auto_offset_is_independent_of_fsd_ui_selection);
+    RUN_TEST(test_legacy_0x3ee_auto_offset_bypasses_activation_settle_only);
+    RUN_TEST(test_legacy_smart_off_does_not_inherit_unarmed_global_auto);
     RUN_TEST(test_legacy_0x3ee_falls_back_to_fused_limit);
     RUN_TEST(test_abort_guard_latched_blocks_legacy_mux0_activation);
     RUN_TEST(test_abort_guard_default_off_preserves_mux0_activation);

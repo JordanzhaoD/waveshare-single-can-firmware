@@ -1052,7 +1052,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 <div class="card cockpit-card">
   <div class="card-title">速度策略模式</div>
-  <div class="card-subtitle">选择固定百分比 / 自动偏移 / 自定义偏移，配置会同步到 /speed_strategy 与 /speed_custom</div>
+  <div class="card-subtitle">共享策略：选择固定百分比 / 自动偏移 / 自定义偏移会同时配置 HW3/HW4 与 Legacy 0x3EE。</div>
   <div class="sel-cards c3" id="speed-mode-tabs" style="margin-bottom:12px">
     <div class="sel-card" onclick="showSpeedMode('fixed')"><div class="sel-lbl">模式</div><div class="sel-name">固定百分比</div></div>
     <div class="sel-card active" onclick="showSpeedMode('auto')"><div class="sel-lbl">模式</div><div class="sel-name">自动偏移</div></div>
@@ -1076,7 +1076,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
 <div class="card cockpit-card" id="legacy-smart-speed-card">
   <div class="card-title">Legacy 智能速度偏移 <span class="exp-badge" id="legacy-speed-chip">等待限速源</span></div>
-  <div class="card-subtitle">0x2F8 / 760 只读地图限速，缺失时回退 fused limit；最终偏移写入通过安全门控的 0x3EE mux0。</div>
+  <div class="card-subtitle">0x2F8 / 760 只读地图限速，2 秒内优先；缺失时回退 0x399 fused limit。速度偏移独立于 FSD 激活位，最终写入 0x3EE mux0。</div>
   <div class="setting-row">
     <div><div class="setting-name">智能速度偏移模式</div><div class="setting-desc">默认关闭；手动模式使用固定 km/h 偏移。</div></div>
     <select id="legacy-offset-mode" style="display:none" onchange="saveLegacySmartSpeed()"><option value="off">关闭</option><option value="manual">手动</option><option value="auto">自动</option><option value="custom">自定义百分比</option></select>
@@ -1152,7 +1152,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <tr><td>> 110 km/h</td><td>+10%，封顶 132</td></tr>
     </tbody>
   </table>
-  <button class="btn" onclick="setSpeedStrategy('auto')" style="margin-top:12px;width:100%">启用自动偏移</button>
+  <button class="btn" onclick="setSpeedStrategy('auto')" style="margin-top:12px;width:100%">启用共享自动偏移（含 Legacy）</button>
 </div>
 
 <div class="card" id="speed-panel-custom" style="display:none">
@@ -2667,14 +2667,17 @@ function updateSpeedPage(d){
   var seen=!!ls.gpsSpeedSeen;
   var source=ls.limitSource===1?'0x2F8':(ls.limitSource===2?'fused':'等待数据');
   var gpsText=seen?'已检测 0x2F8':'0x2F8 未检测到';
-  setText('legacy-speed-chip','输出 0x3EE · '+source);
+  var modeNames=['Off','Manual','Auto','Custom'];
+  var modeName=modeNames[Number(ls.configuredMode||0)]||'Off';
+  var routeOk=ls.activeHandlerLegacy!==false;
+  setText('legacy-speed-chip',(routeOk?'输出 0x3EE':'当前非 Legacy')+' · '+modeName+' · '+source);
   setText('legacy-gps-seen',source+(seen?' · '+gpsText:''));
   setCls('legacy-gps-seen','v-'+(ls.limitSource?'ok':'warn'));
   setText('legacy-limit-kph',ls.speedLimitKph!==undefined?ls.speedLimitKph+' kph':'--');
   setText('legacy-target-kph',ls.rawTargetKph!==undefined?ls.rawTargetKph+' kph':'--');
   setText('legacy-smooth-kph',ls.smoothedTargetKph!==undefined?ls.smoothedTargetKph+' kph':'--');
   setText('legacy-output-kph',ls.outputOffsetKph!==undefined?ls.outputOffsetKph+' kph':'--');
-  setText('legacy-last-raw',ls.lastSentOffsetRaw!==undefined?('raw '+ls.lastSentOffsetRaw+' / '+(ls.lastSentOffsetKph!==undefined?ls.lastSentOffsetKph+' kph':'--')):'--');
+  setText('legacy-last-raw',ls.lastSentOffsetRaw!==undefined?('raw '+ls.lastSentOffsetRaw+' / '+(ls.lastSentOffsetKph!==undefined?ls.lastSentOffsetKph+' kph':'--')+' · '+(ls.blockedReason||'none')):'--');
 }
 
 function updateDefensePage(d){

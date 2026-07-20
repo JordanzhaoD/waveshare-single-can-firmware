@@ -130,6 +130,10 @@ struct LegacySpeedRuntimeDiag
     uint8_t mux0TxByte3 = 0;
     uint32_t txOk = 0;
     uint32_t txFail = 0;
+    uint32_t offsetOnlyTxOk = 0;
+    uint32_t offsetOnlyTxFail = 0;
+    uint8_t configuredMode = 0;
+    bool activationIndependent = true;
     const char *blockedReason = "none";
 };
 
@@ -461,6 +465,80 @@ struct LegacyHandler : public CarManagerBase
     bool lateEchoSelected() const { return nagMode == DashNagMode::EpasLateEcho; }
     bool reactiveHoldSelected() const { return nagMode == DashNagMode::ReactiveHold; }
     bool isPrimaryDasFrame(const CanFrame &frame) const { return frame.bus != CAN_BUS_PARTY; }
+
+    bool legacySpeedOffsetRequested() const
+    {
+        return dashClampLegacySmartMode(static_cast<int>(legacySmartOffsetConfig.mode)) !=
+               LegacySmartOffsetMode::Off;
+    }
+
+    uint8_t computeLegacySpeedOffset(uint32_t nowMs)
+    {
+        legacySpeedDiag.gpsSpeedFresh = legacySpeedDiag.gpsSpeedSeen &&
+                                        static_cast<uint32_t>(nowMs - legacySpeedDiag.gpsSpeedLastMs) <=
+                                            kLegacyGpsLimitFreshMs;
+        uint8_t legacyLimitRaw = fusedSpeedLimitRaw;
+        legacySpeedDiag.limitSource = dashLegacySmartLimitValid(fusedSpeedLimitRaw)
+                                          ? LegacySpeedLimitSource::Fused
+                                          : LegacySpeedLimitSource::None;
+        if (legacySpeedDiag.gpsSpeedFresh &&
+            dashLegacySmartLimitValid(legacySpeedDiag.gpsMppLimitRaw))
+        {
+            legacyLimitRaw = legacySpeedDiag.gpsMppLimitRaw;
+            legacySpeedDiag.limitSource = LegacySpeedLimitSource::Gps2F8;
+        }
+
+        LegacySmartOffsetMode smartMode =
+            dashClampLegacySmartMode(static_cast<int>(legacySmartOffsetConfig.mode));
+        legacySpeedDiag.configuredMode = static_cast<uint8_t>(smartMode);
+        if (smartMode == LegacySmartOffsetMode::Off)
+        {
+            legacySpeedDiag.result = LegacySmartOffsetResult{};
+            legacySpeedDiag.result.mode = LegacySmartOffsetMode::Off;
+            legacySpeedDiag.result.speedLimitRaw = legacyLimitRaw;
+            legacySpeedDiag.result.speedLimitKph = dashLegacySmartLimitValid(legacyLimitRaw)
+                                                       ? static_cast<uint16_t>(legacyLimitRaw) * 5U
+                                                       : 0;
+            legacySpeedDiag.result.lastUpdateMs = nowMs;
+            uint8_t effectiveOffset = dashClampLegacySimpleOffsetKph((int)legacyOffset);
+            if (dashLegacySmartLimitValid(legacyLimitRaw))
+            {
+                float limitKph = static_cast<float>(legacyLimitRaw) * 5.0f;
+                float offsetKph = dashComputeOffset(limitKph, 0.05f);
+                effectiveOffset = dashClampLegacySimpleOffsetKph(static_cast<int>(offsetKph + 0.5f));
+            }
+            legacySpeedDiag.result.outputOffsetKph = effectiveOffset;
+            legacySpeedDiag.result.rawTargetKph =
+                static_cast<uint16_t>(legacySpeedDiag.result.speedLimitKph + effectiveOffset);
+            legacySpeedDiag.result.smoothedTargetKph = legacySpeedDiag.result.rawTargetKph;
+            legacySpeedDiag.result.blockedReason = effectiveOffset > 0 ? "none" : "off";
+            legacySpeedDiag.outputOffsetPct = legacySpeedDiag.result.speedLimitKph > 0
+                                                  ? static_cast<uint8_t>(
+                                                        (static_cast<uint32_t>(effectiveOffset) * 100U +
+                                                         legacySpeedDiag.result.speedLimitKph / 2U) /
+                                                        legacySpeedDiag.result.speedLimitKph)
+                                                  : 0;
+            legacySpeedDiag.blockedReason = effectiveOffset > 0 ? "ready" : "off";
+            return effectiveOffset;
+        }
+
+        legacySpeedDiag.result = legacySmartOffsetEngine.compute(
+            legacySmartOffsetConfig,
+            legacyLimitRaw,
+            nowMs,
+            (bool)APActive || (bool)ADEnabled);
+        uint8_t effectiveOffset = legacySpeedDiag.result.outputOffsetKph;
+        legacySpeedDiag.outputOffsetPct = legacySpeedDiag.result.speedLimitKph > 0
+                                              ? static_cast<uint8_t>(
+                                                    (static_cast<uint32_t>(effectiveOffset) * 100U +
+                                                     legacySpeedDiag.result.speedLimitKph / 2U) /
+                                                    legacySpeedDiag.result.speedLimitKph)
+                                              : 0;
+        legacySpeedDiag.blockedReason = effectiveOffset > 0
+                                            ? "ready"
+                                            : legacySpeedDiag.result.blockedReason;
+        return effectiveOffset;
+    }
 
     void observeApFirstState(uint8_t apState, uint32_t nowMs) override
     {
@@ -875,10 +953,12 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.forceRuntime = forced;
                 legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
 
-                if (!(bool)fsdTriggered)
+                const bool speedOffsetRequested = legacySpeedOffsetRequested();
+                if (!(bool)fsdTriggered && !speedOffsetRequested)
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::NotTriggered;
                     legacyFsdDiag.health = FsdHealthState::NotTriggered;
+                    legacySpeedDiag.blockedReason = "off";
                     return;
                 }
                 if (!abortGuard.allowsInjection())
@@ -886,26 +966,35 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
                     legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ApGate;
-                    abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux0);
+                    legacySpeedDiag.blockedReason = "abortGuard";
+                    abortGuard.recordBlock(speedOffsetRequested
+                                               ? DashAbortGuardBlockPath::LegacySpeed0x2f8
+                                               : DashAbortGuardBlockPath::LegacyFsdMux0);
                     return;
                 }
-                bool legacyActivationAllowed = legacyFsdActivationAllowed
-                                                   ? legacyFsdActivationAllowed(nowMs)
-                                                   : injectionAllowed();
-                if (!legacyActivationAllowed)
+                bool activationAllowed = false;
+                if ((bool)fsdTriggered)
                 {
-                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
-                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
-                    legacyFsdDiag.lastBlockedBy = legacyFsdActivationAllowed
-                                                      ? FsdGateBlockReason::LegacyFsdSettle
-                                                      : currentGateBlockReason();
-                    return;
+                    activationAllowed = legacyFsdActivationAllowed
+                                            ? legacyFsdActivationAllowed(nowMs)
+                                            : injectionAllowed();
+                    if (!activationAllowed)
+                    {
+                        legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                        legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                        legacyFsdDiag.lastBlockedBy = legacyFsdActivationAllowed
+                                                          ? FsdGateBlockReason::LegacyFsdSettle
+                                                          : currentGateBlockReason();
+                        if (!speedOffsetRequested)
+                            return;
+                    }
                 }
                 if (checkAD && !checkAD())
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
                     legacyFsdDiag.lastBlockedBy = currentGateBlockReason();
+                    legacySpeedDiag.blockedReason = "checkAD";
                     return;
                 }
 
@@ -914,59 +1003,27 @@ struct LegacyHandler : public CarManagerBase
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacySpeedDiag.blockedReason = "pluginOwner";
                     return;
                 }
 
                 legacyFsdDiag.mux0.recordBefore(frame.data);
-                setBit(frame, 46, true);
-                legacySpeedDiag.gpsSpeedFresh = legacySpeedDiag.gpsSpeedSeen &&
-                                                static_cast<uint32_t>(nowMs - legacySpeedDiag.gpsSpeedLastMs) <=
-                                                    kLegacyGpsLimitFreshMs;
-                uint8_t legacyLimitRaw = fusedSpeedLimitRaw;
-                legacySpeedDiag.limitSource = dashLegacySmartLimitValid(fusedSpeedLimitRaw)
-                                                  ? LegacySpeedLimitSource::Fused
-                                                  : LegacySpeedLimitSource::None;
-                if (legacySpeedDiag.gpsSpeedFresh &&
-                    dashLegacySmartLimitValid(legacySpeedDiag.gpsMppLimitRaw))
-                {
-                    legacyLimitRaw = legacySpeedDiag.gpsMppLimitRaw;
-                    legacySpeedDiag.limitSource = LegacySpeedLimitSource::Gps2F8;
-                }
-
-                LegacySmartOffsetMode smartMode =
-                    dashClampLegacySmartMode(static_cast<int>(legacySmartOffsetConfig.mode));
-                uint8_t effectiveOffset = 0;
-                if (smartMode == LegacySmartOffsetMode::Off)
-                {
-                    legacySpeedDiag.result = LegacySmartOffsetResult{};
-                    legacySpeedDiag.result.mode = LegacySmartOffsetMode::Off;
-                    legacySpeedDiag.result.speedLimitRaw = legacyLimitRaw;
-                    legacySpeedDiag.result.speedLimitKph = dashLegacySmartLimitValid(legacyLimitRaw)
-                                                               ? static_cast<uint16_t>(legacyLimitRaw) * 5U
-                                                               : 0;
-                    legacySpeedDiag.result.lastUpdateMs = nowMs;
-                    effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
-                }
-                else
-                {
-                    legacySpeedDiag.result = legacySmartOffsetEngine.compute(
-                        legacySmartOffsetConfig,
-                        legacyLimitRaw,
-                        nowMs,
-                        (bool)APActive || (bool)ADEnabled);
-                    effectiveOffset = legacySpeedDiag.result.outputOffsetKph;
-                }
+                if (activationAllowed)
+                    setBit(frame, 46, true);
+                uint8_t effectiveOffset = (speedOffsetRequested || (bool)fsdTriggered)
+                                              ? computeLegacySpeedOffset(nowMs)
+                                              : 0;
                 if (effectiveOffset > 0)
                     dashWriteLegacyOffsetTo3eeMux0(frame.data, effectiveOffset);
-                legacySpeedDiag.outputOffsetPct = legacySpeedDiag.result.speedLimitKph > 0
-                                                      ? static_cast<uint8_t>(
-                                                            (static_cast<uint32_t>(effectiveOffset) * 100U +
-                                                             legacySpeedDiag.result.speedLimitKph / 2U) /
-                                                            legacySpeedDiag.result.speedLimitKph)
-                                                      : 0;
-                if (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
-                    (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.profileWriteEnable))
+                if (activationAllowed &&
+                    (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
+                     (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.profileWriteEnable)))
                     setSpeedProfileV12V13(frame, speedProfile);
+
+                // A configured Auto/Custom mode with no valid limit must fail
+                // closed instead of retransmitting an unchanged mux-0 frame.
+                if (!activationAllowed && effectiveOffset == 0)
+                    return;
                 legacySpeedDiag.mux0Count++;
                 legacySpeedDiag.mux0RxByte3 = legacyFsdDiag.mux0.before[3];
                 legacySpeedDiag.mux0TxByte3 = frame.data[3];
@@ -989,8 +1046,19 @@ struct LegacyHandler : public CarManagerBase
                         legacySpeedDiag.blockedReason = "txFail";
                     }
                 }
-                legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux0, ok, nowMs);
-                legacyFsdDiag.markTxResult(ok, nowMs);
+                if (activationAllowed)
+                {
+                    legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux0, ok, nowMs);
+                    legacyFsdDiag.markTxResult(ok, nowMs);
+                }
+                else if (ok)
+                {
+                    legacySpeedDiag.offsetOnlyTxOk++;
+                }
+                else
+                {
+                    legacySpeedDiag.offsetOnlyTxFail++;
+                }
                 if (onSend)
                     onSend(0, ok);
             }

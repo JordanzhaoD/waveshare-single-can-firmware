@@ -206,6 +206,9 @@ static uint8_t dashManualSpeedProfile = 1;
 static uint8_t dashDriveProfile = 0;     // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
 static uint8_t dashSpeedStrategy = 1;    // 0=fixed, 1=auto, 2=custom
 static uint8_t dashLegacyOffsetMode = 0; // 0=off, 1=manual, 2=auto, 3=custom
+// True after the shared Speed Strategy page explicitly takes ownership of the
+// Legacy 0x3EE offset mode. Legacy's dedicated mode selector clears it.
+static bool dashLegacySpeedSharedStrategy = false;
 static bool dashLegacySmoothDown = true;
 static uint8_t dashLegacySmoothRateKphS = 5;
 static uint8_t dashLegacyCustomPctLow = 50;
@@ -1495,6 +1498,7 @@ static void dashSavePrefs()
     prefs.putUChar("offsetMode", offsetMode);     // 0=fixed, 1=auto, 2=custom
     prefs.putUChar("manualPct", manualOffsetPct); // 0-50% for fixed mode
     prefs.putUChar("lo_mode", dashLegacyOffsetMode);
+    prefs.putBool("lo_shared", dashLegacySpeedSharedStrategy);
     prefs.putBool("lo_smooth", dashLegacySmoothDown);
     prefs.putUChar("lo_rate", dashLegacySmoothRateKphS);
     prefs.putUChar("lo_p1", dashLegacyCustomPctLow);
@@ -1809,6 +1813,7 @@ static void dashLoadPrefs()
     bool hasLegacyMode = prefs.isKey("lo_mode");
     uint8_t defaultLegacyMode = nvsLegacyOffset > 0 ? 1 : 0;
     dashLegacyOffsetMode = dashClampLegacyOffsetMode(prefs.getUChar("lo_mode", defaultLegacyMode));
+    dashLegacySpeedSharedStrategy = prefs.getBool("lo_shared", false);
     if (!hasLegacyMode)
         prefs.putUChar("lo_mode", dashLegacyOffsetMode);
     dashLegacySmoothDown = prefs.getBool("lo_smooth", true);
@@ -2834,6 +2839,10 @@ static void handleStatus()
     DashAbortGuardDiag abortDiag = dashHandler ? dashHandler->abortGuard.diag() : DashAbortGuardDiag{};
     j += ",\"legacySpeed\":{";
     j += "\"mode\":" + String(static_cast<uint8_t>(legacySpeed.result.mode));
+    j += ",\"configuredMode\":" + String(dashLegacyOffsetMode);
+    j += ",\"sharedStrategy\":" + String(dashLegacySpeedSharedStrategy ? "true" : "false");
+    j += ",\"activeHandlerLegacy\":" + String(effectiveHw == 0 ? "true" : "false");
+    j += ",\"activationIndependent\":" + String(legacySpeed.activationIndependent ? "true" : "false");
     j += ",\"speedLimitRaw\":" + String(legacySpeed.result.speedLimitRaw);
     j += ",\"speedLimitKph\":" + String(legacySpeed.result.speedLimitKph);
     j += ",\"offsetPct\":" + String(legacySpeed.result.offsetPct);
@@ -2860,6 +2869,8 @@ static void handleStatus()
     j += ",\"speedFixId\":\"legacy_reference_0x3ee_v1\"";
     j += ",\"txOk\":" + String(legacySpeed.txOk);
     j += ",\"txFail\":" + String(legacySpeed.txFail);
+    j += ",\"offsetOnlyTxOk\":" + String(legacySpeed.offsetOnlyTxOk);
+    j += ",\"offsetOnlyTxFail\":" + String(legacySpeed.offsetOnlyTxFail);
     j += ",\"blockedReason\":\"" + String(legacySpeed.blockedReason) + "\"}";
     j += ",\"abortGuard\":{";
     j += "\"enabled\":" + String(abortDiag.enabled ? "true" : "false");
@@ -2886,6 +2897,7 @@ static void handleConfigGet()
     j += ",\"fsdRuntime\":{";
     j += "\"legacyOffset\":" + String(nvsLegacyOffset);
     j += ",\"legacyOffsetMode\":" + String(dashLegacyOffsetMode);
+    j += ",\"legacySharedStrategy\":" + String(dashLegacySpeedSharedStrategy ? "true" : "false");
     j += ",\"legacySmoothDown\":" + String(dashLegacySmoothDown ? "true" : "false");
     j += ",\"legacySmoothRateKphS\":" + String(dashLegacySmoothRateKphS);
     j += ",\"legacyCustomPctLow\":" + String(dashLegacyCustomPctLow);
@@ -2953,6 +2965,7 @@ static void handleConfig()
             if (fsd["legacyOffsetMode"].is<int>())
             {
                 dashLegacyOffsetMode = dashClampLegacyOffsetMode(fsd["legacyOffsetMode"].as<int>());
+                dashLegacySpeedSharedStrategy = false;
                 changed = true;
             }
             if (fsd["legacySmoothDown"].is<bool>())
@@ -3321,8 +3334,41 @@ static String dashSpeedStrategyJson()
     j += hw3CustomSpeed ? "true" : "false";
     j += ",\"legacy_custom_speed\":";
     j += legacyMppCustomEnable ? "true" : "false";
+    j += ",\"legacySmartMode\":";
+    j += dashLegacyOffsetMode;
+    j += ",\"legacySharedStrategy\":";
+    j += dashLegacySpeedSharedStrategy ? "true" : "false";
     j += ",\"options\":[\"fixed\",\"auto\",\"custom\"]}";
     return j;
+}
+
+// The Speed Strategy page is shared across vehicle generations. Before this
+// bridge existed, selecting "Auto" updated only offsetMode (HW3/HW4), while
+// Legacy remained Off/Manual and therefore never ran the 0x2F8-driven engine.
+static void dashSyncSharedSpeedStrategyToLegacy()
+{
+    dashLegacySpeedSharedStrategy = true;
+    if (dashSpeedStrategy == 1)
+    {
+        dashLegacyOffsetMode = static_cast<uint8_t>(LegacySmartOffsetMode::Auto);
+        return;
+    }
+
+    dashLegacyOffsetMode = static_cast<uint8_t>(LegacySmartOffsetMode::Custom);
+    if (dashSpeedStrategy == 0)
+    {
+        uint8_t pct = dashClampLegacySmartPctArg(manualOffsetPct);
+        dashLegacyCustomPctLow = pct;
+        dashLegacyCustomPctMid = pct;
+        dashLegacyCustomPctHigh = pct;
+        dashLegacyCustomPctVeryHigh = pct;
+        return;
+    }
+
+    dashLegacyCustomPctLow = dashClampLegacySmartPctArg(customPct[0]);
+    dashLegacyCustomPctMid = dashClampLegacySmartPctArg(customPct[1]);
+    dashLegacyCustomPctHigh = dashClampLegacySmartPctArg(customPct[2]);
+    dashLegacyCustomPctVeryHigh = dashClampLegacySmartPctArg(customPct[3]);
 }
 
 static void handleSpeedStrategy()
@@ -3342,6 +3388,7 @@ static void handleSpeedStrategy()
         dashSpeedStrategy = static_cast<uint8_t>(next);
         offsetMode = dashSpeedStrategy;
         dashSyncLegacyShims();
+        dashSyncSharedSpeedStrategyToLegacy();
         if (dashSpeedStrategy == 1)
             dashSpeedProfileAuto = true;
         else
@@ -3439,6 +3486,11 @@ static void handleSpeedCustom()
         customPct[1] = nextCustomPct[1];
         customPct[2] = nextCustomPct[2];
         customPct[3] = nextCustomPct[3];
+        if (dashLegacySpeedSharedStrategy)
+        {
+            dashSyncSharedSpeedStrategyToLegacy();
+            dashApplyRuntimeState();
+        }
         dashSavePrefs();
         dashLog("[CFG] /speed_custom saved");
     }
@@ -6199,6 +6251,7 @@ static void handleSettingsExport()
     uint8_t storedManualPct = manualOffsetPct;
     uint8_t storedCustomPct[4] = {customPct[0], customPct[1], customPct[2], customPct[3]};
     uint8_t storedLegacyOffsetMode = dashLegacyOffsetMode;
+    bool storedLegacySharedStrategy = dashLegacySpeedSharedStrategy;
     bool storedLegacySmoothDown = dashLegacySmoothDown;
     uint8_t storedLegacySmoothRateKphS = dashLegacySmoothRateKphS;
     uint8_t storedLegacyCustomPctLow = dashLegacyCustomPctLow;
@@ -6272,6 +6325,7 @@ static void handleSettingsExport()
         storedCustomPct[2] = dashClampSpeedCustomPct(p.getUChar("cp2", customPct[2]));
         storedCustomPct[3] = dashClampSpeedCustomPct(p.getUChar("cp3", customPct[3]));
         storedLegacyOffsetMode = dashClampLegacyOffsetMode(p.getUChar("lo_mode", dashLegacyOffsetMode));
+        storedLegacySharedStrategy = p.getBool("lo_shared", dashLegacySpeedSharedStrategy);
         storedLegacySmoothDown = p.getBool("lo_smooth", dashLegacySmoothDown);
         storedLegacySmoothRateKphS = dashClampLegacySmartRateArg(p.getUChar("lo_rate", dashLegacySmoothRateKphS));
         storedLegacyCustomPctLow = dashClampLegacySmartPctArg(p.getUChar("lo_p1", dashLegacyCustomPctLow));
@@ -6422,6 +6476,7 @@ static void handleSettingsExport()
     j += "]}";
     j += ",\"legacySpeed\":{";
     j += "\"mode\":" + String(storedLegacyOffsetMode);
+    j += ",\"sharedStrategy\":" + String(storedLegacySharedStrategy ? "true" : "false");
     j += ",\"manualOffsetKph\":" + String(storedLegacyOffset);
     j += ",\"smoothDown\":" + String(storedLegacySmoothDown ? "true" : "false");
     j += ",\"smoothRateKphS\":" + String(storedLegacySmoothRateKphS);
@@ -6695,6 +6750,8 @@ static void handleSettingsImport()
         JsonObject legacySpeed = doc["legacySpeed"].as<JsonObject>();
         if (legacySpeed["mode"].is<int>())
             p.putUChar("lo_mode", dashClampLegacyOffsetMode(legacySpeed["mode"].as<int>()));
+        if (legacySpeed["sharedStrategy"].is<bool>())
+            p.putBool("lo_shared", legacySpeed["sharedStrategy"].as<bool>());
         if (legacySpeed["manualOffsetKph"].is<int>())
         {
             int offset = legacySpeed["manualOffsetKph"].as<int>();
