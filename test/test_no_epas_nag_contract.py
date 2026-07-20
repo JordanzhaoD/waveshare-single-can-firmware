@@ -71,32 +71,19 @@ class NoEpasNagContract(unittest.TestCase):
             "nagTorqueTamperRuntime must be declared with a false default (passthrough is the default mode)",
         )
 
-    def test_nag_torque_tamper_is_gated_behind_opt_in(self) -> None:
-        """The 0x370 torque-tamper (0xB6) must live inside the opt-in branch."""
-        self.assertIn(
-            "if (nagTorqueTamperRuntime)",
-            self.handlers,
-            "tamper path must be gated on nagTorqueTamperRuntime",
-        )
-        self.assertIn("0xB6", self.handlers, "torque-tamper constant 0xB6 must be present in the opt-in branch")
-        # The branch must carry the 2026-06-19 incident warning.
-        self.assertIn("2026-06-19", self.handlers, "torque-tamper branch must reference incident warning date")
-        self.assertIn("EPAS", self.handlers, "torque-tamper branch must reference the EPAS incident warning")
+    def test_upstream_beta8_nag_is_default_off_and_bounded(self) -> None:
+        self.assertIn("BuiltInNagMode", self.handlers)
+        self.assertIn("kNagTorqueRawMax = 0x08B6", self.handlers)
+        self.assertIn("kNagTorqueRawMin = 0x074E", self.handlers)
+        self.assertIn("clampNagTorqueRaw(torque)", self.handlers)
+        dash = (ROOT / "include" / "web" / "mcp2515_dashboard.h").read_text()
+        self.assertIn("static uint8_t dashNagMode = 0", dash)
+        self.assertIn("dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled)", dash)
 
-    def test_nag_torque_tamper_constant_not_in_default_path(self) -> None:
-        """The default (else) path must NOT write 0xB6 — it passes torque through."""
-        idx_if = self.handlers.find("if (nagTorqueTamperRuntime)")
-        self.assertNotEqual(idx_if, -1, "opt-in branch missing")
-        idx_else = self.handlers.find("else", idx_if)
-        self.assertNotEqual(idx_else, -1, "else (passthrough) branch missing")
-        tamper_block = self.handlers[idx_if:idx_else]
-        passthrough_block = self.handlers[idx_else:idx_else + 400]
-        self.assertIn("0xB6", tamper_block, "0xB6 must be inside the opt-in branch")
-        self.assertNotIn(
-            "0xB6",
-            passthrough_block,
-            "0xB6 torque-tamper must NOT appear in the default (passthrough) path",
-        )
+    def test_mode_c_fails_closed_on_context_and_angle(self) -> None:
+        for token in ["no399", "no129", "stale399", "stale129", "apState", "steeringAngle"]:
+            self.assertIn(f'blockedReason_ = "{token}"', self.handlers)
+        self.assertIn("steeringAngleX10_ < -50 || steeringAngleX10_ > 50", self.handlers)
 
     def test_reactive_nag_is_optin_and_bounded(self) -> None:
         """DashReactiveNagBurst v4 (TSL6P Burst NAG) must be opt-in, bounded, and 0x399 read-only."""

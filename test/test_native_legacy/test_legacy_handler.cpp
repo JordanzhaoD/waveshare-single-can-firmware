@@ -765,7 +765,7 @@ void test_legacy_ignores_unrelated_can_id()
 
 void test_legacy_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(10, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(11, handler.filterIdCount());
 }
 
 void test_legacy_filter_ids_values()
@@ -773,14 +773,15 @@ void test_legacy_filter_ids_values()
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT32(69, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
-    TEST_ASSERT_EQUAL_UINT32(390, ids[2]);
-    TEST_ASSERT_EQUAL_UINT32(760, ids[3]);
-    TEST_ASSERT_EQUAL_UINT32(880, ids[4]); // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
-    TEST_ASSERT_EQUAL_UINT32(920, ids[5]);
-    TEST_ASSERT_EQUAL_UINT32(921, ids[6]);
-    TEST_ASSERT_EQUAL_UINT32(1006, ids[7]);
-    TEST_ASSERT_EQUAL_UINT32(1080, ids[8]);
-    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(297, ids[2]); // 0x129 steering context for upstream Mode C
+    TEST_ASSERT_EQUAL_UINT32(390, ids[3]);
+    TEST_ASSERT_EQUAL_UINT32(760, ids[4]);
+    TEST_ASSERT_EQUAL_UINT32(880, ids[5]);
+    TEST_ASSERT_EQUAL_UINT32(920, ids[6]);
+    TEST_ASSERT_EQUAL_UINT32(921, ids[7]);
+    TEST_ASSERT_EQUAL_UINT32(1006, ids[8]);
+    TEST_ASSERT_EQUAL_UINT32(1080, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[10]);
 }
 
 void test_legacy_health_no_source_when_mux0_stale()

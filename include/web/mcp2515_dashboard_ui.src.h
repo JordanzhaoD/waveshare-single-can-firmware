@@ -1421,11 +1421,11 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 <div class="card cockpit-card">
   <div class="card-title">FSD 防护状态</div>
-  <div class="card-subtitle">仿生扭矩替代固定echo，轮DND消除提示音</div>
+  <div class="card-subtitle">NAG 使用上游 beta.8 独立引擎；其他防护仍由总开关控制</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">FSD 防护总开关</div>
-      <div class="setting-desc">启用全部防护子项（NAG 抑制 / DND / slew / BanShield 等）。关闭即全部失效。</div>
+      <div class="setting-desc">控制 DND / slew / BanShield 等防护项；NAG 模式独立启停。</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-master-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
@@ -1441,40 +1441,23 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
-      <div class="setting-name">NAG 抑制 <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">检测到握方向盘警告(0x399)时，反应式爆发扭矩抑制 NAG（实车验证中，故障即关）</div>
-      <div class="setting-desc" id="def-bionic-warn" style="color:#ef4444;display:none">⚠ 已自动回退至echo（连续帧异常）</div>
-      <div class="setting-desc" id="def-bionic-risk" style="color:#ef4444;display:none">⚠ 反应式扭矩注入 · 实车验证中 / 故障立即关闭</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">NAG 模式</div>
-      <div class="setting-desc">四种算法独立选择；总开关关闭时保留已保存模式，仅暂停运行。</div>
+      <div class="setting-name">内置 NAG 抑制 <span class="exp-badge">Party CAN</span></div>
+      <div class="setting-desc">选择即启用，不依赖防护总开关、车辆代际或插件。</div>
     </div>
     <select id="nag-mode-select" style="display:none" onchange="saveDefenseConfig()">
       <option value="0">Off</option>
-      <option value="1">Human Replay TSL6P</option>
-      <option value="2">EPAS Late Echo</option>
-      <option value="3">Reactive Sustained Hold</option>
+      <option value="1">Mode A</option>
+      <option value="2">Mode B</option>
+      <option value="3">Mode C</option>
     </select>
     <div class="sel-cards c4 nag-mode-cards" data-for="nag-mode-select">
       <div class="sel-card" data-value="0" onclick="selectCard('nag-mode-select',0)"><div class="sel-lbl">关闭</div><div class="sel-name">Off</div></div>
-      <div class="sel-card" data-value="1" onclick="selectCard('nag-mode-select',1)"><div class="sel-lbl">重放</div><div class="sel-name">TSL6P</div></div>
-      <div class="sel-card" data-value="2" onclick="selectCard('nag-mode-select',2)"><div class="sel-lbl">延迟</div><div class="sel-name">Late Echo</div></div>
-      <div class="sel-card" data-value="3" onclick="selectCard('nag-mode-select',3)"><div class="sel-lbl">持续</div><div class="sel-name">Reactive Hold</div></div>
+      <div class="sel-card" data-value="1" onclick="selectCard('nag-mode-select',1)"><div class="sel-lbl">固定 +1.80 Nm</div><div class="sel-name">Mode A</div></div>
+      <div class="sel-card" data-value="2" onclick="selectCard('nag-mode-select',2)"><div class="sel-lbl">1s burst / 1.5s pause</div><div class="sel-name">Mode B</div></div>
+      <div class="sel-card" data-value="3" onclick="selectCard('nag-mode-select',3)"><div class="sel-lbl">0x399 + 0x129</div><div class="sel-name">Mode C</div></div>
     </div>
   </div>
-  <div class="hint warn">模式编号稳定：0 Off / 1 Human Replay TSL6P / 2 EPAS Late Echo / 3 Reactive Sustained Hold。所有模式仍受防护总开关与既有安全门控约束。</div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">扭矩篡改(1.80Nm) <span class="exp-badge">高危</span></div>
-      <div class="setting-desc">0x370 固定扭矩注入(2026-06-19事故嫌疑向量)</div>
-      <div class="setting-desc" id="def-ntt-warn" style="color:#ef4444;display:none">⚠ 仅台架测试,严禁上车</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-ntt-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
+  <div class="hint warn">上游 beta.8 对齐：A 固定 +1.80 Nm；B 循环 +1.80/+1.50/-1.50/-1.80 Nm；C 仅在 0x399/0x129 均新鲜、AP 状态 3..6 且方向盘 ±5° 内运行。默认 Off，仍受 CAN、启动、OTA 与 AP 注入门控约束。</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">声音警告抑制</div>
@@ -2062,9 +2045,9 @@ function syncSelCardsVisual(id){
 }
 function syncNagModeAvailability(parentEnabled){
   var wrap=document.querySelector('.nag-mode-cards');
-  if(wrap)wrap.classList.toggle('inactive',!parentEnabled);
+  if(wrap)wrap.classList.remove('inactive');
   var sel=$('nag-mode-select');
-  if(sel)sel.disabled=!parentEnabled;
+  if(sel)sel.disabled=false;
 }
 var instantEngageValue=false;
 function syncInstantEngage(value,parentEnabled){

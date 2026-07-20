@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include "can_frame_types.h"
 #include "drivers/can_driver.h"
@@ -33,6 +34,66 @@
 #endif
 
 inline LogRingBuffer logRing;
+
+// Upstream v3.0.2-beta.8 built-in NAG modes. These values intentionally
+// remain 0..3 so existing NVS/settings backups migrate without a schema bump.
+enum class BuiltInNagMode : uint8_t
+{
+    Disabled = 0,
+    ModeA = 1,
+    ModeB = 2,
+    ModeC = 3,
+};
+
+inline uint8_t clampNagMode(uint8_t mode)
+{
+    return mode <= static_cast<uint8_t>(BuiltInNagMode::ModeC)
+               ? mode
+               : static_cast<uint8_t>(BuiltInNagMode::Disabled);
+}
+
+inline const char *nagModeName(uint8_t mode)
+{
+    switch (static_cast<BuiltInNagMode>(clampNagMode(mode)))
+    {
+    case BuiltInNagMode::ModeA:
+        return "Mode A";
+    case BuiltInNagMode::ModeB:
+        return "Mode B";
+    case BuiltInNagMode::ModeC:
+        return "Mode C";
+    default:
+        return "Off";
+    }
+}
+
+inline constexpr float kNagTorqueNmMax = 1.80f;
+inline constexpr float kNagTorqueNmMin = -1.80f;
+inline constexpr uint16_t kNagTorqueRawMax = 0x08B6;
+inline constexpr uint16_t kNagTorqueRawMin = 0x074E;
+
+inline uint16_t clampNagTorqueRaw(uint16_t value)
+{
+    return std::max(kNagTorqueRawMin, std::min(kNagTorqueRawMax, value));
+}
+
+struct NagRuntimeDiag
+{
+    uint8_t mode = 0;
+    uint32_t rxTarget = 0;
+    uint32_t eligible = 0;
+    uint32_t txOk = 0;
+    uint32_t txFail = 0;
+    uint32_t context399 = 0;
+    uint32_t context129 = 0;
+    uint8_t apState = 0;
+    uint8_t handsOnState = 0;
+    int16_t steeringAngleX10 = 0;
+    uint16_t lastTorqueRaw = 0;
+    uint8_t lastRxCounter = 0;
+    uint8_t lastTxCounter = 0;
+    const char *blockedReason = "off";
+};
 
 static inline bool framePayloadChanged(const CanFrame &original, const CanFrame &modified)
 {
@@ -544,10 +605,10 @@ struct LegacyHandler : public CarManagerBase
         // 1080 added for UI_driverAssistAnonDebugParams visionSpeedSlider override.
         // 920 added for auto hardware detection (GTW_carConfig).
         // 880 (0x370 EPAS3P_sysStatus) added for EPAS-faithful nag engine.
-        static constexpr uint32_t ids[] = {69, 280, 390, 760, 880, 920, 921, 1006, 1080, CAN_ID_OTA_STATUS};
+        static constexpr uint32_t ids[] = {69, 280, 297, 390, 760, 880, 920, 921, 1006, 1080, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 11; }
 
     void tick(uint32_t nowMs, CanDriver &driver) override
     {
@@ -1016,10 +1077,10 @@ struct HW3Handler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
-        static constexpr uint32_t ids[] = {280, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
+        static constexpr uint32_t ids[] = {280, 297, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 11; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -1235,102 +1296,158 @@ struct HW3Handler : public CarManagerBase
 };
 
 /**
- * NagHandler — Autosteer nag suppression (counter+1 echo method)
+ * Upstream v3.0.2-beta.8 built-in NAG suppression.
  *
- * Replicates the Chinese TSL6P module behavior:
- * - Listens for CAN 880 (0x370) = EPAS3P_sysStatus
- * - When handsOnLevel = 0 (nag would trigger):
- *   1. Copies the real frame
- *   2. Torque bytes (2,3): PASSTHROUGH by default (copied unchanged). Only when
- *      the opt-in runtime global nagTorqueTamperRuntime is set does it write
- *      byte 2 low nibble = 0x08 and byte 3 = 0xB6 (fixed 1.80 Nm). That tamper
- *      mode is the documented primary-suspect vector of the 2026-06-19 EPAS
- *      fault — opt-in only, never the default path.
- *   3. Sets byte 4 |= 0x40 (handsOnLevel = 1)
- *   4. Increments counter (byte 6 lower nibble + 1)
- *   5. Recalculates checksum (byte 7)
- * - The real EPAS frame with the same counter arrives AFTER -> rejected as duplicate
- *
- * Tested: Model Y Performance 2022 HW3, Basic Autopilot
- * Bus: X179 pin 2/3 (CAN bus 4)
- *
- * Enable with build flag: -D NAG_KILLER
+ * This handler is intentionally independent from the selected vehicle
+ * handler. Dashboard code feeds it the original Party-CAN frames after the
+ * normal Legacy/HW3/HW4 path, so changing vehicle generation cannot silently
+ * disconnect NAG processing.
  */
 struct NagHandler : public CarManagerBase
 {
     Shared<bool> nagKillerActive{true};
+    Shared<uint8_t> nagMode{static_cast<uint8_t>(BuiltInNagMode::ModeA)};
     Shared<uint32_t> nagEchoCount{0};
+
+    static constexpr uint32_t kTargetId = 0x370;
+    static constexpr uint32_t kApStateId = 0x399;
+    static constexpr uint32_t kSteeringId = 0x129;
+    static constexpr uint32_t kContextFreshMs = 1000;
+    static constexpr uint32_t kModeBBurstMs = 1000;
+    static constexpr uint32_t kModeBPauseMs = 1500;
+    static constexpr uint32_t kModeBTorqueStepMs = 200;
+
+    void setMode(uint8_t mode) { nagMode = clampNagMode(mode); }
 
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {880, 920, CAN_ID_OTA_STATUS};
+        static constexpr uint32_t ids[] = {kTargetId};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 3; }
+    uint8_t filterIdCount() const override { return 1; }
+
+    const uint32_t *modeFilterIds() const
+    {
+        static constexpr uint32_t ids[] = {kTargetId, kApStateId, kSteeringId};
+        return ids;
+    }
+
+    uint8_t modeFilterIdCount(uint8_t mode) const
+    {
+        return clampNagMode(mode) == static_cast<uint8_t>(BuiltInNagMode::ModeC) ? 3 : 1;
+    }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
+        handleMessageAt(frame, driver, dashDiagNowMs());
+    }
+
+    void handleMessageAt(CanFrame &frame, CanDriver &driver, uint32_t now)
+    {
+        uint8_t selectedMode = clampNagMode(nagMode);
+        if (selectedMode != activeMode_)
+            resetModeState(selectedMode, now);
+
+        if (frame.id == kApStateId)
+        {
+            updateApState(frame, now);
+            return;
+        }
+        if (frame.id == kSteeringId)
+        {
+            updateSteering(frame, now);
+            return;
+        }
+        if (frame.id != kTargetId)
+            return;
+
+        rxTarget_++;
         if (onFrame)
             onFrame(frame);
-        updateHwDetectedFrom920(frame);
-        if (frame.id != 880 || frame.dlc < 8)
+        if (frame.dlc < 8)
+        {
+            blockedReason_ = "dlc";
             return;
+        }
 
         uint8_t handsOn = (frame.data[4] >> 6) & 0x03;
+        uint16_t torqueRaw = static_cast<uint16_t>((frame.data[2] & 0x0F) << 8) |
+                             frame.data[3];
+        bool isOwnEcho = (handsOn == 1 && torqueRaw == kNagTorqueRawMax) ||
+                         matchesLastEcho(frame);
 
-        if (!nagKillerActive || !nagKillerRuntime || handsOn != 0)
+        if (!nagKillerActive || !nagKillerRuntime || selectedMode == 0)
+        {
+            blockedReason_ = "off";
             return;
-        if (checkAD && !checkAD())
+        }
+        if (isOwnEcho)
+        {
+            blockedReason_ = "ownEcho";
+            return;
+        }
+        if (handsOn != 0)
+        {
+            blockedReason_ = "handsOn";
+            return;
+        }
+
+        eligible_++;
+        uint16_t torque = kNagTorqueRawMax;
+        bool setHandsOn = true;
+        if (!decideInjection(selectedMode, now, torque, setHandsOn))
             return;
 
-        CanFrame echo;
-        echo.id = 880;
+        CanFrame echo{};
+        echo.id = kTargetId;
         echo.dlc = 8;
+        echo.bus = frame.bus;
 
-        // Bytes copied through unchanged in BOTH modes.
         echo.data[0] = frame.data[0];
         echo.data[1] = frame.data[1];
+        torque = clampNagTorqueRaw(torque);
+        echo.data[2] = static_cast<uint8_t>((frame.data[2] & 0xF0) |
+                                            ((torque >> 8) & 0x0F));
+        echo.data[3] = static_cast<uint8_t>(torque & 0xFF);
         echo.data[5] = frame.data[5];
+        echo.data[4] = setHandsOn ? static_cast<uint8_t>(frame.data[4] | 0x40)
+                                  : static_cast<uint8_t>(frame.data[4] & ~0xC0);
 
-        // Torque mode select (opt-in global; default false = PASSTHROUGH).
-        // TORQUE_TAMPER (1.80 Nm fixed) is the documented primary-suspect vector
-        // of the 2026-06-19 EPAS fault (docs/EPAS-NAG-REMOVAL-INCIDENT.md) —
-        // opt-in only, never the default code path.
-        if (nagTorqueTamperRuntime)
-        {
-            echo.data[2] = (frame.data[2] & 0xF0) | 0x08; // sign nibble positive
-            echo.data[3] = 0xB6;                          // 1.80 Nm fixed torque
-        }
-        else
-        {
-            echo.data[2] = frame.data[2]; // PASSTHROUGH
-            echo.data[3] = frame.data[3]; // PASSTHROUGH
-        }
-
-        // handsOnLevel = 1 (gate above guarantees bits 7:6 == 0)
-        echo.data[4] = frame.data[4] | 0x40;
-
-        // Counter + 1 (low nibble)
         uint8_t cnt = (frame.data[6] & 0x0F);
         cnt = (cnt + 1) & 0x0F;
         echo.data[6] = (frame.data[6] & 0xF0) | cnt;
 
-        // Checksum: sum(byte0..byte6) + 0x73
         uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] +
                        echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
         echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
 
-        framesSent++;
-        nagEchoCount++;
-        driver.send(echo);
+        bool ok = driver.send(echo);
+        lastTorqueRaw_ = torque;
+        lastRxCounter_ = static_cast<uint8_t>(frame.data[6] & 0x0F);
+        lastTxCounter_ = cnt;
+        if (ok)
+        {
+            framesSent++;
+            nagEchoCount++;
+            txOk_++;
+            lastEcho_ = echo;
+            lastEchoValid_ = true;
+            blockedReason_ = "none";
+        }
+        else
+        {
+            txFail_++;
+            blockedReason_ = "txFail";
+        }
+        if (onSend)
+            onSend(0, ok);
 
         if (enablePrint && (nagEchoCount % 500 == 1))
         {
             char buf[LogRingBuffer::kMaxMsgLen];
-            snprintf(buf, sizeof(buf),
-                     "NagHandler: echo=%u tamper=%s",
-                     (unsigned int)(uint32_t)nagEchoCount,
-                     (bool)nagTorqueTamperRuntime ? "ON" : "off");
+            snprintf(buf, sizeof(buf), "NagHandler: mode=%s echo=%u",
+                     nagModeName(selectedMode),
+                     (unsigned int)(uint32_t)nagEchoCount);
             logRing.push(buf,
 #ifndef NATIVE_BUILD
                          millis()
@@ -1342,6 +1459,227 @@ struct NagHandler : public CarManagerBase
             Serial.println(buf);
 #endif
         }
+    }
+
+    NagRuntimeDiag diag() const
+    {
+        NagRuntimeDiag d;
+        d.mode = clampNagMode(nagMode);
+        d.rxTarget = rxTarget_;
+        d.eligible = eligible_;
+        d.txOk = txOk_;
+        d.txFail = txFail_;
+        d.context399 = context399_;
+        d.context129 = context129_;
+        d.apState = apState_;
+        d.handsOnState = handsOnState_;
+        d.steeringAngleX10 = steeringAngleX10_;
+        d.lastTorqueRaw = lastTorqueRaw_;
+        d.lastRxCounter = lastRxCounter_;
+        d.lastTxCounter = lastTxCounter_;
+        d.blockedReason = blockedReason_;
+        return d;
+    }
+
+private:
+    uint8_t activeMode_ = 0xFF;
+    uint8_t modeBTorqueIndex_ = 0;
+    uint32_t modeEnteredMs_ = 0;
+    uint32_t modeBLastStepMs_ = 0;
+    uint8_t apState_ = 0;
+    uint8_t handsOnState_ = 0;
+    int16_t steeringAngleX10_ = 0;
+    uint32_t lastApStateMs_ = 0;
+    uint32_t lastSteeringMs_ = 0;
+    uint32_t handsOnStateEnteredMs_ = 0;
+    bool apStateSeen_ = false;
+    bool steeringSeen_ = false;
+    bool handsOnStateSeen_ = false;
+    uint16_t walkSeed_ = 0;
+    float lastModeCTorqueNm_ = 0.0f;
+    CanFrame lastEcho_{};
+    bool lastEchoValid_ = false;
+    uint32_t rxTarget_ = 0;
+    uint32_t eligible_ = 0;
+    uint32_t txOk_ = 0;
+    uint32_t txFail_ = 0;
+    uint32_t context399_ = 0;
+    uint32_t context129_ = 0;
+    uint16_t lastTorqueRaw_ = 0;
+    uint8_t lastRxCounter_ = 0;
+    uint8_t lastTxCounter_ = 0;
+    const char *blockedReason_ = "off";
+
+    static uint16_t torqueNmToRaw(float torqueNm)
+    {
+        torqueNm = std::max(kNagTorqueNmMin, std::min(kNagTorqueNmMax, torqueNm));
+        float scaled = (torqueNm + 20.5f) * 100.0f + 0.5f;
+        return clampNagTorqueRaw(static_cast<uint16_t>(scaled));
+    }
+
+    void resetModeState(uint8_t mode, uint32_t now)
+    {
+        activeMode_ = mode;
+        modeBTorqueIndex_ = 0;
+        modeEnteredMs_ = now;
+        modeBLastStepMs_ = now;
+        apState_ = 0;
+        handsOnState_ = 0;
+        steeringAngleX10_ = 0;
+        lastApStateMs_ = 0;
+        lastSteeringMs_ = 0;
+        handsOnStateEnteredMs_ = 0;
+        apStateSeen_ = false;
+        steeringSeen_ = false;
+        handsOnStateSeen_ = false;
+        walkSeed_ = 0;
+        lastModeCTorqueNm_ = 0.0f;
+        lastEchoValid_ = false;
+        blockedReason_ = mode == 0 ? "off" : "waiting";
+    }
+
+    bool matchesLastEcho(const CanFrame &frame) const
+    {
+        if (!lastEchoValid_ || frame.id != lastEcho_.id || frame.dlc != lastEcho_.dlc)
+            return false;
+        return std::equal(frame.data, frame.data + frame.dlc, lastEcho_.data);
+    }
+
+    void updateApState(const CanFrame &frame, uint32_t now)
+    {
+        if (frame.dlc < 8)
+        {
+            blockedReason_ = "context399Dlc";
+            return;
+        }
+        uint8_t apState = static_cast<uint8_t>((frame.data[0] >> 4) & 0x0F);
+        uint8_t handsOnState = static_cast<uint8_t>(frame.data[0] & 0x0F);
+        apState_ = apState;
+        lastApStateMs_ = now;
+        apStateSeen_ = true;
+        context399_++;
+        if (!handsOnStateSeen_ || handsOnState != handsOnState_)
+        {
+            handsOnState_ = handsOnState;
+            handsOnStateEnteredMs_ = now;
+            handsOnStateSeen_ = true;
+        }
+    }
+
+    void updateSteering(const CanFrame &frame, uint32_t now)
+    {
+        if (frame.dlc < 8)
+        {
+            blockedReason_ = "context129Dlc";
+            return;
+        }
+        steeringAngleX10_ = static_cast<int16_t>((static_cast<uint16_t>(frame.data[1]) << 8) |
+                                                 frame.data[0]);
+        lastSteeringMs_ = now;
+        steeringSeen_ = true;
+        context129_++;
+    }
+
+    bool decideInjection(uint8_t selectedMode, uint32_t now, uint16_t &torque,
+                         bool &setHandsOn)
+    {
+        if (selectedMode == static_cast<uint8_t>(BuiltInNagMode::ModeA))
+        {
+            torque = kNagTorqueRawMax;
+            setHandsOn = true;
+            return true;
+        }
+
+        if (selectedMode == static_cast<uint8_t>(BuiltInNagMode::ModeB))
+        {
+            constexpr uint16_t kModeBTorques[] = {0x08B6, 0x0898, 0x076C, 0x074E};
+            constexpr uint32_t kCycleMs = kModeBBurstMs + kModeBPauseMs;
+            if ((now - modeEnteredMs_) % kCycleMs >= kModeBBurstMs)
+            {
+                blockedReason_ = "modeBPause";
+                return false;
+            }
+            if (now - modeBLastStepMs_ >= kModeBTorqueStepMs)
+            {
+                modeBTorqueIndex_ = static_cast<uint8_t>((modeBTorqueIndex_ + 1) % 4);
+                modeBLastStepMs_ = now;
+            }
+            torque = kModeBTorques[modeBTorqueIndex_];
+            setHandsOn = true;
+            return true;
+        }
+
+        if (selectedMode != static_cast<uint8_t>(BuiltInNagMode::ModeC))
+        {
+            blockedReason_ = "off";
+            return false;
+        }
+        if (!apStateSeen_ || !handsOnStateSeen_)
+        {
+            blockedReason_ = "no399";
+            return false;
+        }
+        if (!steeringSeen_)
+        {
+            blockedReason_ = "no129";
+            return false;
+        }
+        if (now - lastApStateMs_ > kContextFreshMs)
+        {
+            blockedReason_ = "stale399";
+            return false;
+        }
+        if (now - lastSteeringMs_ > kContextFreshMs)
+        {
+            blockedReason_ = "stale129";
+            return false;
+        }
+        if (apState_ < 3 || apState_ > 6)
+        {
+            blockedReason_ = "apState";
+            return false;
+        }
+        if (steeringAngleX10_ < -50 || steeringAngleX10_ > 50)
+        {
+            blockedReason_ = "steeringAngle";
+            return false;
+        }
+
+        float torqueNm = 0.0f;
+        if (handsOnState_ == 2)
+        {
+            if (now - handsOnStateEnteredMs_ < 2000)
+            {
+                blockedReason_ = "state2Delay";
+                return false;
+            }
+            walkSeed_ = static_cast<uint16_t>(walkSeed_ * 1103u + 12345u);
+            float delta = (static_cast<int>(walkSeed_ & 0x1F) - 16) * 0.05f;
+            float magnitude = std::fabs(lastModeCTorqueNm_) + delta;
+            magnitude = std::max(0.5f, std::min(kNagTorqueNmMax, magnitude));
+            torqueNm = steeringAngleX10_ > 0 ? -magnitude : magnitude;
+            lastModeCTorqueNm_ = torqueNm;
+        }
+        else if (handsOnState_ == 3)
+        {
+            if (now - handsOnStateEnteredMs_ < 1000)
+            {
+                blockedReason_ = "state3Delay";
+                return false;
+            }
+            uint32_t phase = (now - handsOnStateEnteredMs_ - 1000) % 1000;
+            torqueNm = phase < 500 ? -1.8f + (phase / 500.0f) * 3.6f
+                                   : 1.8f - ((phase - 500) / 500.0f) * 3.6f;
+        }
+        else
+        {
+            blockedReason_ = "handsOnState";
+            return false;
+        }
+
+        torque = torqueNmToRaw(torqueNm);
+        setHandsOn = std::fabs(torqueNm) >= 1.0f;
+        return true;
     }
 };
 
@@ -1381,10 +1719,10 @@ struct HW4Handler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
-        static constexpr uint32_t ids[] = {280, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
+        static constexpr uint32_t ids[] = {280, 297, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 11; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {

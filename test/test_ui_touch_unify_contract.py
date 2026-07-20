@@ -53,9 +53,9 @@ class NagModeCardsTests(TouchUnifyTests):
         self.assertRegex(SRC, r'<select[^>]*id="nag-mode-select"[^>]*display:none')
         for option in [
             '<option value="0">Off</option>',
-            '<option value="1">Human Replay TSL6P</option>',
-            '<option value="2">EPAS Late Echo</option>',
-            '<option value="3">Reactive Sustained Hold</option>',
+            '<option value="1">Mode A</option>',
+            '<option value="2">Mode B</option>',
+            '<option value="3">Mode C</option>',
         ]:
             self.assert_present(option)
         for mode in range(4):
@@ -73,7 +73,8 @@ class NagModeCardsTests(TouchUnifyTests):
 
         sync = re.search(r"function syncNagModeAvailability\([^)]*\)\{.*?\n\}", SRC, re.S)
         self.assertIsNotNone(sync)
-        self.assertIn("classList.toggle('inactive',!parentEnabled)", sync.group(0))
+        self.assertIn("classList.remove('inactive')", sync.group(0))
+        self.assertIn("sel.disabled=false", sync.group(0))
         self.assertNotIn(".value=", sync.group(0))
 
         save = re.search(r"async function saveDefenseConfig\(\)\{.*?\n\}", SRC, re.S)

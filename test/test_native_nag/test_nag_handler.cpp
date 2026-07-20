@@ -47,6 +47,22 @@ static CanFrame makeEpasFrame(uint8_t handsOn, float torqueNm, uint8_t counter, 
     return f;
 }
 
+static CanFrame makeApStateFrame(uint8_t apState, uint8_t handsOnState)
+{
+    CanFrame f = {.id = NagHandler::kApStateId, .dlc = 8};
+    f.data[0] = static_cast<uint8_t>((apState << 4) | (handsOnState & 0x0F));
+    return f;
+}
+
+static CanFrame makeSteeringFrame(float degrees)
+{
+    CanFrame f = {.id = NagHandler::kSteeringId, .dlc = 8};
+    int16_t raw = static_cast<int16_t>(degrees * 10.0f);
+    f.data[0] = static_cast<uint8_t>(raw & 0xFF);
+    f.data[1] = static_cast<uint8_t>((static_cast<uint16_t>(raw) >> 8) & 0xFF);
+    return f;
+}
+
 // Helper: verify checksum of a frame
 static bool verifyChecksum(const CanFrame &f)
 {
@@ -61,7 +77,6 @@ void setUp()
     mock.reset();
     handler = NagHandler();
     handler.enablePrint = false;
-    nagTorqueTamperRuntime = false; // default = PASSTHROUGH; tests opt in explicitly
 }
 
 void tearDown() {}
@@ -72,15 +87,18 @@ void tearDown() {}
 
 void test_nag_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(3, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(1, handler.filterIdCount());
 }
 
 void test_nag_filter_ids_value()
 {
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT32(880, ids[0]);
-    TEST_ASSERT_EQUAL_UINT32(920, ids[1]);
-    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[2]);
+    ids = handler.modeFilterIds();
+    TEST_ASSERT_EQUAL_UINT8(1, handler.modeFilterIdCount(static_cast<uint8_t>(BuiltInNagMode::ModeA)));
+    TEST_ASSERT_EQUAL_UINT8(3, handler.modeFilterIdCount(static_cast<uint8_t>(BuiltInNagMode::ModeC)));
+    TEST_ASSERT_EQUAL_UINT32(0x399, ids[1]);
+    TEST_ASSERT_EQUAL_UINT32(0x129, ids[2]);
 }
 
 // ============================================================
@@ -193,35 +211,19 @@ void test_nag_preserves_byte4_lower_bits()
 }
 
 // ============================================================
-// Torque mode: PASSTHROUGH (default) vs TORQUE_TAMPER (opt-in)
+// Upstream beta.8 Mode A fixed-torque encoding
 // ============================================================
 
-// DEFAULT (passthrough): torque bytes pass through unchanged.
-void test_nag_passthrough_default_leaves_torque_bytes_unchanged()
+void test_nag_mode_a_sets_fixed_torque()
 {
-    nagTorqueTamperRuntime = false;
-    CanFrame f = makeEpasFrame(0, 0.10, 0x0C); // byte3 = low torque raw (!= 0xB6)
-    uint8_t inByte2 = f.data[2];
-    uint8_t inByte3 = f.data[3];
-    handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL_HEX8(inByte2, mock.sent[0].data[2]);
-    TEST_ASSERT_EQUAL_HEX8(inByte3, mock.sent[0].data[3]);
-}
-
-// OPT-IN (tamper): byte3 forced to 0xB6, byte2 low nibble 0x08 (1.80 Nm).
-void test_nag_tamper_optin_sets_fixed_torque_0xB6()
-{
-    nagTorqueTamperRuntime = true;
     CanFrame f = makeEpasFrame(0, 0.10, 0x0C);
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_HEX8(0xB6, mock.sent[0].data[3]);
     TEST_ASSERT_EQUAL_HEX8(0x08, mock.sent[0].data[2] & 0x0F);
 }
 
-// OPT-IN (tamper): decoded torque == 1.80 Nm.
-void test_nag_tamper_optin_torque_is_1_80_nm()
+void test_nag_mode_a_torque_is_1_80_nm()
 {
-    nagTorqueTamperRuntime = true;
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     uint16_t tRaw = ((mock.sent[0].data[2] & 0x0F) << 8) | mock.sent[0].data[3];
@@ -229,10 +231,8 @@ void test_nag_tamper_optin_torque_is_1_80_nm()
     TEST_ASSERT_FLOAT_WITHIN(0.1, 1.80, torque);
 }
 
-// PASSTHROUGH: bytes 0,1,2,3,5 copied unchanged; tamper OFF by default.
-void test_nag_passthrough_copies_bytes_0_1_2_3_5_unchanged()
+void test_nag_mode_a_preserves_non_torque_fields()
 {
-    nagTorqueTamperRuntime = false;
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     f.data[0] = 0xAB;
     f.data[1] = 0xCD;
@@ -248,15 +248,13 @@ void test_nag_passthrough_copies_bytes_0_1_2_3_5_unchanged()
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_HEX8(0xAB, mock.sent[0].data[0]);
     TEST_ASSERT_EQUAL_HEX8(0xCD, mock.sent[0].data[1]);
-    TEST_ASSERT_EQUAL_HEX8(0x8E, mock.sent[0].data[2]); // passthrough
-    TEST_ASSERT_EQUAL_HEX8(0x77, mock.sent[0].data[3]); // passthrough
+    TEST_ASSERT_EQUAL_HEX8(0x88, mock.sent[0].data[2]);
+    TEST_ASSERT_EQUAL_HEX8(0xB6, mock.sent[0].data[3]);
     TEST_ASSERT_EQUAL_HEX8(0x42, mock.sent[0].data[5]);
 }
 
-// Canary: in tamper mode, output torque stays at 1.80 Nm and within [-5, 5].
-void test_nag_tamper_output_torque_never_exceeds_safe_range()
+void test_nag_output_torque_never_exceeds_upstream_bounds()
 {
-    nagTorqueTamperRuntime = true;
     for (uint8_t cnt = 0; cnt < 16; cnt++)
     {
         mock.reset();
@@ -270,20 +268,9 @@ void test_nag_tamper_output_torque_never_exceeds_safe_range()
         // Must be exactly 1.80 Nm (from fixed byte 3 = 0xB6)
         TEST_ASSERT_FLOAT_WITHIN(0.1, 1.80, torque);
         // Must never exceed safe range
-        TEST_ASSERT_TRUE(torque >= -5.0f);
-        TEST_ASSERT_TRUE(torque <= 5.0f);
+        TEST_ASSERT_TRUE(torque >= kNagTorqueNmMin);
+        TEST_ASSERT_TRUE(torque <= kNagTorqueNmMax);
     }
-}
-
-// Safety regression: with NO opt-in, NagHandler must NOT inject 0xB6.
-void test_nag_tamper_default_is_passthrough()
-{
-    // Do NOT set nagTorqueTamperRuntime here — setUp() left it false.
-    CanFrame f = makeEpasFrame(0, 0.10, 0x0C); // byte3 != 0xB6
-    handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_NOT_EQUAL(0xB6, mock.sent[0].data[3]);
-    TEST_ASSERT_EQUAL_HEX8(f.data[3], mock.sent[0].data[3]);
 }
 
 // ============================================================
@@ -402,56 +389,34 @@ void test_nag_output_dlc_is_8()
 // Real-data bench validation (Jordan's captured 0x370 frames)
 // ============================================================
 
-// T1: every echo NagHandler emits for a real frame must be well-formed, in BOTH
-// modes. Passthrough: torque byte3 == input. Tamper: byte3 == 0xB6.
+// T1: every Mode-A echo emitted for a captured real frame is well formed.
 void test_nag_real_frames_echo_wellformed()
 {
-    const bool modes[2] = {false, true};
-    const char *names[2] = {"passthrough", "tamper"};
-    for (int m = 0; m < 2; m++)
+    int echoed = 0;
+    for (size_t i = 0; i < kRealEpasSampleCount; i++)
     {
-        nagTorqueTamperRuntime = modes[m];
-        int echoed = 0;
-        for (size_t i = 0; i < kRealEpasSampleCount; i++)
+        mock.reset();
+        CanFrame f = makeFrameFromSample(kRealEpasSamples[i]);
+        handler.handleMessage(f, mock);
+
+        if (!kRealEpasSamples[i].expectEcho)
         {
-            mock.reset();
-            CanFrame f = makeFrameFromSample(kRealEpasSamples[i]);
-            handler.handleMessage(f, mock);
-
-            if (!kRealEpasSamples[i].expectEcho)
-            {
-                TEST_ASSERT_EQUAL(0, mock.sent.size());
-                continue;
-            }
-            echoed++;
-            const CanFrame &e = mock.sent[0];
-
-            // checksum = sum(b0..b6) + 0x73
-            uint16_t sum = 0;
-            for (int j = 0; j < 7; j++)
-                sum += e.data[j];
-            TEST_ASSERT_EQUAL_HEX8((sum + 0x73) & 0xFF, e.data[7]);
-
-            // counter = input + 1 (mod 16)
-            uint8_t inCnt = f.data[6] & 0x0F;
-            TEST_ASSERT_EQUAL_HEX8((inCnt + 1) & 0x0F, e.data[6] & 0x0F);
-
-            // handsOnLevel = 1
-            TEST_ASSERT_EQUAL_UINT8(1, (e.data[4] >> 6) & 0x03);
-
-            if (modes[m])
-            {
-                TEST_ASSERT_EQUAL_HEX8(0xB6, e.data[3]); // tamper
-                TEST_ASSERT_EQUAL_HEX8(0x08, e.data[2] & 0x0F);
-            }
-            else
-            {
-                TEST_ASSERT_EQUAL_HEX8(f.data[3], e.data[3]); // passthrough
-            }
+            TEST_ASSERT_EQUAL(0, mock.sent.size());
+            continue;
         }
-        printf("[REAL-DATA] T1 mode=%s echoed=%d\n", names[m], echoed);
+        echoed++;
+        const CanFrame &e = mock.sent[0];
+        uint16_t sum = 0;
+        for (int j = 0; j < 7; j++)
+            sum += e.data[j];
+        TEST_ASSERT_EQUAL_HEX8((sum + 0x73) & 0xFF, e.data[7]);
+        uint8_t inCnt = f.data[6] & 0x0F;
+        TEST_ASSERT_EQUAL_HEX8((inCnt + 1) & 0x0F, e.data[6] & 0x0F);
+        TEST_ASSERT_EQUAL_UINT8(1, (e.data[4] >> 6) & 0x03);
+        TEST_ASSERT_EQUAL_HEX8(0xB6, e.data[3]);
+        TEST_ASSERT_EQUAL_HEX8(0x08, e.data[2] & 0x0F);
     }
-    nagTorqueTamperRuntime = false; // restore default
+    printf("[REAL-DATA] T1 mode=A echoed=%d\n", echoed);
 }
 
 // T2: total echo count over the real sequence == number of handsOn==0 frames.
@@ -558,6 +523,89 @@ void test_nag_real_handson_signal_sanity()
     // captured data) -- logged above for review, not hard-asserted.
 }
 
+void test_nag_disabled_mode_does_not_echo()
+{
+    handler.setMode(static_cast<uint8_t>(BuiltInNagMode::Disabled));
+    CanFrame f = makeEpasFrame(0, 0.33, 1);
+    handler.handleMessageAt(f, mock, 100);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+void test_nag_mode_b_cycles_torque_and_pauses()
+{
+    handler.setMode(static_cast<uint8_t>(BuiltInNagMode::ModeB));
+    CanFrame f = makeEpasFrame(0, 0.33, 1);
+    handler.handleMessageAt(f, mock, 1000);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX16(0x08B6, ((mock.sent[0].data[2] & 0x0F) << 8) | mock.sent[0].data[3]);
+
+    f = makeEpasFrame(0, 0.33, 2);
+    handler.handleMessageAt(f, mock, 1200);
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX16(0x0898, ((mock.sent[1].data[2] & 0x0F) << 8) | mock.sent[1].data[3]);
+
+    f = makeEpasFrame(0, 0.33, 3);
+    handler.handleMessageAt(f, mock, 2000);
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    TEST_ASSERT_EQUAL_STRING("modeBPause", handler.diag().blockedReason);
+}
+
+void test_nag_mode_c_blocks_without_context()
+{
+    handler.setMode(static_cast<uint8_t>(BuiltInNagMode::ModeC));
+    CanFrame f = makeEpasFrame(0, 0.33, 1);
+    handler.handleMessageAt(f, mock, 1000);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_STRING("no399", handler.diag().blockedReason);
+}
+
+void test_nag_mode_c_injects_after_state2_delay_with_fresh_context()
+{
+    handler.setMode(static_cast<uint8_t>(BuiltInNagMode::ModeC));
+    CanFrame ap = makeApStateFrame(6, 2);
+    CanFrame steering = makeSteeringFrame(2.0f);
+    handler.handleMessageAt(ap, mock, 100);
+    handler.handleMessageAt(steering, mock, 100);
+    ap = makeApStateFrame(6, 2);
+    steering = makeSteeringFrame(2.0f);
+    handler.handleMessageAt(ap, mock, 2100);
+    handler.handleMessageAt(steering, mock, 2100);
+    CanFrame f = makeEpasFrame(0, 0.33, 1);
+    handler.handleMessageAt(f, mock, 2200);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    uint16_t raw = static_cast<uint16_t>((mock.sent[0].data[2] & 0x0F) << 8) |
+                   mock.sent[0].data[3];
+    TEST_ASSERT_TRUE(raw >= kNagTorqueRawMin);
+    TEST_ASSERT_TRUE(raw <= kNagTorqueRawMax);
+    TEST_ASSERT_TRUE(raw < 0x0802);
+    TEST_ASSERT_TRUE(verifyChecksum(mock.sent[0]));
+}
+
+void test_nag_mode_c_fails_closed_for_stale_or_large_angle_context()
+{
+    handler.setMode(static_cast<uint8_t>(BuiltInNagMode::ModeC));
+    CanFrame ap = makeApStateFrame(6, 3);
+    CanFrame steering = makeSteeringFrame(6.0f);
+    handler.handleMessageAt(ap, mock, 100);
+    handler.handleMessageAt(steering, mock, 100);
+    ap = makeApStateFrame(6, 3);
+    handler.handleMessageAt(ap, mock, 1200);
+    handler.handleMessageAt(steering, mock, 1200);
+    CanFrame f = makeEpasFrame(0, 0.33, 1);
+    handler.handleMessageAt(f, mock, 2300);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_STRING("stale399", handler.diag().blockedReason);
+
+    ap = makeApStateFrame(6, 3);
+    steering = makeSteeringFrame(6.0f);
+    handler.handleMessageAt(ap, mock, 2400);
+    handler.handleMessageAt(steering, mock, 2400);
+    f = makeEpasFrame(0, 0.33, 2);
+    handler.handleMessageAt(f, mock, 2450);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_STRING("steeringAngle", handler.diag().blockedReason);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -583,11 +631,9 @@ int main()
     // Modified fields
     RUN_TEST(test_nag_sets_handson_to_1);
     RUN_TEST(test_nag_preserves_byte4_lower_bits);
-    RUN_TEST(test_nag_passthrough_default_leaves_torque_bytes_unchanged);
-    RUN_TEST(test_nag_passthrough_copies_bytes_0_1_2_3_5_unchanged);
-    RUN_TEST(test_nag_tamper_optin_sets_fixed_torque_0xB6);
-    RUN_TEST(test_nag_tamper_optin_torque_is_1_80_nm);
-    RUN_TEST(test_nag_tamper_default_is_passthrough);
+    RUN_TEST(test_nag_mode_a_sets_fixed_torque);
+    RUN_TEST(test_nag_mode_a_preserves_non_torque_fields);
+    RUN_TEST(test_nag_mode_a_torque_is_1_80_nm);
 
     // Checksum
     RUN_TEST(test_nag_checksum_correct);
@@ -595,7 +641,7 @@ int main()
     RUN_TEST(test_nag_checksum_correct_with_various_inputs);
 
     // Safety canary
-    RUN_TEST(test_nag_tamper_output_torque_never_exceeds_safe_range);
+    RUN_TEST(test_nag_output_torque_never_exceeds_upstream_bounds);
     RUN_TEST(test_nag_output_handson_never_exceeds_1);
 
     // Counters
@@ -615,6 +661,13 @@ int main()
     RUN_TEST(test_nag_real_echo_count_matches_handson0);
     RUN_TEST(test_nag_real_counter_interleave_analysis);
     RUN_TEST(test_nag_real_handson_signal_sanity);
+
+    // Upstream beta.8 modes and fail-closed context gates
+    RUN_TEST(test_nag_disabled_mode_does_not_echo);
+    RUN_TEST(test_nag_mode_b_cycles_torque_and_pauses);
+    RUN_TEST(test_nag_mode_c_blocks_without_context);
+    RUN_TEST(test_nag_mode_c_injects_after_state2_delay_with_fresh_context);
+    RUN_TEST(test_nag_mode_c_fails_closed_for_stale_or_large_angle_context);
 
     return UNITY_END();
 }

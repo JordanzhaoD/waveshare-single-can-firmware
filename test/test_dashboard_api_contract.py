@@ -395,10 +395,11 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('setNagMode', self.dash)
         self.assertIn('virtual void setNagMode(uint8_t', self.handlers)
         self.assertIn('void setNagMode(uint8_t mode) override', self.handlers)
-        self.assertIn('bool effectiveBionic = dashDefenseEnabled && dashBionicSteering;', self.dash)
-        self.assertIn('uint8_t effectiveNagMode = dashDefenseEnabled ? dashNagMode : 0;', self.dash)
-        self.assertIn('reactive->bionicSteering = effectiveBionic', self.dash)
-        self.assertIn('reactive->setNagMode(effectiveNagMode)', self.dash)
+        self.assertIn('static NagHandler dashNagHandler;', self.dash)
+        self.assertIn('dashNagHandler.setMode(dashNagMode);', self.dash)
+        self.assertIn('dashNagHandler.handleMessage(nagFrame, driver);', self.dash)
+        self.assertIn('reactive->bionicSteering = false', self.dash)
+        self.assertIn('reactive->setNagMode(0)', self.dash)
         self.assertIn('reactive && reactive != dashHandler', self.dash)
         self.assertIn('reactive->resetBionic(resetSeed)', self.dash)
         self.assertNotIn('static_cast<LegacyHandler *>(reactive)->setNagMode', self.dash)
@@ -417,6 +418,28 @@ class DashboardApiContractTests(unittest.TestCase):
             status_prefix,
         )
         self.assertIn('=== EPAS-faithful Late Echo ===', self.dash)
+
+    def test_builtin_nag_uses_original_frame_and_all_dashboard_safety_gates(self) -> None:
+        start = self.dash.find("static void dashPostProcessFrame(")
+        self.assertNotEqual(start, -1)
+        end = self.dash.find("static bool dashCheckNagDisabled()", start)
+        self.assertNotEqual(end, -1)
+        block = self.dash[start:end]
+
+        self.assertIn("dashInjectionActive()", block)
+        self.assertIn("abortGuard.allowsInjection()", block)
+        self.assertIn("abortGuard.recordBlock(DashAbortGuardBlockPath::Nag)", block)
+        self.assertIn("CanFrame nagFrame = original;", block)
+        self.assertIn("dashNagHandler.handleMessage(nagFrame, driver);", block)
+        self.assertNotIn("dashPluginEngine", block)
+
+        gate_start = self.dash.find("static bool dashInjectionActive()")
+        self.assertNotEqual(gate_start, -1)
+        gate_end = self.dash.find("#if defined(DASH_PLUGIN_ENGINE)", gate_start)
+        self.assertNotEqual(gate_end, -1)
+        gate = self.dash[gate_start:gate_end]
+        self.assertIn("dashOtaGuardAllowInjection()", gate)
+        self.assertIn("canActive && dashApInjectionAllowed()", gate)
 
     def test_four_mode_nag_persistence_and_migration_contract(self) -> None:
         load = re.search(
@@ -437,8 +460,7 @@ class DashboardApiContractTests(unittest.TestCase):
         migrated_branch = mode_load.group("migrated")
         self.assertIn('prefs.getUChar("def_nag_mode", 0)', stored_branch)
         self.assertNotIn("dashBionicSteering", stored_branch)
-        self.assertIn("dashNagMode = dashBionicSteering", migrated_branch)
-        self.assertIn("DashNagMode::ReactiveHold", migrated_branch)
+        self.assertNotIn("dashBionicSteering", migrated_branch)
         self.assertIn("DashNagMode::Off", migrated_branch)
         self.assertIn('prefs.putUChar("def_nag_mode", dashNagMode);', migrated_branch)
 
@@ -460,10 +482,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertLess(handler_body.index(parse_call), handler_body.index("bool prevDefenseEnabled"))
         self.assertNotIn("raw.toInt()", handler_body)
         self.assertNotIn("dashNagMode = 0", handler_body)
-        self.assertIn(
-            "uint8_t effectiveNagMode = dashDefenseEnabled ? dashNagMode : 0;",
-            self.dash,
-        )
+        self.assertIn("dashNagHandler.setMode(dashNagMode);", self.dash)
+        self.assertIn("canActive && dashNagMode !=", self.dash)
 
         export = re.search(
             r"static void handleSettingsExport\(\).*?"
@@ -497,9 +517,9 @@ class DashboardApiContractTests(unittest.TestCase):
         for token in [
             'id="nag-mode-select"',
             '<option value="0">Off</option>',
-            '<option value="1">Human Replay TSL6P</option>',
-            '<option value="2">EPAS Late Echo</option>',
-            '<option value="3">Reactive Sustained Hold</option>',
+            '<option value="1">Mode A</option>',
+            '<option value="2">Mode B</option>',
+            '<option value="3">Mode C</option>',
             "nagMode",
             "defense.nagMode",
             "nag_mode",
@@ -1858,25 +1878,19 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("dashDefenseEnabled && dashDndVolume && (!prevDefenseEnabled || !prevDndVolume)", body)
         self.assertIn("dashDefenseEnabled && dashDndSpeed && (!prevDefenseEnabled || !prevDndSpeed)", body)
 
-    def test_naghandler_dual_mode_passthrough_default(self) -> None:
-        """NagHandler branches on nagTorqueTamperRuntime; DEFAULT = PASSTHROUGH
-        (torque bytes copied unchanged), opt-in = TORQUE_TAMPER (1.80 Nm fixed
-        0xB6 + positive sign nibble). The bionic path was removed in the
-        2026-06-24 dual-mode refactor and must stay out of NagHandler."""
+    def test_naghandler_matches_upstream_beta8_modes(self) -> None:
+        """Built-in handler implements upstream A/B/C with bounded torque."""
         nag = re.search(r"struct NagHandler.*?^\};", self.handlers, re.S | re.M)
         self.assertIsNotNone(nag)
         body = nag.group(0)
-        # Opt-in flag branch
-        self.assertIn("nagTorqueTamperRuntime", body)
-        # PASSTHROUGH default (else): torque bytes copied through unchanged
-        self.assertIn("echo.data[2] = frame.data[2]", body)
-        self.assertIn("echo.data[3] = frame.data[3]", body)
-        # TORQUE_TAMPER opt-in: fixed 1.80 Nm torque + positive sign nibble
-        self.assertIn("0xB6", body)
-        self.assertIn("(frame.data[2] & 0xF0) | 0x08", body)
-        # Removed bionic path must stay out of NagHandler (regression guard)
-        self.assertNotIn("DashBionicSteer", body)
-        self.assertNotIn("bionic.computePerturbation", body)
+        for token in ["BuiltInNagMode::ModeA", "BuiltInNagMode::ModeB", "BuiltInNagMode::ModeC",
+                      "kModeBBurstMs", "kModeBPauseMs", "kContextFreshMs",
+                      "kNagTorqueRawMax"]:
+            self.assertIn(token, body)
+        self.assertIn("kNagTorqueRawMin = 0x074E", self.handlers)
+        self.assertIn("kApStateId = 0x399", body)
+        self.assertIn("kSteeringId = 0x129", body)
+        self.assertIn('blockedReason_ = "steeringAngle"', body)
 
     def test_soft_engage_is_wired_into_legacy_gate(self) -> None:
         """Soft Engage angle gate must be wired into the Legacy dashboard gate
@@ -1908,7 +1922,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         runtime_body = runtime.group(0)
         for token in [
-            "dashHandler->bionicSteering = dashBionicSteering",
+            "dashHandler->bionicSteering = false",
             "dashHandler->isaChimeSuppress = nvsIsaChimeSuppress",
             "dashHandler->banShieldEnable = nvsBanShieldEnable",
             "dashHandler->legacyOffset = nvsLegacyOffset",
@@ -1944,8 +1958,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("bionicDisabled()", body)
         self.assertIn("dashBionicDisabled", body)
 
-    def test_phase3_defense_ui_has_7_toggles(self) -> None:
-        """Defense page must have all 7 toggle switches in pg-defense section.
+    def test_phase3_defense_ui_has_6_toggles(self) -> None:
+        """Defense page keeps non-NAG toggles; NAG is selected directly.
 
         (Was 8; the EPAS-nag toggle ``def-epnag-tgl`` was intentionally removed
         in the nag-injection safety takedown — see ``test_no_epas_nag_contract``
@@ -1956,24 +1970,22 @@ class DashboardApiContractTests(unittest.TestCase):
         body = defense_page.group(0)
         toggles = [
             'id="hw3-slew-tgl"',
-            'id="def-bionic-tgl"',
             'id="def-sound-tgl"',
             'id="def-dnd-vol-tgl"',
             'id="def-speed-nd-tgl"',
             'id="def-dnd-spd-tgl"',
             'id="def-apeap-tgl"',
         ]
-        self.assertEqual(len(toggles), 7)
+        self.assertEqual(len(toggles), 6)
         for tid in toggles:
             with self.subTest(toggle=tid):
                 self.assertIn(tid, body)
         # Sanity: the removed nag toggle must NOT be present (guarded elsewhere too).
         self.assertNotIn('id="def-epnag-tgl"', body)
 
-    def test_phase3_defense_ui_bionic_warning_element(self) -> None:
-        """UI must have bionic-disabled warning element."""
-        self.assertIn('id="def-bionic-warn"', self.ui)
-        self.assertIn("bionic_disabled", self.ui)
+    def test_phase3_defense_ui_explains_independent_nag(self) -> None:
+        self.assertIn("选择即启用，不依赖防护总开关", self.ui)
+        self.assertNotIn('id="def-bionic-tgl"', self.ui)
 
     def test_phase3_defense_js_saves_dnd_params(self) -> None:
         """saveDefenseConfig JS must POST dnd_volume and dnd_speed."""
@@ -2005,8 +2017,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("resetBionic", body)
 
     def test_phase3_defense_runtime_and_persistence_are_wired(self) -> None:
-        """Defense config should drive Nag/Bionic runtime and persist DND switches."""
-        self.assertIn("nagKillerRuntime = canActive && dashDefenseEnabled", self.dash)
+        """Built-in NAG is independent while other defense settings persist."""
+        self.assertIn("nagKillerRuntime = canActive && dashNagMode !=", self.dash)
+        self.assertIn("dashNagHandler.setMode(dashNagMode)", self.dash)
         self.assertIn("uint32_t resetSeed = (uint32_t)millis();", self.dash)
         self.assertIn("dashHandler->resetBionic(resetSeed)", self.dash)
         self.assertIn('prefs.putBool("def_dv", dashDndVolume);', self.dash)

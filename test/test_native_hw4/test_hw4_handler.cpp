@@ -444,22 +444,23 @@ void test_hw4_gear_drive_clears_parked()
 
 void test_hw4_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(10, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(11, handler.filterIdCount());
 }
 
 void test_hw4_filter_ids_values()
 {
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT32(280, ids[0]);
-    TEST_ASSERT_EQUAL_UINT32(390, ids[1]);
-    TEST_ASSERT_EQUAL_UINT32(880, ids[2]); // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
-    TEST_ASSERT_EQUAL_UINT32(920, ids[3]);
-    TEST_ASSERT_EQUAL_UINT32(921, ids[4]);
-    TEST_ASSERT_EQUAL_UINT32(923, ids[5]); // 0x39B DAS_status Highland/HW4
-    TEST_ASSERT_EQUAL_UINT32(1016, ids[6]);
-    TEST_ASSERT_EQUAL_UINT32(1021, ids[7]);
-    TEST_ASSERT_EQUAL_UINT32(2047, ids[8]);
-    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(297, ids[1]);
+    TEST_ASSERT_EQUAL_UINT32(390, ids[2]);
+    TEST_ASSERT_EQUAL_UINT32(880, ids[3]);
+    TEST_ASSERT_EQUAL_UINT32(920, ids[4]);
+    TEST_ASSERT_EQUAL_UINT32(921, ids[5]);
+    TEST_ASSERT_EQUAL_UINT32(923, ids[6]);
+    TEST_ASSERT_EQUAL_UINT32(1016, ids[7]);
+    TEST_ASSERT_EQUAL_UINT32(1021, ids[8]);
+    TEST_ASSERT_EQUAL_UINT32(2047, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[10]);
 }
 
 // --- ISA override rewrite speed limit, HW4 (CAN ID 923 / 0x39B) — spec Task 3 ---

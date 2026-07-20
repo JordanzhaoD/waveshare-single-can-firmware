@@ -313,16 +313,17 @@ class DefensePageCockpitTests(UiV11RedesignTests):
                          "page-title 应已换皮为 ck-head")
 
     def test_defense_toggles_and_ids_preserved(self):
-        # 7 开关 + 保护参数 + 状态点 + 三态全保留
+        # NAG 改为独立模式卡；其余 6 个防护开关与状态保留。
         # (Was 8 toggles; EPAS-nag toggle def-epnag-tgl removed in the
         # nag-injection safety takedown — see test_no_epas_nag_contract.)
-        for i in ["hw3-slew-tgl", "def-bionic-tgl", "def-sound-tgl",
+        for i in ["hw3-slew-tgl", "def-sound-tgl",
                   "def-dnd-vol-tgl", "def-speed-nd-tgl", "def-dnd-spd-tgl",
-                  "def-apeap-tgl", "def-bionic-warn",
+                  "def-apeap-tgl", "nag-mode-select",
                   "def-rate", "def-min", "def-cnt", "def-cur",
                   "def-dot", "def-status",
                   "st-defense-ui", "st-defense-nvs", "st-defense-run"]:
             self.assert_id_present(i)
+        self.assertNotIn('id="def-bionic-tgl"', self._defense_page())
 
 
 class OtaPageCockpitTests(UiV11RedesignTests):

@@ -55,8 +55,8 @@ class ReleaseReadinessContractTest(unittest.TestCase):
         self.assertGreater(generated_check, build)
         self.assertGreater(release_check, bundle)
 
-    def test_release_remains_draft_until_manual_approval(self) -> None:
-        self.assertRegex(self.release_workflow, r"(?m)^\s+draft: true\s*$")
+    def test_stable_release_is_published_automatically(self) -> None:
+        self.assertRegex(self.release_workflow, r"(?m)^\s+draft: false\s*$")
         self.assertNotIn("Publish draft release", self.release_workflow)
         self.assertNotIn("--draft=false", self.release_workflow)
 

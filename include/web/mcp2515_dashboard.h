@@ -223,7 +223,8 @@ static bool dashFogOffRequested = false;  // one-shot fail-off/stop command owne
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
-static uint8_t dashNagMode = 0; // 0=off, 1=legacy_tsl6p, 2=epas_late_echo, 3=reactive_hold
+static uint8_t dashNagMode = 0; // upstream beta.8: 0=Off, 1=Mode A, 2=Mode B, 3=Mode C
+static NagHandler dashNagHandler;
 static bool dashSpeedNoDisturb = false;
 static bool dashDndVolume = false;       // 音量消除DND（Phase 3实现执行逻辑）
 static bool dashDndSpeed = false;        // 速度滚轮DND（Phase 3实现执行逻辑）
@@ -1172,6 +1173,18 @@ static void dashTryApAutoRestore(const CanFrame &trigger, CanDriver &driver)
 static void dashPostProcessFrame(const CanFrame &original, CanDriver &driver)
 {
     dashTryApAutoRestore(original, driver);
+    // v3.0.2-beta.8 parity: NAG is a built-in path independent of the
+    // selected Legacy/HW3/HW4 handler and does not use the plugin engine.
+    if (dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled) && dashInjectionActive())
+    {
+        if (dashHandler && !dashHandler->abortGuard.allowsInjection())
+        {
+            dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::Nag);
+            return;
+        }
+        CanFrame nagFrame = original;
+        dashNagHandler.handleMessage(nagFrame, driver);
+    }
     // FSD activation injection is owned by Legacy/HW3/HW4 handlers.
     // Do not post-process mux0 here; doing so can double-send on dashboard builds.
 }
@@ -1405,7 +1418,8 @@ static void dashApplyRuntimeState()
     emergencyVehicleDetectionRuntime = false;
     isaSpeedChimeSuppressRuntime = false;
     enhancedAutopilotRuntime = false;
-    nagKillerRuntime = canActive && dashDefenseEnabled;
+    nagKillerRuntime = canActive && dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled);
+    dashNagHandler.setMode(dashNagMode);
 
     if (dashHandler)
     {
@@ -1414,13 +1428,14 @@ static void dashApplyRuntimeState()
         dashHandler->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->checkNag = dashCheckNagDisabled;
-        dashHandler->bionicSteering = dashBionicSteering;
-        bool effectiveBionic = dashDefenseEnabled && dashBionicSteering;
-        uint8_t effectiveNagMode = dashDefenseEnabled ? dashNagMode : 0;
+        // The old experimental engines remain available to native regression
+        // tests but are not driven by dashboard modes 1..3. Running both paths
+        // would double-inject the same 0x370 source frame.
+        dashHandler->bionicSteering = false;
         if (CarManagerBase *reactive = dashReactiveNagHandler())
         {
-            reactive->bionicSteering = effectiveBionic;
-            reactive->setNagMode(effectiveNagMode);
+            reactive->bionicSteering = false;
+            reactive->setNagMode(0);
         }
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
@@ -1711,9 +1726,9 @@ static void dashLoadPrefs()
     }
     else
     {
-        dashNagMode = dashBionicSteering
-                          ? dashNagModeToRaw(DashNagMode::ReactiveHold)
-                          : dashNagModeToRaw(DashNagMode::Off);
+        // Upstream stable behavior is default-Off. Do not translate the old
+        // bionic toggle into an armed beta.8 mode during migration.
+        dashNagMode = dashNagModeToRaw(DashNagMode::Off);
         prefs.putUChar("def_nag_mode", dashNagMode);
     }
     dashNagTorqueTamper = prefs.getBool("def_ntt", false);
@@ -2584,6 +2599,25 @@ static void handleStatus()
     j += dashHandler ? ((bool)dashHandler->overrideSpeedLimit ? "true" : "false") : "false";
     j += ",\"nagMode\":";
     j += String(dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
+    NagRuntimeDiag nagDiag = dashNagHandler.diag();
+    j += ",\"builtInNag\":{";
+    j += "\"implementation\":\"upstream_v3.0.2-beta.8\"";
+    j += ",\"mode\":" + String(nagDiag.mode);
+    j += ",\"modeName\":\"" + String(nagModeName(nagDiag.mode)) + "\"";
+    j += ",\"runtimeEnabled\":" + String((bool)nagKillerRuntime ? "true" : "false");
+    j += ",\"rxTarget\":" + String(nagDiag.rxTarget);
+    j += ",\"eligible\":" + String(nagDiag.eligible);
+    j += ",\"txOk\":" + String(nagDiag.txOk);
+    j += ",\"txFail\":" + String(nagDiag.txFail);
+    j += ",\"context399\":" + String(nagDiag.context399);
+    j += ",\"context129\":" + String(nagDiag.context129);
+    j += ",\"apState\":" + String(nagDiag.apState);
+    j += ",\"handsOnState\":" + String(nagDiag.handsOnState);
+    j += ",\"steeringAngleX10\":" + String(nagDiag.steeringAngleX10);
+    j += ",\"lastTorqueRaw\":" + String(nagDiag.lastTorqueRaw);
+    j += ",\"lastRxCounter\":" + String(nagDiag.lastRxCounter);
+    j += ",\"lastTxCounter\":" + String(nagDiag.lastTxCounter);
+    j += ",\"blockedReason\":\"" + String(nagDiag.blockedReason) + "\"}";
     j += ",\"reactiveNag\":{";
     CarManagerBase *reactive = dashReactiveNagHandler();
     DashReactiveDiag d = reactive ? reactive->reactiveDiag() : dashMakeDisabledNagDiag();
@@ -3489,6 +3523,10 @@ static String dashDefenseConfigJson()
     j += dashBionicSteering ? "true" : "false";
     j += ",\"nag_mode\":";
     j += String(dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
+    j += ",\"nag_mode_name\":\"";
+    j += nagModeName(dashNagMode);
+    j += "\"";
+    j += ",\"nag_independent\":true";
     j += ",\"nag_torque_tamper\":";
     j += dashNagTorqueTamper ? "true" : "false";
     j += ",\"soft_engage\":";
@@ -7406,6 +7444,9 @@ static void dashInitHandlers()
         handlerPool[i]->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         handlerPool[i]->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
     }
+    // The selected vehicle handler already records the original RX frame and
+    // the driver callback records TX, so the independent NAG handler must not
+    // register duplicate dashboard callbacks.
 }
 
 static void dashSwapHandler(uint8_t mode)
