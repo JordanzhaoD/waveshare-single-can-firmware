@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.11] - 2026-07-21
+
+### Added
+- **上游 `v3.0.2-beta.8` Built-in NAG 三模式对齐**：新增 Mode A 固定 `+1.80 Nm`、Mode B `+1.80/+1.50/-1.50/-1.80 Nm` 的 1 秒 burst / 1.5 秒 pause，以及使用新鲜 `0x399`、`0x129` 上下文的 Mode C。`0x370` 回显统一执行 counter+1、checksum 重算和 `-1.80..+1.80 Nm` 硬限制。
+- NAG 改为独立 dashboard handler，不再依赖当前 Legacy/HW3/HW4 handler；`/status.builtInNag` 增加上下文、候选帧、TX 成败、扭矩、counter 与明确阻断原因。
+- Legacy 自动速度偏移新增 `configuredMode`、`sharedStrategy`、`activeHandlerLegacy`、`offsetOnlyTxOk/Fail` 和 `blockedReason` 实车诊断。
+
+### Fixed
+- 修复 Waveshare 默认 Auto/HW4 时 NAG 模式写入 Legacy handler、导致 NAG 从未真正执行的问题；选择 NAG 模式现在独立于防护总开关和旧 bionic 开关，同时仍服从 CAN Write、OTA、AP Gate 与 Abort Guard。
+- 修复主速度页“自动偏移”只更新 HW3/HW4 `offsetMode`、未启用 Legacy Auto 的问题；共享 Fixed/Auto/Custom 策略现在会同步到 Legacy 并持久化来源状态。
+- 修复 Legacy 兼容路径只使用 `0x399` fused limit、忽略已收到 `0x2F8 data[6] & 0x1F` 地图限速的问题。`0x2F8` 两秒内优先，失效后回退 `0x399 data[1] & 0x1F`。
+- 将 `0x3EE mux0 byte3[6:1]` 速度偏移与 FSD UI 选择、activation bit46 和 AP-First 稳定计时解耦；偏移可独立发送，但不会提前置 activation bit46。
+
+### Changed
+- 自动偏移继续使用参考固件的分段比例、绝对速度上限、上升立即生效和 `5 km/h/s` 下行平滑；最终偏移钳制到 `0..33 km/h`，按 `offset + 30` 编码并保留 byte3 bit0/bit7。
+- WebUI 明确主速度策略覆盖 HW3/HW4 与 Legacy；Legacy 专用模式仍可独立选择，并在 NVS/备份恢复中保存策略所有权。
+
+### Safety
+- NAG 和 Legacy 自动偏移仍默认关闭；新写入不会绕过 CAN Write、车辆 OTA、父 AP Gate、Abort Guard 或插件所有权冲突检查。
+- 本版本已通过 300 项 Python 契约测试（3 skipped）、18 个 native 环境共 633/633、Waveshare ESP32-S3 release build、clang-format、16MB 分区/合并镜像和 SHA-256 校验。实车自动偏移修复仍需发布后道路闭环确认。
+
 ## [1.10] - 2026-07-18
 
 ### Added
