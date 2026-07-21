@@ -6,9 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.12] - 2026-07-21
+
 ### Fixed
 - Completed the `firmware20260718.bin` Legacy smart-speed request on `0x3EE` mux 0. Automatic offset now updates byte 3 (`offset + 30`), sets byte 5 bits 0-1, and writes the effective offset percentage to byte 7 bits 0-5, matching the reference firmware's three-field wire protocol.
 - Aligned the preferred `0x2F8` map-limit freshness window and downward smoothing behavior with the reference firmware, and added byte-level diagnostics for all modified `0x3EE` fields.
+- Restored the built-in NAG runtime receive path by merging the active Legacy/HW3/HW4 handler filters with the selected NAG mode filters and reloading TWAI acceptance filters whenever the NAG mode or vehicle handler changes.
+- Fixed Mode C context starvation: `0x129` steering frames are now admitted alongside `0x370` and `0x399`, while duplicate filter IDs are removed before the TWAI driver is reconfigured.
+
+### Diagnostics
+- Added explicit NAG route diagnostics for CAN Write, OTA, AP Gate, and Abort Guard blocks, plus counters for received/routed `0x370`, eligible echoes, successful/failed transmissions, filter reloads, and active `0x370`/`0x399`/`0x129` acceptance.
+- Added a live WebUI NAG diagnostics panel so a vehicle test can distinguish missing Party CAN traffic, an outer safety gate, an ineligible source frame, and a transmit failure without guessing.
+
+### Safety and validation
+- NAG remains disabled by default and continues to respect CAN Write, vehicle OTA, AP Gate, Abort Guard, torque bounds, counter, and checksum constraints.
+- Validation completed with 298 Python tests (3 skipped), all 18 explicit native environments (640/640 test cases), the Waveshare ESP32-S3 release build, image inspection, and SHA-256 verification. Vehicle acceptance of NAG echo frames still requires real-car confirmation.
 
 ## [1.11] - 2026-07-21
 
