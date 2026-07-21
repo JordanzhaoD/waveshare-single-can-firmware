@@ -106,8 +106,8 @@ struct DashReactiveDiag
     uint32_t droppedLateEchoes{0};
     uint32_t lateWindowMissed{0};
     int lastRxToTxMs{0};
-    int lastLeadMs{0};
-    bool preserveHandsOnLevel{false};
+    int postRxDelayMs{0};
+    bool assertsHandsOnLevel1{false};
     uint8_t lastSourceHandsOnLevel{0};
     uint8_t lastTxHandsOnLevel{0};
 };

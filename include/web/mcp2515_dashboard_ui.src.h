@@ -1458,7 +1458,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="sel-card" data-value="3" onclick="selectCard('nag-mode-select',3)"><div class="sel-lbl">0x399 + 0x129</div><div class="sel-name">Mode C</div></div>
     </div>
   </div>
-  <div class="hint warn">Legacy：历史非零选择自动迁移为唯一的 Late Human Replay，按 40 ms 节拍在下一原厂 0x370 前约 3 ms 发送，保留 hands-on 位，最多两次反向重试。HW3：A/B/C 对齐 beta.12。HW4：所有内置 NAG fail-closed。默认 Off，最终 TX 仍受 CAN、启动、OTA、AP Gate 与 Abort Guard 约束。</div>
+  <div class="hint warn">Legacy：历史非零选择自动迁移为唯一的 Late Human Replay，在原厂 0x370 后约 1 ms 发送 C+1，并明确置 hands-on level 1，最多两次反向重试。HW3：A/B/C 对齐 beta.12。HW4：所有内置 NAG fail-closed。默认 Off，最终 TX 仍受 CAN、启动、OTA、AP Gate 与 Abort Guard 约束。</div>
   <div class="diag-grid" style="margin-top:10px">
     <div class="diag-item"><span class="lbl">NAG 路由</span><span class="v-warn" id="nag-route">--</span></div>
     <div class="diag-item"><span class="lbl">0x370 RX / Routed</span><span class="v-info" id="nag-rx-route">0 / 0</span></div>
@@ -1523,12 +1523,23 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="tgl"><input type="checkbox" id="abort-guard-toggle" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">Minimal Inject <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">每次 AP engagement 仅发送 5 个 FSD activation mux0 帧，随后停止，避开后续 abort 窗口。</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="minimal-inject-toggle" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
   <div class="diag-grid">
     <div class="diag-item"><span class="lbl">Guard 状态</span><span class="v-dim" id="abort-guard-state">关闭</span></div>
     <div class="diag-item"><span class="lbl">AP state</span><span class="v-dim" id="abort-guard-ap">--</span></div>
     <div class="diag-item"><span class="lbl">Abort state</span><span class="v-dim" id="abort-guard-abort">--</span></div>
     <div class="diag-item"><span class="lbl">阻止次数</span><span class="v-warn" id="abort-guard-blocks">0</span></div>
     <div class="diag-item"><span class="lbl">阻止路径</span><span class="v-dim" id="abort-guard-path">--</span></div>
+    <div class="diag-item"><span class="lbl">Minimal 状态</span><span class="v-dim" id="minimal-inject-state">off</span></div>
+    <div class="diag-item"><span class="lbl">Minimal 已用</span><span class="v-dim" id="minimal-inject-used">-- / --</span></div>
+    <div class="diag-item"><span class="lbl">Minimal 阻止</span><span class="v-warn" id="minimal-inject-blocks">0</span></div>
+    <div class="diag-item"><span class="lbl">Minimal 路径</span><span class="v-dim" id="minimal-inject-path">--</span></div>
   </div>
 </div>
 
@@ -2709,6 +2720,11 @@ function updateDefensePage(d){
   setText('abort-guard-abort',ag.lastAbortState!==undefined?ag.lastAbortState:'--');
   setText('abort-guard-blocks',ag.blocks||0);
   setText('abort-guard-path',ag.lastBlockedPath||ag.lastClearReason||'--');
+  var mi=d.minimalInject||{};
+  setText('minimal-inject-state',mi.enabled?(mi.apEngaged?'armed':'waiting'):'off');
+  setText('minimal-inject-used',(mi.used!==undefined?mi.used:'--')+' / '+(mi.budget!==undefined?mi.budget:'--'));
+  setText('minimal-inject-blocks',mi.blocks||0);
+  setText('minimal-inject-path',mi.lastBlockedPath||mi.lastResetReason||'--');
   var nag=d.builtInNag||{};
   var route=nag.routeBlockedReason||nag.blockedReason||'--';
   setText('nag-route',route);
@@ -2746,6 +2762,7 @@ async function loadDefenseConfig(){
   var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
   var se=$('def-soft-engage-tgl');if(se)se.checked=!!d.soft_engage;
   var ag=$('abort-guard-toggle');if(ag)ag.checked=!!d.abort_guard;
+  var mi=$('minimal-inject-toggle');if(mi)mi.checked=!!d.minimal_inject;
   // Bionic auto-disabled warning
   var bioWarn=$('def-bionic-warn');
   if(bioWarn)bioWarn.style.display=!!d.bionic_disabled?'block':'none';
@@ -2757,7 +2774,7 @@ async function loadDefenseConfig(){
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
-  var exp=(d.abort_guard||d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
+  var exp=(d.abort_guard||d.minimal_inject||d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
   setStatusTriplet('defense',d.enabled?'防御 ON':'防御 OFF',
     'NVS '+(d.enabled?'ON':'OFF')+(exp?' / 含实验项':''),
     exp?'实验项需实车验证':'等待 /status 运行确认',
@@ -3098,6 +3115,7 @@ async function saveDefenseConfig(){
   var ntt=$('def-ntt-tgl');
   var se=$('def-soft-engage-tgl');
   var ag=$('abort-guard-toggle');
+  var mi=$('minimal-inject-toggle');
   var sound=$('def-sound-tgl');
   var isaOvr=$('def-isa-override-tgl');
   var dndVol=$('def-dnd-vol-tgl');
@@ -3111,6 +3129,7 @@ async function saveDefenseConfig(){
     nag_torque_tamper:ntt&&ntt.checked?'1':'0',
     soft_engage:se&&se.checked?'1':'0',
     abort_guard:ag&&ag.checked?'1':'0',
+    minimal_inject:mi&&mi.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
     isa_override:isaOvr&&isaOvr.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',

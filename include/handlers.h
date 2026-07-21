@@ -169,6 +169,7 @@ struct CarManagerBase
     LegacySmartOffsetEngine legacySmartOffsetEngine{};
     LegacySpeedRuntimeDiag legacySpeedDiag{};
     DashAbortGuard abortGuard{};
+    DashMinimalInject minimalInject{};
     Shared<bool> tlsscBypass{false};
     Shared<bool> emergencyVehicleDetection{true};
     Shared<bool> isaChimeSuppress{false};
@@ -277,6 +278,20 @@ struct CarManagerBase
         if (abortGuard.allowsInjection())
             return true;
         abortGuard.recordBlock(path);
+        return false;
+    }
+
+    void observeSafetyApState(uint8_t apState, uint32_t nowMs)
+    {
+        abortGuard.onApState(apState, nowMs);
+        minimalInject.onApState(apState);
+    }
+
+    bool minimalInjectAllowsInjection(const char *path)
+    {
+        if (minimalInject.allowsInjection())
+            return true;
+        minimalInject.recordBlock(path);
         return false;
     }
 
@@ -892,7 +907,7 @@ struct LegacyHandler : public CarManagerBase
             if (isPrimaryDasFrame(frame))
             {
                 const uint32_t apNowMs = dashDiagNowMs();
-                abortGuard.onApState(apState, apNowMs);
+                observeSafetyApState(apState, apNowMs);
                 observeApFirstState(apState, apNowMs);
             }
             APActive = isDASAutopilotActive(apState);
@@ -1003,6 +1018,14 @@ struct LegacyHandler : public CarManagerBase
                             return;
                     }
                 }
+                if (activationAllowed && !minimalInjectAllowsInjection("legacy_fsd_mux0"))
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    if (!speedOffsetRequested)
+                        return;
+                    activationAllowed = false;
+                }
                 if (checkAD && !checkAD())
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
@@ -1048,6 +1071,8 @@ struct LegacyHandler : public CarManagerBase
                 legacySpeedDiag.mux0RxByte7 = legacyFsdDiag.mux0.before[7];
                 legacySpeedDiag.mux0TxByte7 = frame.data[7];
                 legacyFsdDiag.mux0.recordAfter(frame.data);
+                if (activationAllowed)
+                    minimalInject.recordInjection();
                 framesSent++;
                 bool ok = driver.send(frame);
                 if (effectiveOffset > 0)
@@ -1208,7 +1233,7 @@ struct HW3Handler : public CarManagerBase
             if (frame.dlc < 1)
                 return;
             uint8_t apState = readDASAutopilotStatus(frame);
-            abortGuard.onApState(apState, dashDiagNowMs());
+            observeSafetyApState(apState, dashDiagNowMs());
             APActive = isDASAutopilotActive(apState);
             // Capture ISA fused speed limit from byte1[4:0]. raw*5 = kph;
             // 0 = SNA, 31 = NONE-broadcast — both treated as "unknown" by the
@@ -1274,7 +1299,8 @@ struct HW3Handler : public CarManagerBase
             }
             if (index == 0 && (bool)fsdTriggered && injectionAllowed() &&
                 builtInFsdInjectionAllowed() &&
-                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux0))
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux0) &&
+                minimalInjectAllowsInjection("hw3_fsd_mux0"))
             {
                 speedOffset = std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
                 hw3StockOffsetKph = (int)speedOffset;
@@ -1282,6 +1308,7 @@ struct HW3Handler : public CarManagerBase
                 if ((bool)tlsscBypass)
                     setBit(frame, 38, true);
                 setSpeedProfileV12V13(frame, speedProfile);
+                minimalInject.recordInjection();
                 framesSent++;
                 driver.send(frame);
                 if (onSend)
@@ -1844,7 +1871,7 @@ struct HW4Handler : public CarManagerBase
             if (frame.dlc < 1)
                 return;
             uint8_t apState = readDASAutopilotStatus(frame);
-            abortGuard.onApState(apState, dashDiagNowMs());
+            observeSafetyApState(apState, dashDiagNowMs());
             APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
@@ -1868,7 +1895,7 @@ struct HW4Handler : public CarManagerBase
             if (frame.dlc < 2)
                 return;
             uint8_t apState = readHw4Das923ApState(frame);
-            abortGuard.onApState(apState, dashDiagNowMs());
+            observeSafetyApState(apState, dashDiagNowMs());
             APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
@@ -1958,7 +1985,8 @@ struct HW4Handler : public CarManagerBase
             }
             if (index == 0 && (bool)fsdTriggered && injectionAllowed() &&
                 builtInFsdInjectionAllowed() &&
-                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux0))
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux0) &&
+                minimalInjectAllowsInjection("hw4_fsd_mux0"))
             {
                 setBit(frame, 46, true);
                 setBit(frame, 60, true);
@@ -1966,6 +1994,7 @@ struct HW4Handler : public CarManagerBase
                     setBit(frame, 59, true);
                 if ((bool)tlsscBypass)
                     setBit(frame, 38, true);
+                minimalInject.recordInjection();
                 framesSent++;
                 driver.send(frame);
                 if (onSend)

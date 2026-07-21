@@ -218,6 +218,7 @@ static uint8_t dashLegacyCustomPctMid = 30;
 static uint8_t dashLegacyCustomPctHigh = 20;
 static uint8_t dashLegacyCustomPctVeryHigh = 10;
 static bool dashAbortGuardEnabled = false;
+static bool dashMinimalInjectEnabled = false;
 // Dashboard JSON contract tokens: "gpsSpeedSeen" "lastSentOffsetRaw" "latched" "lastAbortState" "lastBlockedPath"
 static bool dashLightingEnabled = false;
 static uint8_t dashLightingCount = 3;
@@ -1041,7 +1042,12 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
         legacyFsdApActiveSinceMs = nowMs;
         legacySoftEngageSent = false;
     }
-    if (!ap.allowed)
+    // Upstream v2.16-beta.19 makes Minimal Inject a persistent debounce
+    // bypass for the engaged episode, not Instant Engage's one-shot edge.
+    // Its five-frame budget below bounds the extra writes to the onset and
+    // prevents a delayed burst from entering the later abort window.
+    const bool minimalBypass = dashMinimalInjectEnabled && ap.engaged;
+    if (!ap.allowed && !minimalBypass)
     {
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
@@ -1502,6 +1508,7 @@ static void dashApplyRuntimeState()
         dashHandler->legacySmartOffsetConfig.customPctHigh = dashClampLegacySmartPct(dashLegacyCustomPctHigh);
         dashHandler->legacySmartOffsetConfig.customPctVeryHigh = dashClampLegacySmartPct(dashLegacyCustomPctVeryHigh);
         dashHandler->abortGuard.setEnabled(dashAbortGuardEnabled);
+        dashHandler->minimalInject.setEnabled(dashMinimalInjectEnabled);
         dashHandler->tlsscBypass = nvsTlsscBypass;
         dashHandler->emergencyVehicleDetection = nvsEmergencyVehicleDetection;
         dashHandler->hw4OffsetRaw = nvsHw4OffsetRaw;
@@ -1566,6 +1573,7 @@ static void dashSavePrefs()
     prefs.putBool("def_ntt", dashNagTorqueTamper);
     prefs.putBool("def_se", dashSoftEngage);
     prefs.putBool("def_ag", dashAbortGuardEnabled);
+    prefs.putBool("apmi", dashMinimalInjectEnabled);
     prefs.putBool("def_nd", dashSpeedNoDisturb);
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
@@ -1786,6 +1794,7 @@ static void dashLoadPrefs()
     nagTorqueTamperRuntime = dashNagTorqueTamper; // boot-sync opt-in to NagHandler
     dashSoftEngage = prefs.getBool("def_se", kSoftEngageDefaultEnabled);
     dashAbortGuardEnabled = prefs.getBool("def_ag", false);
+    dashMinimalInjectEnabled = prefs.getBool("apmi", false);
     dashSpeedNoDisturb = prefs.getBool("def_nd", false);
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
@@ -2807,8 +2816,8 @@ static void handleStatus()
         j += R"(,"droppedLateEchoes":)" + String(d.droppedLateEchoes);
         j += R"(,"lateWindowMissed":)" + String(d.lateWindowMissed);
         j += R"(,"lastRxToTxMs":)" + String(d.lastRxToTxMs);
-        j += R"(,"lastLeadMs":)" + String(d.lastLeadMs);
-        j += R"(,"preserveHandsOnLevel":)" + String(d.preserveHandsOnLevel ? "true" : "false");
+        j += R"(,"postRxDelayMs":)" + String(d.postRxDelayMs);
+        j += R"(,"assertsHandsOnLevel1":)" + String(d.assertsHandsOnLevel1 ? "true" : "false");
         j += R"(,"lastSourceHandsOnLevel":)" + String((int)d.lastSourceHandsOnLevel);
         j += R"(,"lastTxHandsOnLevel":)" + String((int)d.lastTxHandsOnLevel);
         j += R"(,"lastProfileId":)";
@@ -2952,6 +2961,7 @@ static void handleStatus()
     j += dashDndSpeed ? "true" : "false";
     LegacySpeedRuntimeDiag legacySpeed = dashHandler ? dashHandler->legacySpeedDiag : LegacySpeedRuntimeDiag{};
     DashAbortGuardDiag abortDiag = dashHandler ? dashHandler->abortGuard.diag() : DashAbortGuardDiag{};
+    DashMinimalInjectDiag minimalDiag = dashHandler ? dashHandler->minimalInject.diag() : DashMinimalInjectDiag{};
     j += ",\"legacySpeed\":{";
     j += "\"mode\":" + String(static_cast<uint8_t>(legacySpeed.result.mode));
     j += ",\"configuredMode\":" + String(dashLegacyOffsetMode);
@@ -3000,6 +3010,14 @@ static void handleStatus()
     j += ",\"lastClearReason\":\"" + String(abortDiag.lastClearReason) + "\"";
     j += ",\"blocks\":" + String(abortDiag.blocks);
     j += ",\"lastBlockedPath\":\"" + String(abortDiag.lastBlockedPath) + "\"}";
+    j += ",\"minimalInject\":{";
+    j += "\"enabled\":" + String(minimalDiag.enabled ? "true" : "false");
+    j += ",\"apEngaged\":" + String(minimalDiag.apEngaged ? "true" : "false");
+    j += ",\"used\":" + String(minimalDiag.used);
+    j += ",\"budget\":" + String(minimalDiag.budget);
+    j += ",\"blocks\":" + String(minimalDiag.blocks);
+    j += ",\"lastBlockedPath\":\"" + String(minimalDiag.lastBlockedPath) + "\"";
+    j += ",\"lastResetReason\":\"" + String(minimalDiag.lastResetReason) + "\"}";
     appendCapabilitiesJson(j, hwMode, effectiveHw);
     j += "}";
     server.send(200, "application/json", j);
@@ -3013,6 +3031,8 @@ static void handleConfigGet()
 {
     String j = "{\"ap_first_edge\":";
     j += dashInstantEngage ? "true" : "false";
+    j += ",\"ap_first_minimal\":";
+    j += dashMinimalInjectEnabled ? "true" : "false";
     j += ",\"fsdRuntime\":{";
     j += "\"legacyOffset\":" + String(nvsLegacyOffset);
     j += ",\"legacyOffsetMode\":" + String(dashLegacyOffsetMode);
@@ -3704,6 +3724,8 @@ static String dashDefenseConfigJson()
     j += dashSoftEngage ? "true" : "false";
     j += ",\"abort_guard\":";
     j += dashAbortGuardEnabled ? "true" : "false";
+    j += ",\"minimal_inject\":";
+    j += dashMinimalInjectEnabled ? "true" : "false";
     // Bionic disabled warning (3 consecutive failures)
     bool bionicDisabled = dashHandler ? dashHandler->bionicDisabled() : dashBionicDisabled;
     j += ",\"bionic_disabled\":";
@@ -3736,7 +3758,8 @@ static void handleDefenseConfig()
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
         server.hasArg("nag_mode") || server.hasArg("nagMode") ||
         server.hasArg("nag_torque_tamper") ||
-        server.hasArg("soft_engage") || server.hasArg("abort_guard"))
+        server.hasArg("soft_engage") || server.hasArg("abort_guard") ||
+        server.hasArg("minimal_inject"))
     {
         const bool hasNagModeArg = server.hasArg("nag_mode") || server.hasArg("nagMode");
         DashNagMode parsedNagMode = dashNagModeFromRaw(dashNagMode);
@@ -3791,6 +3814,8 @@ static void handleDefenseConfig()
         }
         if (server.hasArg("abort_guard"))
             dashAbortGuardEnabled = dashArgTruthy(server.arg("abort_guard"));
+        if (server.hasArg("minimal_inject"))
+            dashMinimalInjectEnabled = dashArgTruthy(server.arg("minimal_inject"));
         if (server.hasArg("sound_warning_suppression"))
         {
             bool v = dashArgTruthy(server.arg("sound_warning_suppression"));
@@ -6089,8 +6114,8 @@ static void dashSerialRunCommand(char *cmd)
             Serial.printf("scheduled=%lu sent=%lu dropped=%lu missed=%lu\n",
                           (unsigned long)d.scheduledEchoes, (unsigned long)d.sentLateEchoes,
                           (unsigned long)d.droppedLateEchoes, (unsigned long)d.lateWindowMissed);
-            Serial.printf("lastRxToTxMs=%ld leadMs=%ld preserveHandsOnLevel=%d sourceHO=%u txHO=%u lastTorqueRaw=%d blockedReason=%s\n",
-                          (long)d.lastRxToTxMs, (long)d.lastLeadMs, (int)d.preserveHandsOnLevel,
+            Serial.printf("lastRxToTxMs=%ld postRxDelayMs=%ld assertsHandsOnLevel1=%d sourceHO=%u txHO=%u lastTorqueRaw=%d blockedReason=%s\n",
+                          (long)d.lastRxToTxMs, (long)d.postRxDelayMs, (int)d.assertsHandsOnLevel1,
                           (unsigned)d.lastSourceHandsOnLevel, (unsigned)d.lastTxHandsOnLevel,
                           d.lastTorqueRaw, d.blockedReason && d.blockedReason[0] ? d.blockedReason : "none");
             // Raw NVS read (diagnose putUInt vs load bug). rn_* should match RAM after a flush.
@@ -6215,9 +6240,13 @@ static void dashSerialRunCommand(char *cmd)
     else if (strcmp(start, "abort_guard") == 0)
     {
         DashAbortGuardDiag d = dashHandler ? dashHandler->abortGuard.diag() : DashAbortGuardDiag{};
+        DashMinimalInjectDiag m = dashHandler ? dashHandler->minimalInject.diag() : DashMinimalInjectDiag{};
         Serial.println("=== Abort Guard ===");
         Serial.printf("enabled=%u latched=%u lastApState=%u lastAbortState=%u\n", d.enabled ? 1 : 0, d.latched ? 1 : 0, d.lastApState, d.lastAbortState);
         Serial.printf("blocks=%u lastBlockedPath=%s clear=%s\n", (unsigned)d.blocks, d.lastBlockedPath, d.lastClearReason);
+        Serial.printf("minimal enabled=%u engaged=%u used=%u/%u blocks=%u path=%s reset=%s\n",
+                      m.enabled ? 1 : 0, m.apEngaged ? 1 : 0, m.used, m.budget,
+                      (unsigned)m.blocks, m.lastBlockedPath, m.lastResetReason);
     }
     else if (*start)
         Serial.println("Unknown command. Type help.");
@@ -6399,6 +6428,7 @@ static void handleSettingsExport()
     uint8_t storedLegacyCustomPctHigh = dashLegacyCustomPctHigh;
     uint8_t storedLegacyCustomPctVeryHigh = dashLegacyCustomPctVeryHigh;
     bool storedAbortGuard = dashAbortGuardEnabled;
+    bool storedMinimalInject = dashMinimalInjectEnabled;
     bool storedLightingEnabled = dashLightingEnabled;
     uint8_t storedLightingCount = dashLightingCount;
     uint8_t storedLightingFrequency = dashLightingFrequency;
@@ -6483,6 +6513,7 @@ static void handleSettingsExport()
         storedNagTorqueTamper = p.getBool("def_ntt", dashNagTorqueTamper);
         storedSoftEngage = p.getBool("def_se", dashSoftEngage);
         storedAbortGuard = p.getBool("def_ag", dashAbortGuardEnabled);
+        storedMinimalInject = p.getBool("apmi", dashMinimalInjectEnabled);
         storedSpeedNoDisturb = p.getBool("def_nd", dashSpeedNoDisturb);
         storedDndVolume = p.getBool("def_dv", dashDndVolume);
         storedDndSpeed = p.getBool("def_ds", dashDndSpeed);
@@ -6634,6 +6665,7 @@ static void handleSettingsExport()
     j += ",\"nagTorqueTamper\":" + String(storedNagTorqueTamper ? "true" : "false");
     j += ",\"softEngage\":" + String(storedSoftEngage ? "true" : "false");
     j += ",\"abortGuard\":" + String(storedAbortGuard ? "true" : "false");
+    j += ",\"minimalInject\":" + String(storedMinimalInject ? "true" : "false");
     j += ",\"speedNoDisturb\":" + String(storedSpeedNoDisturb ? "true" : "false");
     j += ",\"dndVolume\":" + String(storedDndVolume ? "true" : "false");
     j += ",\"dndSpeed\":" + String(storedDndSpeed ? "true" : "false");
@@ -6956,6 +6988,8 @@ static void handleSettingsImport()
             p.putBool("def_se", defense["softEngage"].as<bool>());
         if (defense["abortGuard"].is<bool>())
             p.putBool("def_ag", defense["abortGuard"].as<bool>());
+        if (defense["minimalInject"].is<bool>())
+            p.putBool("apmi", defense["minimalInject"].as<bool>());
         if (defense["speedNoDisturb"].is<bool>())
             p.putBool("def_nd", defense["speedNoDisturb"].as<bool>());
         if (defense["dndVolume"].is<bool>())
@@ -7707,6 +7741,7 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->legacySmartOffsetConfig.customPctHigh = dashClampLegacySmartPct(dashLegacyCustomPctHigh);
         handlerPool[i]->legacySmartOffsetConfig.customPctVeryHigh = dashClampLegacySmartPct(dashLegacyCustomPctVeryHigh);
         handlerPool[i]->abortGuard.setEnabled(dashAbortGuardEnabled);
+        handlerPool[i]->minimalInject.setEnabled(dashMinimalInjectEnabled);
         handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         handlerPool[i]->overrideSpeedLimit = nvsOverrideSpeedLimit;
         handlerPool[i]->legacyFsdDiag.policy = dashLegacyFsdPolicy;

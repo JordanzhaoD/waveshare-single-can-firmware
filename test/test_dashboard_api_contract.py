@@ -10,6 +10,7 @@ UI_GEN = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
 DASH = ROOT / "include" / "web" / "mcp2515_dashboard.h"
 HANDLERS = ROOT / "include" / "handlers.h"
 CAN_HELPERS = ROOT / "include" / "can_helpers.h"
+ABORT_GUARD = ROOT / "include" / "dash_abort_guard.h"
 LEGACY_SPEED = ROOT / "include" / "dash_legacy_speed.h"
 MAIN = ROOT / "src" / "main.cpp"
 VERSION = ROOT / "VERSION"
@@ -31,6 +32,7 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.dash = DASH.read_text(encoding="utf-8")
         cls.handlers = HANDLERS.read_text(encoding="utf-8")
         cls.can_helpers = CAN_HELPERS.read_text(encoding="utf-8")
+        cls.abort_guard = ABORT_GUARD.read_text(encoding="utf-8")
         cls.legacy_speed = LEGACY_SPEED.read_text(encoding="utf-8")
         cls.main = MAIN.read_text(encoding="utf-8")
         cls.version = VERSION.read_text(encoding="utf-8")
@@ -327,8 +329,8 @@ class DashboardApiContractTests(unittest.TestCase):
                     status_end = len(handler)
                 status_block = handler[status_start:status_end]
                 ap_read_idx = status_block.index("readDASAutopilotStatus(frame)")
-                latch_idx = status_block.find("abortGuard.onApState")
-                self.assertNotEqual(latch_idx, -1, f"{handler_name} DAS status must feed Abort Guard")
+                latch_idx = status_block.find("observeSafetyApState")
+                self.assertNotEqual(latch_idx, -1, f"{handler_name} DAS status must feed Abort Guard and Minimal Inject")
                 self.assertGreater(latch_idx, ap_read_idx)
                 self.assertIn("dashDiagNowMs()", status_block[latch_idx:])
 
@@ -338,13 +340,13 @@ class DashboardApiContractTests(unittest.TestCase):
         status923_end = hw4.index("if (frame.id == 1016)", status923_start)
         status923_block = hw4[status923_start:status923_end]
         ap_read_idx = status923_block.find("readHw4Das923ApState(frame)")
-        latch_idx = status923_block.find("abortGuard.onApState")
+        latch_idx = status923_block.find("observeSafetyApState")
         gate_idx = status923_block.find("abortGuardAllowsInjection")
         self.assertNotEqual(ap_read_idx, -1, "HW4 923 DAS status must use the dedicated safe AP-state decoder")
         self.assertNotIn("readDASAutopilotStatus(frame)", status923_block)
         self.assertIn("(frame.data[1] >> 4) & 0x0F", hw4)
         self.assertIn("hw4Das923UseByte0", hw4)
-        self.assertNotEqual(latch_idx, -1, "HW4 923 DAS status must feed Abort Guard")
+        self.assertNotEqual(latch_idx, -1, "HW4 923 DAS status must feed Abort Guard and Minimal Inject")
         self.assertGreater(latch_idx, ap_read_idx)
         self.assertNotEqual(gate_idx, -1, "HW4 923 write path must remain Abort Guard gated")
         self.assertLess(latch_idx, gate_idx, "HW4 923 must latch Abort Guard before injection gating")
@@ -385,7 +387,7 @@ class DashboardApiContractTests(unittest.TestCase):
             '"droppedLateEchoes"',
             '"lateWindowMissed"',
             '"lastRxToTxMs"',
-            '"preserveHandsOnLevel"',
+            '"assertsHandsOnLevel1"',
             '"lastSourceHandsOnLevel"',
             '"lastTxHandsOnLevel"',
         ]:
@@ -1744,6 +1746,27 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.dash)
         self.assertIn('prefs.getBool("def_ag", false)', self.dash)
 
+    def test_minimal_inject_api_contract(self) -> None:
+        """Minimal Inject is default-off, persisted, visible, and bounded to mux0 activation."""
+        for token in [
+            'kDashMinimalInjectBudget = 5',
+            '"apmi"',
+            '"minimal_inject"',
+            '"minimalInject"',
+            'minimal-inject-toggle',
+            'minimalInjectAllowsInjection("legacy_fsd_mux0")',
+            'minimalInjectAllowsInjection("hw3_fsd_mux0")',
+            'minimalInjectAllowsInjection("hw4_fsd_mux0")',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash + self.handlers + self.ui + self.abort_guard)
+        self.assertIn('dashMinimalInjectEnabled = prefs.getBool("apmi", false);', self.dash)
+        self.assertIn('handlerPool[i]->minimalInject.setEnabled(dashMinimalInjectEnabled);', self.dash)
+        self.assertIn('dashHandler->minimalInject.setEnabled(dashMinimalInjectEnabled);', self.dash)
+        self.assertIn('const bool minimalBypass = dashMinimalInjectEnabled && ap.engaged;', self.dash)
+        self.assertNotIn('minimalInjectAllowsInjection("hw3_fsd_mux1")', self.handlers)
+        self.assertNotIn('minimalInjectAllowsInjection("hw4_fsd_mux2")', self.handlers)
+
     def test_legacy_speed_ui_mentions_smart_offset_and_0x2f8_absence(self) -> None:
         """UI must explain smart speed and frame visibility."""
         for token in [
@@ -1780,7 +1803,7 @@ class DashboardApiContractTests(unittest.TestCase):
             "syncLegacyOffsetInputs('legacy-offset-manual')",
             "syncLegacyOffsetInputs('legacy-offset-inp')",
             "legacyOffset:clampNum('legacy-offset-inp',0,0,33)",
-            "d.abort_guard||d.bionic_steering||d.speed_no_disturb",
+            "d.abort_guard||d.minimal_inject||d.bionic_steering||d.speed_no_disturb",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)

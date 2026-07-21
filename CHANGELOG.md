@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.14] - 2026-07-22
+
+### Changed
+- Legacy NAG stage-1 vehicle validation now sends the bounded 25-point replay about 1 ms after the observed OEM `0x370` frame instead of immediately before the next OEM slot, avoiding the observed 2-9 ms pre-slot timing.
+- Legacy replay now asserts `0x370` byte 4 hands-on level 1 while preserving byte 4 lower source bits, matching the successful physical-wheel trace. The feature remains default-off and retains CAN Write, OTA, AP Gate, Abort Guard, HOS, cadence, checksum, retry, cooldown, and `±1.80 Nm` limits.
+- Aligned Abort Guard with upstream `v2.16-beta.19`: AP state 2 is now treated as Available and re-arms the Abort Guard; a new default-off Minimal Inject mode bypasses the Legacy AP debounce only at the state-3 engagement edge and permits exactly five FSD activation mux0 writes per engagement. Its budget applies only to Legacy/HW3/HW4 FSD activation mux0 frames; NAG, speed-offset-only output, and mux1/mux2 paths retain their existing gates.
+
+### Diagnostics
+- The existing RX-to-TX, TX-to-next-OEM, counter-collision, and transmitted hands-on-level fields can now verify the stage-1 timing and byte-4 assertion during vehicle testing.
+
 ## [1.13] - 2026-07-21
 
 ### Fixed

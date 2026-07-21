@@ -1419,7 +1419,7 @@ void test_epas_late_echo_does_not_send_immediately_on_370()
     TEST_ASSERT_TRUE(d.cadenceStable);
 }
 
-void test_epas_late_echo_tick_sends_due_frame_and_preserves_byte4()
+void test_epas_late_echo_tick_sends_due_frame_and_asserts_hands_on_level1()
 {
     handler.bionicSteering = true;
     handler.setNagModeForTest("late_echo");
@@ -1439,7 +1439,7 @@ void test_epas_late_echo_tick_sends_due_frame_and_preserves_byte4()
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(880, mock.sent[0].id);
-    TEST_ASSERT_EQUAL_HEX8(0x20, mock.sent[0].data[4]);
+    TEST_ASSERT_EQUAL_HEX8(0x60, mock.sent[0].data[4]);
     TEST_ASSERT_LESS_OR_EQUAL_INT(180, decodeEchoTorqueSigned(mock.sent[0]));
     TEST_ASSERT_GREATER_OR_EQUAL_INT(-180, decodeEchoTorqueSigned(mock.sent[0]));
     TEST_ASSERT_EQUAL_UINT8(8, counterLowNibble(mock.sent[0]));
@@ -1473,7 +1473,7 @@ void test_epas_late_echo_new_370_before_tick_drops_pending()
     auto after = handler.lateEchoDiag(before.pendingSendAtMs);
     TEST_ASSERT_FALSE(after.pendingEcho);
     TEST_ASSERT_EQUAL_UINT32(1, after.lateWindowMissed);
-    TEST_ASSERT_EQUAL_STRING("lateWindowMissed", after.blockedReason);
+    TEST_ASSERT_EQUAL_STRING("cadenceUnstable", after.blockedReason);
 }
 
 void test_epas_late_echo_abort_state_cancels_pending()
@@ -1676,7 +1676,7 @@ int main()
     RUN_TEST(test_reactive_hold_counts_only_successful_echoes);
 
     RUN_TEST(test_epas_late_echo_does_not_send_immediately_on_370);
-    RUN_TEST(test_epas_late_echo_tick_sends_due_frame_and_preserves_byte4);
+    RUN_TEST(test_epas_late_echo_tick_sends_due_frame_and_asserts_hands_on_level1);
     RUN_TEST(test_epas_late_echo_new_370_before_tick_drops_pending);
     RUN_TEST(test_epas_late_echo_abort_state_cancels_pending);
     RUN_TEST(test_epas_late_echo_short_abort_state_cancels_pending_and_enters_cooldown);

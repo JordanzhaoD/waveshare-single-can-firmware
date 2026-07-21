@@ -129,7 +129,7 @@ void test_encoder_preserves_source_fields_and_recomputes_checksum()
     TEST_ASSERT_EQUAL_HEX8(source.data[0], out.data[0]);
     TEST_ASSERT_EQUAL_HEX8(source.data[1], out.data[1]);
     TEST_ASSERT_EQUAL_HEX8(source.data[2] & 0xF0, out.data[2] & 0xF0);
-    TEST_ASSERT_EQUAL_HEX8(source.data[4], out.data[4]);
+    TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>((source.data[4] & 0x3F) | 0x40), out.data[4]);
     TEST_ASSERT_EQUAL_HEX8(source.data[5], out.data[5]);
     TEST_ASSERT_EQUAL_HEX8(source.data[6] & 0xF0, out.data[6] & 0xF0);
     TEST_ASSERT_EQUAL_UINT8(8, out.data[6] & 0x0F);
@@ -147,7 +147,7 @@ void test_encoder_clamps_torque_to_180_raw()
     TEST_ASSERT_EQUAL_INT(-180, decodeSignedTorque(out));
 }
 
-void test_late_echo_schedules_at_period_minus_lead()
+void test_late_echo_schedules_one_ms_after_source_rx()
 {
     DashEpasLateEcho n;
     n.setEnabled(true);
@@ -159,7 +159,7 @@ void test_late_echo_schedules_at_period_minus_lead()
     TEST_ASSERT_TRUE(d.pendingEcho);
     TEST_ASSERT_TRUE(d.lateEchoEligible);
     TEST_ASSERT_EQUAL_UINT32(1, d.scheduledEchoes);
-    TEST_ASSERT_EQUAL_UINT32(1000 + 8 * 40 - DashEpasLateEcho::kLateEchoLeadMs, d.pendingSendAtMs);
+    TEST_ASSERT_EQUAL_UINT32(1000 + 7 * 40 + DashEpasLateEcho::kPostRxDelayMs, d.pendingSendAtMs);
 
     DashEpasLateEchoDiag stale = n.diag(1000 + 7 * 40 + DashEpasCadenceTracker::kStaleMs + 1);
     TEST_ASSERT_TRUE(stale.cadenceStable);
@@ -190,7 +190,7 @@ void test_new_rx_before_due_cancels_pending_and_counts_missed_window()
     TEST_ASSERT_EQUAL_STRING("lateWindowMissed", after.blockedReason);
 }
 
-void test_due_frame_builds_only_in_late_window_and_preserves_byte4()
+void test_due_frame_builds_only_in_post_rx_window_and_asserts_hands_on_level1()
 {
     DashEpasLateEcho n;
     n.setEnabled(true);
@@ -203,13 +203,13 @@ void test_due_frame_builds_only_in_late_window_and_preserves_byte4()
     DashEpasLateEchoTxToken token = {};
     TEST_ASSERT_FALSE(n.buildDueFrame(before.pendingSendAtMs - 1, out, true, 6, 3, nullptr, token));
     TEST_ASSERT_TRUE(n.buildDueFrame(before.pendingSendAtMs, out, true, 6, 3, nullptr, token));
-    TEST_ASSERT_EQUAL_HEX8(0xA0, out.data[4]);
+    TEST_ASSERT_EQUAL_HEX8(0x60, out.data[4]);
     TEST_ASSERT_EQUAL_UINT8(8, out.data[6] & 0x0F);
     TEST_ASSERT_TRUE(checksumValid370(out));
     DashEpasLateEchoDiag built = n.diag(before.pendingSendAtMs);
-    TEST_ASSERT_TRUE(built.preserveHandsOnLevel);
+    TEST_ASSERT_TRUE(built.assertsHandsOnLevel1);
     TEST_ASSERT_EQUAL_UINT8(2, built.lastSourceHandsOnLevel);
-    TEST_ASSERT_EQUAL_UINT8(2, built.lastTxHandsOnLevel);
+    TEST_ASSERT_EQUAL_UINT8(1, built.lastTxHandsOnLevel);
 
     n.notifyTxResult(token, true, before.pendingSendAtMs);
     DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs);
@@ -570,8 +570,8 @@ void test_ap_inactive_does_not_enter_burst_on_or_schedule_echo()
     TEST_ASSERT_EQUAL(LateEchoModeState::IDLE, d.mode);
     TEST_ASSERT_FALSE(d.pendingEcho);
     TEST_ASSERT_EQUAL_STRING("apInactive", d.blockedReason);
-    TEST_ASSERT_FALSE(n.due(1000 + 8 * 40 - DashEpasLateEcho::kLateEchoLeadMs));
-    TEST_ASSERT_FALSE(buildLateEcho(n, 1000 + 8 * 40 - DashEpasLateEcho::kLateEchoLeadMs, out, true, 6, 3, nullptr));
+    TEST_ASSERT_FALSE(n.due(1000 + 7 * 40));
+    TEST_ASSERT_FALSE(buildLateEcho(n, 1000 + 7 * 40, out, true, 6, 3, nullptr));
 }
 
 void test_ap_inactive_update_cancels_existing_pending_echo()
@@ -762,21 +762,21 @@ void test_due_window_handles_unsigned_long_rollover()
 {
     DashEpasLateEcho n;
     n.setEnabled(true);
-    const unsigned long lastRx = ULONG_MAX - 37UL;
+    const unsigned long lastRx = ULONG_MAX;
     const unsigned long firstRx = lastRx - 7UL * 40UL;
     n.onDasStatus(6, 3, firstRx - 100UL, true, nullptr);
     for (uint8_t i = 0; i < 8; ++i)
         n.onEpasFrame(makeEpasFrame(i), firstRx + i * 40UL, true);
 
-    const unsigned long dueAt = ULONG_MAX;
+    const unsigned long dueAt = lastRx + DashEpasLateEcho::kPostRxDelayMs;
     DashEpasLateEchoDiag d = n.diag(lastRx);
     TEST_ASSERT_TRUE(d.pendingEcho);
     TEST_ASSERT_EQUAL_UINT64(dueAt, d.pendingSendAtMs);
     TEST_ASSERT_FALSE(n.due(dueAt - 1UL));
     TEST_ASSERT_TRUE(n.due(dueAt));
-    TEST_ASSERT_TRUE(n.due(0UL));
     TEST_ASSERT_TRUE(n.due(1UL));
-    TEST_ASSERT_FALSE(n.due(2UL));
+    TEST_ASSERT_TRUE(n.due(2UL));
+    TEST_ASSERT_FALSE(n.due(3UL));
 }
 
 void test_cooldown_expiry_handles_unsigned_long_rollover()
@@ -911,7 +911,7 @@ void test_late_human_diag_correlates_next_oem_counter_and_timing()
     TEST_ASSERT_EQUAL_UINT8(8, after.lastInjectedCounter);
     TEST_ASSERT_EQUAL_UINT8(8, after.lastNextOemCounter);
     TEST_ASSERT_EQUAL_UINT32(1, after.counterCollisions);
-    TEST_ASSERT_EQUAL_INT(3, after.lastTxToNextOemMs);
+    TEST_ASSERT_EQUAL_INT(39, after.lastTxToNextOemMs);
 }
 
 void test_late_human_observes_context_while_final_gate_is_closed()
@@ -991,16 +991,16 @@ void test_inflight_real_epas_frame_advances_cadence_without_rescheduling_or_losi
     DashEpasLateEchoTxToken token = {};
     TEST_ASSERT_TRUE(n.buildDueFrame(first.pendingSendAtMs, out, true, 6, 3, nullptr, token));
 
-    n.onEpasFrame(makeEpasFrame(8), first.pendingSendAtMs + 1, true);
-    DashEpasLateEchoDiag inFlight = n.diag(first.pendingSendAtMs + 1);
+    n.onEpasFrame(makeEpasFrame(8), 1320, true);
+    DashEpasLateEchoDiag inFlight = n.diag(1320);
     TEST_ASSERT_TRUE(inFlight.pendingEcho);
     TEST_ASSERT_EQUAL_UINT32(first.pendingSendAtMs, inFlight.pendingSendAtMs);
     TEST_ASSERT_GREATER_THAN_UINT32(first.predictedNextRxMs, inFlight.predictedNextRxMs);
     TEST_ASSERT_EQUAL_UINT8(9, inFlight.expectedNextCounter);
     TEST_ASSERT_EQUAL_STRING("inFlight", inFlight.blockedReason);
 
-    n.notifyTxResult(token, false, first.pendingSendAtMs + 2);
-    DashEpasLateEchoDiag after = n.diag(first.pendingSendAtMs + 2);
+    n.notifyTxResult(token, false, 1321);
+    DashEpasLateEchoDiag after = n.diag(1321);
     TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, after.mode);
     TEST_ASSERT_EQUAL_UINT32(1, after.txFailures);
     TEST_ASSERT_EQUAL_STRING("txFail", after.blockedReason);
@@ -1133,7 +1133,7 @@ void test_build_due_frame_rejects_pending_after_burst_on_expires()
 
     DashEpasLateEchoDiag before = n.diag(963);
     TEST_ASSERT_TRUE(before.pendingEcho);
-    TEST_ASSERT_EQUAL_UINT32(1000, before.pendingSendAtMs);
+    TEST_ASSERT_EQUAL_UINT32(964, before.pendingSendAtMs);
 
     CanFrame out = {};
     TEST_ASSERT_FALSE(n.due(1000));
@@ -1204,7 +1204,7 @@ void test_invalid_real_epas_inside_due_window_cancels_stale_pending_echo()
     CanFrame out = {};
     DashEpasLateEchoDiag after = n.diag(before.pendingSendAtMs + 1);
     TEST_ASSERT_FALSE(after.pendingEcho);
-    TEST_ASSERT_EQUAL_STRING("counterUnstable", after.blockedReason);
+    TEST_ASSERT_EQUAL_STRING("cadenceUnstable", after.blockedReason);
     TEST_ASSERT_FALSE(buildLateEcho(n, before.pendingSendAtMs + 1, out, true, 6, 3, nullptr));
 }
 
@@ -1217,9 +1217,9 @@ int main(int argc, char **argv)
     RUN_TEST(test_cadence_tracker_blocks_counter_jump);
     RUN_TEST(test_encoder_preserves_source_fields_and_recomputes_checksum);
     RUN_TEST(test_encoder_clamps_torque_to_180_raw);
-    RUN_TEST(test_late_echo_schedules_at_period_minus_lead);
+    RUN_TEST(test_late_echo_schedules_one_ms_after_source_rx);
     RUN_TEST(test_new_rx_before_due_cancels_pending_and_counts_missed_window);
-    RUN_TEST(test_due_frame_builds_only_in_late_window_and_preserves_byte4);
+    RUN_TEST(test_due_frame_builds_only_in_post_rx_window_and_asserts_hands_on_level1);
     RUN_TEST(test_real_epas_inside_due_window_counts_missed_before_rescheduling);
     RUN_TEST(test_build_due_frame_after_late_window_expires_clears_pending_and_counts_drop);
     RUN_TEST(test_corrupt_checksum_during_warmup_does_not_contribute_to_stability);

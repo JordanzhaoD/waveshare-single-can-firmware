@@ -107,8 +107,8 @@ inline DashReactiveDiag dashMapLateEchoDiag(
     out.droppedLateEchoes = source.droppedLateEchoes;
     out.lateWindowMissed = source.lateWindowMissed;
     out.lastRxToTxMs = source.lastRxToTxMs;
-    out.lastLeadMs = static_cast<int>(DashEpasLateEcho::kLateEchoLeadMs);
-    out.preserveHandsOnLevel = source.preserveHandsOnLevel;
+    out.postRxDelayMs = static_cast<int>(DashEpasLateEcho::kPostRxDelayMs);
+    out.assertsHandsOnLevel1 = source.assertsHandsOnLevel1;
     out.lastSourceHandsOnLevel = source.lastSourceHandsOnLevel;
     out.lastTxHandsOnLevel = source.lastTxHandsOnLevel;
     return out;

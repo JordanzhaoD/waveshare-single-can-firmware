@@ -164,8 +164,10 @@ class DashEpasFaithfulEncoder
         out.data[2] = static_cast<uint8_t>((source.data[2] & 0xF0) | ((encoded >> 8) & 0x0F));
         out.data[3] = static_cast<uint8_t>(encoded & 0xFF);
 
-        // EPAS-faithful: preserve byte4 exactly. Do not forge hands-on with 0x40.
-        out.data[4] = source.data[4];
+        // Stage-1 Legacy validation: reproduce the hands-on level observed in
+        // the successful physical-wheel trace. Keep byte4's lower six source
+        // bits, clear an inherited level-2 flag, and assert level 1 (bit 6).
+        out.data[4] = static_cast<uint8_t>((source.data[4] & 0x3F) | 0x40);
         out.data[5] = source.data[5];
         out.data[6] = static_cast<uint8_t>((source.data[6] & 0xF0) | (expectedCounter & 0x0F));
 
@@ -240,7 +242,7 @@ struct DashEpasLateEchoDiag
     uint8_t lastHosBefore{0};
     uint8_t lastHosAfter{0};
     int lastTargetTorqueRaw{0};
-    bool preserveHandsOnLevel{false};
+    bool assertsHandsOnLevel1{false};
     uint8_t lastSourceHandsOnLevel{0};
     uint8_t lastTxHandsOnLevel{0};
     uint8_t lastApState{0};
@@ -255,7 +257,10 @@ public:
     static constexpr unsigned long kAbortCooldownMs = 3000;
     static constexpr unsigned long kTxFailCooldownMs = 3000;
     static constexpr unsigned long kTxResultTimeoutMs = 100;
-    static constexpr unsigned long kLateEchoLeadMs = 3;
+    // Send immediately after the observed OEM frame. Scheduling near the next
+    // OEM slot made the injected C+1 frame arrive 2-9 ms before the OEM C+1
+    // frame on the Legacy vehicle, yielding a diagnostic counter collision.
+    static constexpr unsigned long kPostRxDelayMs = 1;
     static constexpr unsigned long kMaxLatenessMs = 2;
     static constexpr unsigned long kMaxDasStaleMs = 500;
     static constexpr uint8_t kHumanProfileLen = 25;
@@ -510,7 +515,7 @@ public:
         builtPending_ = false;
         pendingGeneration_++;
         scheduledEchoes_++;
-        pendingSendAtMs_ = cadence_.predictedNextRxMs() - kLateEchoLeadMs;
+        pendingSendAtMs_ = nowMs + kPostRxDelayMs;
         pendingTorqueRaw_ = targetTorqueRaw(pendingSendAtMs_);
         lastTargetTorqueRaw_ = pendingTorqueRaw_;
         blockedReason_ = "";
@@ -609,7 +614,7 @@ public:
         }
         if (!DashEpasFaithfulEncoder::build(cadence_.lastSource(), cadence_.expectedNextCounter(), pendingTorqueRaw_, out))
             return false;
-        preserveHandsOnLevel_ = true;
+        assertsHandsOnLevel1_ = true;
         lastSourceHandsOnLevel_ = static_cast<uint8_t>((cadence_.lastSource().data[4] >> 6) & 0x03);
         lastTxHandsOnLevel_ = static_cast<uint8_t>((out.data[4] >> 6) & 0x03);
         builtPending_ = true;
@@ -686,7 +691,7 @@ public:
         d.lastHosBefore = lastHosBefore_;
         d.lastHosAfter = lastHosAfter_;
         d.lastTargetTorqueRaw = lastTargetTorqueRaw_;
-        d.preserveHandsOnLevel = preserveHandsOnLevel_;
+        d.assertsHandsOnLevel1 = assertsHandsOnLevel1_;
         d.lastSourceHandsOnLevel = lastSourceHandsOnLevel_;
         d.lastTxHandsOnLevel = lastTxHandsOnLevel_;
         d.lastApState = lastApState_;
@@ -905,7 +910,7 @@ private:
     int lastObservedTorqueRaw_{0};
     bool awaitingNextOem_{false};
     unsigned long lastTxAtMs_{0};
-    bool preserveHandsOnLevel_{false};
+    bool assertsHandsOnLevel1_{false};
     uint8_t lastSourceHandsOnLevel_{0};
     uint8_t lastTxHandsOnLevel_{0};
     uint8_t lastApState_{0};

@@ -597,7 +597,7 @@ void test_legacy_ap_first_ota_block_clears_timing_and_blocks_send()
     TEST_ASSERT_FALSE(handler.apFirstDiag(dashDiagNowMs()).edgePending);
 }
 
-void test_legacy_ap_first_abort_guard_blocks_before_bypass()
+void test_legacy_ap_first_abort_guard_blocks_until_available_rearms()
 {
     LegacyHandler handler;
     handler.enablePrint = false;
@@ -605,14 +605,12 @@ void test_legacy_ap_first_abort_guard_blocks_before_bypass()
     handler.abortGuard.setEnabled(true);
 
     setDasApState(handler, 8);
-    setDasApState(handler, 2);
-    setDasApState(handler, 3);
     CanFrame mux0 = legacyMux0Frame();
     handler.handleMessage(mux0, mock);
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     DashApFirstDiag diag = handler.apFirstDiag(dashDiagNowMs());
-    TEST_ASSERT_TRUE(diag.edgePending);
+    TEST_ASSERT_FALSE(diag.edgePending);
     TEST_ASSERT_EQUAL_UINT32(0, diag.apDebounceBypassCount);
     TEST_ASSERT_EQUAL_STRING("legacy_fsd_mux0", handler.abortGuard.diag().lastBlockedPath);
 }
@@ -1016,6 +1014,65 @@ void test_legacy_mux0_sends_when_das_state_is_engaged_6()
     TEST_ASSERT_TRUE((mock.sent[0].data[5] >> 6) & 0x01);
 }
 
+void test_legacy_minimal_inject_stops_activation_after_five_and_rearms()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    handler.legacyFsdActivationAllowed = legacyGateAlwaysAllow;
+    handler.minimalInject.setEnabled(true);
+
+    setDasApState(handler, 3);
+    for (uint8_t i = 0; i < kDashMinimalInjectBudget; ++i)
+    {
+        CanFrame frame = legacyMux0Frame();
+        handler.handleMessage(frame, mock);
+    }
+
+    TEST_ASSERT_EQUAL_UINT8(kDashMinimalInjectBudget, handler.minimalInject.diag().used);
+    TEST_ASSERT_EQUAL(kDashMinimalInjectBudget, mock.sent.size());
+    CanFrame blocked = legacyMux0Frame();
+    handler.handleMessage(blocked, mock);
+    TEST_ASSERT_EQUAL(kDashMinimalInjectBudget, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, handler.minimalInject.diag().blocks);
+
+    setDasApState(handler, 2);
+    setDasApState(handler, 3);
+    CanFrame rearmed = legacyMux0Frame();
+    handler.handleMessage(rearmed, mock);
+    TEST_ASSERT_EQUAL_UINT8(1, handler.minimalInject.diag().used);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_hw3_and_hw4_minimal_inject_stop_only_mux0_activation()
+{
+    HW3Handler hw3;
+    hw3.enablePrint = false;
+    hw3.minimalInject.setEnabled(true);
+    for (uint8_t i = 0; i < kDashMinimalInjectBudget + 1; ++i)
+    {
+        CanFrame f = {.id = 1021, .dlc = 8};
+        f.data[0] = 0;
+        markFsdSelectedInUI(f);
+        hw3.handleMessage(f, mock);
+    }
+    TEST_ASSERT_EQUAL(kDashMinimalInjectBudget, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, hw3.minimalInject.diag().blocks);
+
+    mock.reset();
+    HW4Handler hw4;
+    hw4.enablePrint = false;
+    hw4.minimalInject.setEnabled(true);
+    for (uint8_t i = 0; i < kDashMinimalInjectBudget + 1; ++i)
+    {
+        CanFrame f = {.id = 1021, .dlc = 8};
+        f.data[0] = 0;
+        markFsdSelectedInUI(f);
+        hw4.handleMessage(f, mock);
+    }
+    TEST_ASSERT_EQUAL(kDashMinimalInjectBudget, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, hw4.minimalInject.diag().blocks);
+}
+
 void test_legacy_mux0_blocks_when_das_state_is_abort_or_fault()
 {
     for (uint8_t state : {static_cast<uint8_t>(8), static_cast<uint8_t>(9)})
@@ -1071,7 +1128,7 @@ int main()
     RUN_TEST(test_legacy_ap_first_checkad_blocks_final_send);
     RUN_TEST(test_legacy_ap_first_can_off_clears_timing_and_blocks_send);
     RUN_TEST(test_legacy_ap_first_ota_block_clears_timing_and_blocks_send);
-    RUN_TEST(test_legacy_ap_first_abort_guard_blocks_before_bypass);
+    RUN_TEST(test_legacy_ap_first_abort_guard_blocks_until_available_rearms);
     RUN_TEST(test_legacy_ap_first_soft_engage_off_center_blocks_final_send);
     RUN_TEST(test_legacy_ap_first_parent_disable_and_runtime_reset_clear_transient_state);
 
@@ -1089,6 +1146,8 @@ int main()
     RUN_TEST(test_legacy_mux0_blocks_when_das_state_is_available_not_engaged);
     RUN_TEST(test_legacy_mux0_sends_when_das_state_is_engaged_3);
     RUN_TEST(test_legacy_mux0_sends_when_das_state_is_engaged_6);
+    RUN_TEST(test_legacy_minimal_inject_stops_activation_after_five_and_rearms);
+    RUN_TEST(test_hw3_and_hw4_minimal_inject_stop_only_mux0_activation);
     RUN_TEST(test_legacy_mux0_blocks_when_das_state_is_abort_or_fault);
 
     return UNITY_END();

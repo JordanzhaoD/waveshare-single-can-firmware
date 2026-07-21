@@ -21,11 +21,11 @@ The persisted selector remains `0..3` for upgrade compatibility, but runtime beh
 
 | Vehicle | Runtime behavior |
 |---|---|
-| Legacy | Any migrated non-zero selection enables the single Late Human Replay algorithm. It reads HOS from `0x399`, learns the `0x370` cadence, preserves the source hands-on bits, and sends a bounded 25-point manual-dismiss profile near the predicted next OEM slot. |
+| Legacy | Any migrated non-zero selection enables the single Late Human Replay validation algorithm. It reads HOS from `0x399`, learns the `0x370` cadence, sends the bounded 25-point manual-dismiss profile about 1 ms after the observed OEM frame with `counter + 1`, and asserts hands-on level 1 in byte 4. |
 | HW3 | Modes A/B/C retain the corrected upstream behavior. Mode C uses the current `0x399` HOS and `0x129` steering layouts. |
 | HW4 | All built-in NAG modes fail closed to Off. |
 
-Legacy permits at most two approximately one-second attempts with opposite directions. HOS returning to `<=2` stops immediately; a persistent warning after both attempts enters cooldown. Observation remains active while final transmit gates are closed, but no frame can transmit until CAN Write, OTA, AP Gate, Abort Guard, HOS freshness, cadence, and the late window all allow it.
+Legacy permits at most two approximately one-second attempts with opposite directions. HOS returning to `<=2` stops immediately; a persistent warning after both attempts enters cooldown. Observation remains active while final transmit gates are closed, but no frame can transmit until CAN Write, OTA, AP Gate, Abort Guard, HOS freshness, cadence, and the post-RX send window all allow it.
 
 `/status.builtInNag` and the FSD Guard page expose profile progress, attempts, HOS before/after, learned cadence, RX/TX/OEM timing, counters, collisions, missed windows, and success/failure evidence. Reset Stats clears the active NAG session counters.
 
@@ -43,6 +43,8 @@ The AP delay remains configurable from `0` to `3000ms`, with the local default u
 - Parent AP gate off: control becomes inactive/disabled but keeps its checked value
 
 Instant Engage changes only the Legacy `0x3EE mux0` debounce decision. CAN/FSD enablement, OTA blocking, the parent AP gate, `checkAD`, gear logic, Abort Guard, Soft Engage, plugins, and feature enablement remain authoritative. Runtime evidence is exposed under `/status.fsdDiag.gate` and in serial `system_status`, including edge and consumed-bypass counters.
+
+Abort Guard follows upstream AP semantics: state 2 is Available, not engaged, so it re-arms a prior state-8/9 latch. Minimal Inject is a separate, default-off experimental option. It bypasses the AP debounce only at an AP state-3 engagement edge and allows five FSD activation mux0 writes per engagement, then blocks further activation writes until disengage. It never broadens NAG, speed-offset-only, mux1, or mux2 transmission permissions.
 
 ## CAN Tools
 

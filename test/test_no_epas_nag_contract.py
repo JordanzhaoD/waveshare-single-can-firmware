@@ -264,10 +264,10 @@ class EpasLateEchoContract(unittest.TestCase):
         self.late = (root / "include" / "dash_epas_late_echo.h").read_text()
         self.legacy = legacy_handler_block(self.handlers)
 
-    def test_late_echo_preserves_370_byte4(self) -> None:
-        self.assertIn("out.data[4] = source.data[4]", self.late)
-        self.assertNotIn("| 0x40", self.late)
-        self.assertIn("preserveHandsOnLevel", self.late)
+    def test_late_echo_asserts_370_hands_on_level1_for_stage1_validation(self) -> None:
+        self.assertIn("source.data[4] & 0x3F", self.late)
+        self.assertIn("| 0x40", self.late)
+        self.assertIn("assertsHandsOnLevel1", self.late)
 
     def test_late_echo_hard_caps_torque(self) -> None:
         self.assertRegex(self.late, r"kMaxTorqueRaw\s*=\s*180")
