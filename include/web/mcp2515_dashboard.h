@@ -50,6 +50,7 @@
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
+#include "dash_nag_runtime.h"
 #if defined(DASH_PLUGIN_ENGINE)
 #include "dash_plugin_engine.h"
 #endif
@@ -233,6 +234,19 @@ static bool dashDndVolume = false;       // 音量消除DND（Phase 3实现执�
 static bool dashDndSpeed = false;        // 速度滚轮DND（Phase 3实现执行逻辑）
 static bool dashBionicDisabled = false;  // bionic auto-disabled after 3 failures
 static bool dashNagTorqueTamper = false; // OPT-IN 0x370 torque-tamper (1.80Nm). DEFAULT OFF.
+struct DashNagRouteDiag
+{
+    volatile uint32_t seen370 = 0;
+    volatile uint32_t routed370 = 0;
+    volatile uint32_t outerBlocks = 0;
+    volatile uint32_t filterReloads = 0;
+    volatile uint8_t filterCount = 0;
+    volatile bool filterHas370 = false;
+    volatile bool filterHas399 = false;
+    volatile bool filterHas129 = false;
+    volatile DashNagRouteBlock blockedReason = DashNagRouteBlock::ModeOff;
+};
+static DashNagRouteDiag dashNagRouteDiag;
 static bool dashApEapCompatible = true;
 static LegacyFsdPolicy dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
 static bool dashLegacyFsdMux1Enable = false;
@@ -414,6 +428,7 @@ static void dashClearWifiNetwork(DashWifiNetwork &n)
 static void dashRotateAndConnect();
 static void dashSwapHandler(uint8_t mode);
 static void dashApplyFilters();
+static void dashApplyRuntimeFilters();
 static void dashApplyRuntimeState();
 static uint8_t dashClampLegacyOffsetMode(int v);
 static uint8_t dashClampLegacySmartRateArg(int v);
@@ -1178,15 +1193,26 @@ static void dashPostProcessFrame(const CanFrame &original, CanDriver &driver)
     dashTryApAutoRestore(original, driver);
     // v3.0.2-beta.8 parity: NAG is a built-in path independent of the
     // selected Legacy/HW3/HW4 handler and does not use the plugin engine.
-    if (dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled) && dashInjectionActive())
+    const bool isTarget = original.id == NagHandler::kTargetId;
+    if (isTarget)
+        dashNagRouteDiag.seen370 = dashNagRouteDiag.seen370 + 1;
+    const bool abortAllowed = !dashHandler || dashHandler->abortGuard.allowsInjection();
+    const DashNagRouteBlock routeBlock = dashNagRouteBlock(
+        dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled),
+        canActive, dashOtaGuardAllowInjection(), dashApInjectionAllowed(), abortAllowed);
+    dashNagRouteDiag.blockedReason = routeBlock;
+    if (routeBlock == DashNagRouteBlock::None)
     {
-        if (dashHandler && !dashHandler->abortGuard.allowsInjection())
-        {
-            dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::Nag);
-            return;
-        }
+        if (isTarget)
+            dashNagRouteDiag.routed370 = dashNagRouteDiag.routed370 + 1;
         CanFrame nagFrame = original;
         dashNagHandler.handleMessage(nagFrame, driver);
+    }
+    else if (isTarget)
+    {
+        dashNagRouteDiag.outerBlocks = dashNagRouteDiag.outerBlocks + 1;
+        if (routeBlock == DashNagRouteBlock::AbortGuard && dashHandler)
+            dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::Nag);
     }
     // FSD activation injection is owned by Legacy/HW3/HW4 handlers.
     // Do not post-process mux0 here; doing so can double-send on dashboard builds.
@@ -2023,6 +2049,38 @@ static void dashApplyFilters()
 #endif
 }
 
+// Keep the active vehicle handler and the independent NAG engine on one
+// acceptance list. This is required for TWAI's exact software filter: Mode C
+// otherwise never sees 0x129 after a runtime mode change.
+static void dashApplyRuntimeFilters()
+{
+    if (!dashHandler || !dashDriver)
+        return;
+
+    uint32_t mergedIds[32] = {};
+    const bool nagEnabled = dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled);
+    const uint32_t *nagIds = nagEnabled ? dashNagHandler.modeFilterIds() : nullptr;
+    const uint8_t nagCount = nagEnabled ? dashNagHandler.modeFilterIdCount(dashNagMode) : 0;
+    const uint8_t count = dashMergeNagFilterIds(
+        dashHandler->filterIds(), dashHandler->filterIdCount(), nagIds, nagCount,
+        mergedIds, static_cast<uint8_t>(sizeof(mergedIds) / sizeof(mergedIds[0])));
+
+    dashDriver->setFilters(mergedIds, count);
+    dashNagRouteDiag.filterCount = count;
+    dashNagRouteDiag.filterHas370 = false;
+    dashNagRouteDiag.filterHas399 = false;
+    dashNagRouteDiag.filterHas129 = false;
+    for (uint8_t i = 0; i < count; i++)
+    {
+        dashNagRouteDiag.filterHas370 |= mergedIds[i] == NagHandler::kTargetId;
+        dashNagRouteDiag.filterHas399 |= mergedIds[i] == NagHandler::kApStateId;
+        dashNagRouteDiag.filterHas129 |= mergedIds[i] == NagHandler::kSteeringId;
+    }
+    dashNagRouteDiag.filterReloads = dashNagRouteDiag.filterReloads + 1;
+    dashLog("[CFG] Runtime filters=" + String(count) + " NAG=" +
+            String(nagEnabled ? nagModeName(dashNagMode) : "Off"));
+}
+
 // Bus-off recovery (MCP2515 only — TWAI driver handles its own bus-off internally)
 #if defined(DRIVER_ESP32_EXT_MCP2515)
 static unsigned long lastEflgCheckMs = 0;
@@ -2622,7 +2680,19 @@ static void handleStatus()
     j += ",\"lastTorqueRaw\":" + String(nagDiag.lastTorqueRaw);
     j += ",\"lastRxCounter\":" + String(nagDiag.lastRxCounter);
     j += ",\"lastTxCounter\":" + String(nagDiag.lastTxCounter);
-    j += ",\"blockedReason\":\"" + String(nagDiag.blockedReason) + "\"}";
+    j += ",\"blockedReason\":\"" + String(nagDiag.blockedReason) + "\"";
+    j += ",\"routeBlockedReason\":\"";
+    j += dashNagRouteBlockName(dashNagRouteDiag.blockedReason);
+    j += "\"";
+    j += ",\"seen370\":" + String((uint32_t)dashNagRouteDiag.seen370);
+    j += ",\"routed370\":" + String((uint32_t)dashNagRouteDiag.routed370);
+    j += ",\"outerBlocks\":" + String((uint32_t)dashNagRouteDiag.outerBlocks);
+    j += ",\"filterReloads\":" + String((uint32_t)dashNagRouteDiag.filterReloads);
+    j += ",\"filterCount\":" + String((uint8_t)dashNagRouteDiag.filterCount);
+    j += ",\"filterHas370\":" + String(dashNagRouteDiag.filterHas370 ? "true" : "false");
+    j += ",\"filterHas399\":" + String(dashNagRouteDiag.filterHas399 ? "true" : "false");
+    j += ",\"filterHas129\":" + String(dashNagRouteDiag.filterHas129 ? "true" : "false");
+    j += "}";
     j += ",\"reactiveNag\":{";
     CarManagerBase *reactive = dashReactiveNagHandler();
     DashReactiveDiag d = reactive ? reactive->reactiveDiag() : dashMakeDisabledNagDiag();
@@ -3658,6 +3728,7 @@ static void handleDefenseConfig()
             if (CarManagerBase *reactive = dashReactiveNagHandler(); reactive && reactive != dashHandler)
                 reactive->resetBionic(resetSeed);
         }
+        const uint8_t previousNagMode = dashNagMode;
         if (hasNagModeArg)
             dashNagMode = dashNagModeToRaw(parsedNagMode);
         if (server.hasArg("nag_torque_tamper"))
@@ -3708,6 +3779,8 @@ static void handleDefenseConfig()
         if (dashHandler)
             dashHandler->banShieldEnable = dashDefenseEnabled;
         dashApplyRuntimeState();
+        if (hasNagModeArg && previousNagMode != dashNagMode)
+            dashApplyRuntimeFilters();
         dashSavePrefs();
         dashLog("[CFG] /defense_config saved");
     }
@@ -7531,11 +7604,8 @@ static void dashSwapHandler(uint8_t mode)
     appActiveHandler = next;
     dashHandler = next;
     dashApplyRuntimeState();
-    // Update driver acceptance filters for the new handler.
-    // For MCP2515 (ext) dashApplyFilters() will also fine-tune the hardware
-    // filter registers. For TWAI and old MCP2515 this abstract call is enough.
-    if (dashDriver)
-        dashDriver->setFilters(next->filterIds(), next->filterIdCount());
+    // Preserve the independent NAG acceptance IDs across handler changes.
+    dashApplyRuntimeFilters();
     const char *hwName = "LEGACY";
     if (mode == 1 || (mode == 3 && effective == 1))
         hwName = "HW3";

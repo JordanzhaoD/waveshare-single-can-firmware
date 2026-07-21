@@ -1459,6 +1459,12 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
   </div>
   <div class="hint warn">上游 beta.8 对齐：A 固定 +1.80 Nm；B 循环 +1.80/+1.50/-1.50/-1.80 Nm；C 仅在 0x399/0x129 均新鲜、AP 状态 3..6 且方向盘 ±5° 内运行。默认 Off，仍受 CAN、启动、OTA 与 AP 注入门控约束。</div>
+  <div class="diag-grid" style="margin-top:10px">
+    <div class="diag-item"><span class="lbl">NAG 路由</span><span class="v-warn" id="nag-route">--</span></div>
+    <div class="diag-item"><span class="lbl">0x370 RX / Routed</span><span class="v-info" id="nag-rx-route">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">Eligible / TX OK</span><span class="v-acc" id="nag-eligible-tx">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">过滤器 370/399/129</span><span class="v-dim" id="nag-filters">--</span></div>
+  </div>
   <div class="setting-row">
     <div>
       <div class="setting-name">声音警告抑制</div>
@@ -2699,6 +2705,13 @@ function updateDefensePage(d){
   setText('abort-guard-abort',ag.lastAbortState!==undefined?ag.lastAbortState:'--');
   setText('abort-guard-blocks',ag.blocks||0);
   setText('abort-guard-path',ag.lastBlockedPath||ag.lastClearReason||'--');
+  var nag=d.builtInNag||{};
+  var route=nag.routeBlockedReason||nag.blockedReason||'--';
+  setText('nag-route',route);
+  setCls('nag-route','v-'+(route==='none'?'ok':'warn'));
+  setText('nag-rx-route',(nag.seen370||0)+' / '+(nag.routed370||0));
+  setText('nag-eligible-tx',(nag.eligible||0)+' / '+(nag.txOk||0)+(nag.txFail?(' · fail '+nag.txFail):''));
+  setText('nag-filters',(nag.filterHas370?'Y':'N')+'/'+(nag.filterHas399?'Y':'N')+'/'+(nag.filterHas129?'Y':'N')+' · '+(nag.filterCount||0));
   var dot=$('def-dot');
   var statusEl=$('def-status');
   if(d.hw3OffsetSlew){

@@ -3,6 +3,7 @@
 #include "drivers/can_driver.h"
 #include "can_helpers.h"
 #include "handlers.h"
+#include "dash_nag_runtime.h"
 #include "drivers/mock_driver.h"
 #include <cstring>
 #include "real_epas_frames.h"
@@ -70,6 +71,55 @@ static bool verifyChecksum(const CanFrame &f)
     for (int i = 0; i < 7; i++)
         sum += f.data[i];
     return f.data[7] == static_cast<uint8_t>((sum + 0x73) & 0xFF);
+}
+
+static bool containsId(const uint32_t *ids, uint8_t count, uint32_t id)
+{
+    for (uint8_t i = 0; i < count; i++)
+    {
+        if (ids[i] == id)
+            return true;
+    }
+    return false;
+}
+
+void test_nag_runtime_filter_merge_mode_a_deduplicates_target()
+{
+    const uint32_t handlerIds[] = {69, 880, 921};
+    const uint32_t nagIds[] = {880};
+    uint32_t merged[8] = {};
+    uint8_t count = dashMergeNagFilterIds(handlerIds, 3, nagIds, 1, merged, 8);
+    TEST_ASSERT_EQUAL_UINT8(3, count);
+    TEST_ASSERT_TRUE(containsId(merged, count, 880));
+}
+
+void test_nag_runtime_filter_merge_mode_c_includes_all_context()
+{
+    const uint32_t handlerIds[] = {69, 880, 921};
+    const uint32_t nagIds[] = {880, 0x399, 0x129};
+    uint32_t merged[8] = {};
+    uint8_t count = dashMergeNagFilterIds(handlerIds, 3, nagIds, 3, merged, 8);
+    // 0x399 is decimal 921 and is already present in the handler list.
+    TEST_ASSERT_EQUAL_UINT8(4, count);
+    TEST_ASSERT_TRUE(containsId(merged, count, 880));
+    TEST_ASSERT_TRUE(containsId(merged, count, 0x399));
+    TEST_ASSERT_TRUE(containsId(merged, count, 0x129));
+}
+
+void test_nag_route_reports_each_outer_gate()
+{
+    TEST_ASSERT_EQUAL(DashNagRouteBlock::ModeOff,
+                      dashNagRouteBlock(false, true, true, true, true));
+    TEST_ASSERT_EQUAL(DashNagRouteBlock::CanWriteOff,
+                      dashNagRouteBlock(true, false, true, true, true));
+    TEST_ASSERT_EQUAL(DashNagRouteBlock::Ota,
+                      dashNagRouteBlock(true, true, false, true, true));
+    TEST_ASSERT_EQUAL(DashNagRouteBlock::ApGate,
+                      dashNagRouteBlock(true, true, true, false, true));
+    TEST_ASSERT_EQUAL(DashNagRouteBlock::AbortGuard,
+                      dashNagRouteBlock(true, true, true, true, false));
+    TEST_ASSERT_EQUAL(DashNagRouteBlock::None,
+                      dashNagRouteBlock(true, true, true, true, true));
 }
 
 void setUp()
@@ -668,6 +718,9 @@ int main()
     RUN_TEST(test_nag_mode_c_blocks_without_context);
     RUN_TEST(test_nag_mode_c_injects_after_state2_delay_with_fresh_context);
     RUN_TEST(test_nag_mode_c_fails_closed_for_stale_or_large_angle_context);
+    RUN_TEST(test_nag_runtime_filter_merge_mode_a_deduplicates_target);
+    RUN_TEST(test_nag_runtime_filter_merge_mode_c_includes_all_context);
+    RUN_TEST(test_nag_route_reports_each_outer_gate);
 
     return UNITY_END();
 }

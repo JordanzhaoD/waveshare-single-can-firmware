@@ -426,7 +426,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotEqual(end, -1)
         block = self.dash[start:end]
 
-        self.assertIn("dashInjectionActive()", block)
+        self.assertIn("dashNagRouteBlock(", block)
+        self.assertIn("canActive, dashOtaGuardAllowInjection(), dashApInjectionAllowed()", block)
         self.assertIn("abortGuard.allowsInjection()", block)
         self.assertIn("abortGuard.recordBlock(DashAbortGuardBlockPath::Nag)", block)
         self.assertIn("CanFrame nagFrame = original;", block)
@@ -440,6 +441,42 @@ class DashboardApiContractTests(unittest.TestCase):
         gate = self.dash[gate_start:gate_end]
         self.assertIn("dashOtaGuardAllowInjection()", gate)
         self.assertIn("canActive && dashApInjectionAllowed()", gate)
+
+    def test_builtin_nag_runtime_filters_reload_with_mode_and_handler(self) -> None:
+        self.assertIn("static void dashApplyRuntimeFilters()", self.dash)
+        self.assertIn("dashNagHandler.modeFilterIds()", self.dash)
+        self.assertIn("dashNagHandler.modeFilterIdCount(dashNagMode)", self.dash)
+        self.assertIn("dashMergeNagFilterIds(", self.dash)
+
+        handler = re.search(
+            r"static void handleDefenseConfig\(\).*?"
+            r"static void handleLegacyFsdConfig\(\)",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(handler)
+        self.assertIn("previousNagMode != dashNagMode", handler.group(0))
+        self.assertIn("dashApplyRuntimeFilters();", handler.group(0))
+
+        swap = re.search(
+            r"static void dashSwapHandler\(uint8_t mode\).*?"
+            r"// Apply NVS-staged runtime switches",
+            self.dash,
+            re.S,
+        )
+        self.assertIsNotNone(swap)
+        self.assertIn("dashApplyRuntimeFilters();", swap.group(0))
+        self.assertNotIn("setFilters(next->filterIds()", swap.group(0))
+
+        for token in [
+            '\\"routeBlockedReason\\"',
+            '\\"seen370\\"',
+            '\\"routed370\\"',
+            '\\"filterHas370\\"',
+            '\\"filterHas399\\"',
+            '\\"filterHas129\\"',
+        ]:
+            self.assertIn(token, self.dash)
 
     def test_four_mode_nag_persistence_and_migration_contract(self) -> None:
         load = re.search(
