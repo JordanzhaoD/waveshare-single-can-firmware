@@ -891,7 +891,7 @@ void test_legacy_0x2f8_is_read_only_limit_source()
     TEST_ASSERT_EQUAL_UINT16(60, handler.legacySpeedDiag.gpsMppLimitKph);
 }
 
-void test_legacy_0x3ee_manual_offset_preserves_byte3_edges()
+void test_legacy_0x3ee_manual_offset_writes_complete_reference_request()
 {
     handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Manual;
     handler.legacySmartOffsetConfig.manualOffsetKph = 12;
@@ -900,13 +900,17 @@ void test_legacy_0x3ee_manual_offset_preserves_byte3_edges()
 
     CanFrame f = {.id = 1006, .dlc = 8};
     f.data[0] = 0;
-    f.data[3] = 0x81;
+    f.data[3] = 0x01;
     f.data[4] = 0x40;
+    f.data[5] = 0xA0;
+    f.data[7] = 0xC0;
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(1006, mock.sent[0].id);
-    TEST_ASSERT_EQUAL_HEX8(0x81 | (42 << 1), mock.sent[0].data[3]);
+    TEST_ASSERT_EQUAL_HEX8(0x80 | 0x01 | (42 << 1), mock.sent[0].data[3]);
+    TEST_ASSERT_EQUAL_HEX8(0xE3, mock.sent[0].data[5]); // activation bit46 plus reference bits 0..1
+    TEST_ASSERT_EQUAL_HEX8(0xD4, mock.sent[0].data[7]); // round(12/60*100) = 20
     TEST_ASSERT_EQUAL_UINT8(42, handler.legacySpeedDiag.lastSentOffsetRaw);
     TEST_ASSERT_EQUAL_UINT8(12, handler.legacySpeedDiag.lastSentOffsetKph);
     TEST_ASSERT_EQUAL(LegacySpeedLimitSource::Gps2F8, handler.legacySpeedDiag.limitSource);
@@ -921,11 +925,15 @@ void test_legacy_0x3ee_auto_prefers_2f8_limit()
     CanFrame f = {.id = 1006, .dlc = 8};
     f.data[0] = 0;
     f.data[4] = 0x40;
+    f.data[5] = 0x20;
+    f.data[7] = 0x80;
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(1006, mock.sent[0].id);
     TEST_ASSERT_EQUAL_UINT8(60, (mock.sent[0].data[3] >> 1) & 0x3F);
+    TEST_ASSERT_EQUAL_HEX8(0x63, mock.sent[0].data[5]);
+    TEST_ASSERT_EQUAL_HEX8(0xB2, mock.sent[0].data[7]);
     TEST_ASSERT_EQUAL_UINT8(30, handler.legacySpeedDiag.lastSentOffsetKph);
     TEST_ASSERT_EQUAL_UINT16(60, handler.legacySpeedDiag.result.speedLimitKph);
     TEST_ASSERT_EQUAL_UINT16(90, handler.legacySpeedDiag.result.rawTargetKph);
@@ -948,7 +956,9 @@ void test_legacy_0x3ee_auto_offset_is_independent_of_fsd_ui_selection()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_FALSE(handler.fsdTriggered);
     TEST_ASSERT_EQUAL_HEX8(0x00, mock.sent[0].data[5] & 0x40);
-    TEST_ASSERT_EQUAL_HEX8(0x81 | (60 << 1), mock.sent[0].data[3]);
+    TEST_ASSERT_EQUAL_HEX8(0x80 | 0x01 | (60 << 1), mock.sent[0].data[3]);
+    TEST_ASSERT_EQUAL_HEX8(0x03, mock.sent[0].data[5]);
+    TEST_ASSERT_EQUAL_HEX8(50, mock.sent[0].data[7]);
     TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.offsetOnlyTxOk);
     TEST_ASSERT_EQUAL_STRING("none", handler.legacySpeedDiag.blockedReason);
 }
@@ -969,6 +979,8 @@ void test_legacy_0x3ee_auto_offset_bypasses_activation_settle_only()
     TEST_ASSERT_TRUE(handler.fsdTriggered);
     TEST_ASSERT_EQUAL_HEX8(0x00, mock.sent[0].data[5] & 0x40);
     TEST_ASSERT_EQUAL_UINT8(60, (mock.sent[0].data[3] >> 1) & 0x3F);
+    TEST_ASSERT_EQUAL_HEX8(0x03, mock.sent[0].data[5]);
+    TEST_ASSERT_EQUAL_HEX8(50, mock.sent[0].data[7] & 0x3F);
     TEST_ASSERT_EQUAL(FsdHealthState::GateBlocked, handler.legacyFsdDiag.health);
     TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.offsetOnlyTxOk);
 }
@@ -1632,7 +1644,7 @@ int main()
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
 
     RUN_TEST(test_legacy_0x2f8_is_read_only_limit_source);
-    RUN_TEST(test_legacy_0x3ee_manual_offset_preserves_byte3_edges);
+    RUN_TEST(test_legacy_0x3ee_manual_offset_writes_complete_reference_request);
     RUN_TEST(test_legacy_0x3ee_auto_prefers_2f8_limit);
     RUN_TEST(test_legacy_0x3ee_auto_offset_is_independent_of_fsd_ui_selection);
     RUN_TEST(test_legacy_0x3ee_auto_offset_bypasses_activation_settle_only);

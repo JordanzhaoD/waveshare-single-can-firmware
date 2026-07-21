@@ -1563,6 +1563,11 @@ class DashboardApiContractTests(unittest.TestCase):
         mux0 = re.search(r"legacyFsdDiag\.mux0\.recordBefore\(frame\.data\);.*?legacyFsdDiag\.mux0\.recordAfter", self.handlers, re.S)
         self.assertIsNotNone(mux0)
         self.assertIn('dashWriteLegacyOffsetTo3eeMux0', mux0.group(0))
+        self.assertIn('legacySpeedDiag.outputOffsetPct', mux0.group(0))
+        self.assertIn('mux0RxByte5', self.handlers)
+        self.assertIn('mux0TxByte5', self.handlers)
+        self.assertIn('mux0RxByte7', self.handlers)
+        self.assertIn('mux0TxByte7', self.handlers)
         resolver = re.search(r"uint8_t computeLegacySpeedOffset\(.*?\n    \}", self.handlers, re.S)
         self.assertIsNotNone(resolver)
         self.assertIn('LegacySpeedLimitSource::Gps2F8', resolver.group(0))
@@ -1791,8 +1796,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(panel_match)
         panel = panel_match.group(0)
         expected_rows = [
-            ("≤ 40 km/h", "+50%，封顶 60"),
-            ("≤ 60 km/h", "+50%，封顶 90"),
+            ("≤ 35 km/h", "+63%，封顶 60"),
+            ("36-60 km/h", "+50%，按参考绝对上限"),
             ("≤ 90 km/h", "+30%，封顶 117"),
             ("≤ 110 km/h", "+20%，封顶 132"),
             ("> 110 km/h", "+10%，封顶 132"),

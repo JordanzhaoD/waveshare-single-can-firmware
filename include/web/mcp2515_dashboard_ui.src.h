@@ -1076,7 +1076,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
 <div class="card cockpit-card" id="legacy-smart-speed-card">
   <div class="card-title">Legacy 智能速度偏移 <span class="exp-badge" id="legacy-speed-chip">等待限速源</span></div>
-  <div class="card-subtitle">0x2F8 / 760 只读地图限速，2 秒内优先；缺失时回退 0x399 fused limit。速度偏移独立于 FSD 激活位，最终写入 0x3EE mux0。</div>
+  <div class="card-subtitle">0x2F8 / 760 只读地图限速，3 秒内优先；缺失时回退 0x399 fused limit。自动偏移按参考固件同时写入 0x3EE mux0 的 byte3 / byte5 / byte7。</div>
   <div class="setting-row">
     <div><div class="setting-name">智能速度偏移模式</div><div class="setting-desc">默认关闭；手动模式使用固定 km/h 偏移。</div></div>
     <select id="legacy-offset-mode" style="display:none" onchange="saveLegacySmartSpeed()"><option value="off">关闭</option><option value="manual">手动</option><option value="auto">自动</option><option value="custom">自定义百分比</option></select>
@@ -1122,6 +1122,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="diag-item"><span class="lbl">输出偏移</span><span class="v-info" id="legacy-output-kph">--</span></div>
     <div class="diag-item"><span class="lbl">限速来源</span><span class="v-warn" id="legacy-gps-seen">等待数据</span></div>
     <div class="diag-item"><span class="lbl">最后原始值</span><span class="v-dim" id="legacy-last-raw">--</span></div>
+    <div class="diag-item"><span class="lbl">0x3EE B3/B5/B7</span><span class="v-dim" id="legacy-wire-bytes">--</span></div>
   </div>
 </div>
 
@@ -1145,8 +1146,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <table class="tbl">
     <thead><tr><th>速度限制</th><th>自动偏移</th></tr></thead>
     <tbody>
-      <tr><td>≤ 40 km/h</td><td>+50%，封顶 60</td></tr>
-      <tr><td>≤ 60 km/h</td><td>+50%，封顶 90</td></tr>
+      <tr><td>≤ 35 km/h</td><td>+63%，封顶 60</td></tr>
+      <tr><td>36-60 km/h</td><td>+50%，按参考绝对上限</td></tr>
       <tr><td>≤ 90 km/h</td><td>+30%，封顶 117</td></tr>
       <tr><td>≤ 110 km/h</td><td>+20%，封顶 132</td></tr>
       <tr><td>> 110 km/h</td><td>+10%，封顶 132</td></tr>
@@ -2678,6 +2679,10 @@ function updateSpeedPage(d){
   setText('legacy-smooth-kph',ls.smoothedTargetKph!==undefined?ls.smoothedTargetKph+' kph':'--');
   setText('legacy-output-kph',ls.outputOffsetKph!==undefined?ls.outputOffsetKph+' kph':'--');
   setText('legacy-last-raw',ls.lastSentOffsetRaw!==undefined?('raw '+ls.lastSentOffsetRaw+' / '+(ls.lastSentOffsetKph!==undefined?ls.lastSentOffsetKph+' kph':'--')+' · '+(ls.blockedReason||'none')):'--');
+  var b3=(ls.mux0RxByte3!==undefined?ls.mux0RxByte3:'--')+'→'+(ls.mux0TxByte3!==undefined?ls.mux0TxByte3:'--');
+  var b5=(ls.mux0RxByte5!==undefined?ls.mux0RxByte5:'--')+'→'+(ls.mux0TxByte5!==undefined?ls.mux0TxByte5:'--');
+  var b7=(ls.mux0RxByte7!==undefined?ls.mux0RxByte7:'--')+'→'+(ls.mux0TxByte7!==undefined?ls.mux0TxByte7:'--');
+  setText('legacy-wire-bytes','B3 '+b3+' · B5 '+b5+' · B7 '+b7);
 }
 
 function updateDefensePage(d){

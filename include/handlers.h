@@ -128,6 +128,10 @@ struct LegacySpeedRuntimeDiag
     uint32_t mux0Count = 0;
     uint8_t mux0RxByte3 = 0;
     uint8_t mux0TxByte3 = 0;
+    uint8_t mux0RxByte5 = 0;
+    uint8_t mux0TxByte5 = 0;
+    uint8_t mux0RxByte7 = 0;
+    uint8_t mux0TxByte7 = 0;
     uint32_t txOk = 0;
     uint32_t txFail = 0;
     uint32_t offsetOnlyTxOk = 0;
@@ -1014,7 +1018,9 @@ struct LegacyHandler : public CarManagerBase
                                               ? computeLegacySpeedOffset(nowMs)
                                               : 0;
                 if (effectiveOffset > 0)
-                    dashWriteLegacyOffsetTo3eeMux0(frame.data, effectiveOffset);
+                    dashWriteLegacyOffsetTo3eeMux0(frame.data,
+                                                   effectiveOffset,
+                                                   legacySpeedDiag.outputOffsetPct);
                 if (activationAllowed &&
                     (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
                      (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.profileWriteEnable)))
@@ -1027,6 +1033,10 @@ struct LegacyHandler : public CarManagerBase
                 legacySpeedDiag.mux0Count++;
                 legacySpeedDiag.mux0RxByte3 = legacyFsdDiag.mux0.before[3];
                 legacySpeedDiag.mux0TxByte3 = frame.data[3];
+                legacySpeedDiag.mux0RxByte5 = legacyFsdDiag.mux0.before[5];
+                legacySpeedDiag.mux0TxByte5 = frame.data[5];
+                legacySpeedDiag.mux0RxByte7 = legacyFsdDiag.mux0.before[7];
+                legacySpeedDiag.mux0TxByte7 = frame.data[7];
                 legacyFsdDiag.mux0.recordAfter(frame.data);
                 framesSent++;
                 bool ok = driver.send(frame);

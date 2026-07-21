@@ -2866,7 +2866,11 @@ static void handleStatus()
     j += ",\"mux0Count\":" + String(legacySpeed.mux0Count);
     j += ",\"mux0RxByte3\":" + String(legacySpeed.mux0RxByte3);
     j += ",\"mux0TxByte3\":" + String(legacySpeed.mux0TxByte3);
-    j += ",\"speedFixId\":\"legacy_reference_0x3ee_v1\"";
+    j += ",\"mux0RxByte5\":" + String(legacySpeed.mux0RxByte5);
+    j += ",\"mux0TxByte5\":" + String(legacySpeed.mux0TxByte5);
+    j += ",\"mux0RxByte7\":" + String(legacySpeed.mux0RxByte7);
+    j += ",\"mux0TxByte7\":" + String(legacySpeed.mux0TxByte7);
+    j += ",\"speedFixId\":\"legacy_reference_0x3ee_v2\"";
     j += ",\"txOk\":" + String(legacySpeed.txOk);
     j += ",\"txFail\":" + String(legacySpeed.txFail);
     j += ",\"offsetOnlyTxOk\":" + String(legacySpeed.offsetOnlyTxOk);

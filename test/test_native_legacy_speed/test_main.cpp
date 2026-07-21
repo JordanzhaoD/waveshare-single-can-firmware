@@ -26,6 +26,11 @@ void test_off_mode_outputs_zero()
     TEST_ASSERT_EQUAL_STRING("off", r.blockedReason);
 }
 
+void test_reference_2f8_freshness_window_is_three_seconds()
+{
+    TEST_ASSERT_EQUAL_UINT32(3000, kLegacyGpsLimitFreshMs);
+}
+
 void test_manual_mode_clamps_to_33()
 {
     cfg.mode = LegacySmartOffsetMode::Manual;
@@ -33,6 +38,20 @@ void test_manual_mode_clamps_to_33()
     LegacySmartOffsetResult r = compute(12, 1000, true);
     TEST_ASSERT_EQUAL_UINT8(33, r.outputOffsetKph);
     TEST_ASSERT_FALSE(r.fallbackUsed);
+}
+
+void test_3ee_wire_write_matches_reference_three_field_request()
+{
+    uint8_t data[8] = {0};
+    data[3] = 0x01; // preserve bit 0; reference forces bit 7
+    data[5] = 0xA4; // preserve all existing bits, set bits 0..1
+    data[7] = 0xC5; // preserve bits 6..7, replace low six bits
+
+    dashWriteLegacyOffsetTo3eeMux0(data, 30, 50);
+
+    TEST_ASSERT_EQUAL_HEX8(0xF9, data[3]);
+    TEST_ASSERT_EQUAL_HEX8(0xA7, data[5]);
+    TEST_ASSERT_EQUAL_HEX8(0xF2, data[7]);
 }
 
 void test_auto_35kph_uses_63pct_and_cap60()
@@ -166,13 +185,13 @@ void test_speed_down_accumulates_sub_kph_intervals()
     TEST_ASSERT_TRUE(low.smoothingActive);
 }
 
-void test_speed_down_syncs_when_not_engaged()
+void test_speed_down_still_smooths_when_local_ap_state_is_not_engaged()
 {
     cfg.mode = LegacySmartOffsetMode::Auto;
     (void)compute(20, 1000, true);
     LegacySmartOffsetResult low = compute(8, 2000, false);
-    TEST_ASSERT_EQUAL_UINT16(low.rawTargetKph, low.smoothedTargetKph);
-    TEST_ASSERT_FALSE(low.smoothingActive);
+    TEST_ASSERT_EQUAL_UINT16(115, low.smoothedTargetKph);
+    TEST_ASSERT_TRUE(low.smoothingActive);
 }
 
 void test_large_dt_syncs_directly()
@@ -188,7 +207,9 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_off_mode_outputs_zero);
+    RUN_TEST(test_reference_2f8_freshness_window_is_three_seconds);
     RUN_TEST(test_manual_mode_clamps_to_33);
+    RUN_TEST(test_3ee_wire_write_matches_reference_three_field_request);
     RUN_TEST(test_auto_35kph_uses_63pct_and_cap60);
     RUN_TEST(test_auto_45kph_uses_cap67);
     RUN_TEST(test_auto_60kph_uses_cap90_and_outputs_30);
@@ -200,7 +221,7 @@ int main()
     RUN_TEST(test_speed_up_follows_immediately);
     RUN_TEST(test_speed_down_smooths_when_engaged);
     RUN_TEST(test_speed_down_accumulates_sub_kph_intervals);
-    RUN_TEST(test_speed_down_syncs_when_not_engaged);
+    RUN_TEST(test_speed_down_still_smooths_when_local_ap_state_is_not_engaged);
     RUN_TEST(test_large_dt_syncs_directly);
     return UNITY_END();
 }

@@ -17,7 +17,9 @@ enum class LegacySpeedLimitSource : uint8_t
     Fused = 2,
 };
 
-inline constexpr uint32_t kLegacyGpsLimitFreshMs = 2000;
+// firmware20260718.bin uses a 3000 ms freshness window before falling back
+// from UI_mppSpeedLimit on 0x2F8 to DAS_fusedSpeedLimit on 0x399.
+inline constexpr uint32_t kLegacyGpsLimitFreshMs = 3000;
 
 struct LegacySmartOffsetConfig
 {
@@ -57,12 +59,19 @@ inline uint8_t dashClampLegacySmartOffsetKph(int v)
 }
 
 // The v1.4.35-legacy3ee reference firmware treats 0x2F8 as a read-only
-// speed-limit source and applies the effective Legacy offset on 0x3EE mux 0.
-// byte 3 bits 1..6 use the same +30 encoding; bit 0 and bit 7 are preserved.
-inline void dashWriteLegacyOffsetTo3eeMux0(uint8_t data[8], uint8_t offsetKph)
+// speed-limit source and applies a three-field request on 0x3EE mux 0:
+//   byte 3 bits 1..6 = offset_kph + 30, bit 0 preserved, bit 7 forced high
+//   byte 5 bits 0..1 = both set
+//   byte 7 bits 0..5 = effective offset percentage, bits 6..7 preserved
+// All three writes are required for the vehicle to accept the automatic
+// speed-limit offset without a manual stalk adjustment.
+inline void dashWriteLegacyOffsetTo3eeMux0(uint8_t data[8], uint8_t offsetKph, uint8_t offsetPct)
 {
     const uint8_t raw = static_cast<uint8_t>(dashClampLegacySmartOffsetKph(offsetKph) + 30U);
-    data[3] = static_cast<uint8_t>((data[3] & 0x81U) | ((raw & 0x3FU) << 1U));
+    data[3] = static_cast<uint8_t>((data[3] & 0x01U) | 0x80U | ((raw & 0x3FU) << 1U));
+    data[5] = static_cast<uint8_t>(data[5] | 0x03U);
+    const uint8_t wirePct = offsetPct > 63U ? 63U : offsetPct;
+    data[7] = static_cast<uint8_t>((data[7] & 0xC0U) | (wirePct & 0x3FU));
 }
 
 inline uint8_t dashClampLegacySmartPct(int v)
@@ -237,14 +246,17 @@ public:
 private:
     uint16_t applySmoothing(uint16_t rawTargetKph,
                             uint32_t nowMs,
-                            bool apOrFsdEngaged,
+                            bool /*apOrFsdEngaged*/,
                             bool smoothDownEnabled,
                             uint8_t smoothDownRateKphS,
                             bool &smoothingActive)
     {
         smoothingActive = false;
 
-        if (!hasSmoothedTarget_ || !smoothDownEnabled || !apOrFsdEngaged || rawTargetKph >= lastSmoothedTargetKph_)
+        // The reference firmware applies downward smoothing whenever the
+        // feature is enabled. It does not additionally gate smoothing on the
+        // locally inferred AP/FSD state.
+        if (!hasSmoothedTarget_ || !smoothDownEnabled || rawTargetKph >= lastSmoothedTargetKph_)
         {
             syncSmoothing(rawTargetKph, nowMs);
             return rawTargetKph;

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- Completed the `firmware20260718.bin` Legacy smart-speed request on `0x3EE` mux 0. Automatic offset now updates byte 3 (`offset + 30`), sets byte 5 bits 0-1, and writes the effective offset percentage to byte 7 bits 0-5, matching the reference firmware's three-field wire protocol.
+- Aligned the preferred `0x2F8` map-limit freshness window and downward smoothing behavior with the reference firmware, and added byte-level diagnostics for all modified `0x3EE` fields.
+
 ## [1.11] - 2026-07-21
 
 ### Added
