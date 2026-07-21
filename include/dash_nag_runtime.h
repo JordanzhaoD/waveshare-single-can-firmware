@@ -57,7 +57,8 @@ inline uint8_t dashMergeNagFilterIds(const uint32_t *handlerIds, uint8_t handler
         return 0;
 
     uint8_t count = 0;
-    const auto appendUnique = [&](uint32_t id) {
+    const auto appendUnique = [&](uint32_t id)
+    {
         for (uint8_t i = 0; i < count; i++)
         {
             if (out[i] == id)
