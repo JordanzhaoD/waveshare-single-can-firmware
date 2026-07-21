@@ -228,6 +228,18 @@ struct DashEpasLateEchoDiag
     uint32_t gateBlocks{0};
     uint32_t txFailures{0};
     int lastRxToTxMs{0};
+    int lastTxToNextOemMs{0};
+    uint32_t counterCollisions{0};
+    uint8_t lastSourceCounter{0};
+    uint8_t lastInjectedCounter{0};
+    uint8_t lastNextOemCounter{0};
+    uint8_t profileIndex{0};
+    uint8_t replayAttempts{0};
+    uint32_t replaySuccesses{0};
+    uint32_t replayFailures{0};
+    uint8_t lastHosBefore{0};
+    uint8_t lastHosAfter{0};
+    int lastTargetTorqueRaw{0};
     bool preserveHandsOnLevel{false};
     uint8_t lastSourceHandsOnLevel{0};
     uint8_t lastTxHandsOnLevel{0};
@@ -246,6 +258,25 @@ public:
     static constexpr unsigned long kLateEchoLeadMs = 3;
     static constexpr unsigned long kMaxLatenessMs = 2;
     static constexpr unsigned long kMaxDasStaleMs = 500;
+    static constexpr uint8_t kHumanProfileLen = 25;
+    static constexpr uint8_t kMaxReplayAttempts = 2;
+    static constexpr unsigned long kReplayFailureCooldownMs = 5000;
+
+    void resetSessionCounters()
+    {
+        scheduledEchoes_ = 0;
+        sentLateEchoes_ = 0;
+        lateWindowMissed_ = 0;
+        droppedLateEchoes_ = 0;
+        abortBlocks_ = 0;
+        gateBlocks_ = 0;
+        txFailures_ = 0;
+        counterCollisions_ = 0;
+        replaySuccesses_ = 0;
+        replayFailures_ = 0;
+        lastRxToTxMs_ = 0;
+        lastTxToNextOemMs_ = 0;
+    }
 
     void setEnabled(bool value)
     {
@@ -266,6 +297,7 @@ public:
 
     void onDasStatus(uint8_t apState, uint8_t hos, unsigned long nowMs, bool gatesActive, const char *gateReason)
     {
+        const uint8_t previousHos = lastHos_;
         lastApState_ = apState;
         lastHos_ = hos;
         lastDasStatusMs_ = nowMs;
@@ -306,9 +338,16 @@ public:
 
         if (hos <= 2)
         {
+            if (previousHos > 2 && replayAttempts_ > 0)
+            {
+                replaySuccesses_++;
+                lastHosBefore_ = previousHos;
+                lastHosAfter_ = hos;
+            }
             cancel("hosClear");
-            if (mode_ != LateEchoModeState::BURST_OFF)
-                mode_ = LateEchoModeState::IDLE;
+            mode_ = LateEchoModeState::IDLE;
+            replayAttempts_ = 0;
+            profileIndex_ = 0;
             return;
         }
 
@@ -321,14 +360,21 @@ public:
         if (!gatesActive)
         {
             gateBlocks_++;
+            // Keep DAS/HOS state current while the final TX gate is closed.
+            // Do not consume a replay attempt until every gate allows TX.
             cancel(gateBlockReason(gateReason));
-            if (mode_ != LateEchoModeState::BURST_OFF)
-                mode_ = LateEchoModeState::IDLE;
+            mode_ = LateEchoModeState::IDLE;
+            replayAttempts_ = 0;
+            profileIndex_ = 0;
             return;
         }
 
         if (mode_ == LateEchoModeState::IDLE)
+        {
+            replayAttempts_ = 0;
+            lastHosBefore_ = hos;
             enterBurstOn(nowMs);
+        }
     }
 
     void onEpasFrame(const CanFrame &frame, unsigned long nowMs, bool gatesActive)
@@ -361,6 +407,18 @@ public:
             return;
         }
 
+        const uint8_t sourceCounter = static_cast<uint8_t>(frame.data[6] & 0x0F);
+        lastSourceCounter_ = sourceCounter;
+        lastObservedTorqueRaw_ = decodeSignedTorque(frame);
+        if (awaitingNextOem_)
+        {
+            lastNextOemCounter_ = sourceCounter;
+            lastTxToNextOemMs_ = static_cast<int>(nowMs - lastTxAtMs_);
+            if (sourceCounter == lastInjectedCounter_)
+                counterCollisions_++;
+            awaitingNextOem_ = false;
+        }
+
         if (builtPending_)
         {
             cadence_.onRx370(frame, nowMs);
@@ -391,6 +449,12 @@ public:
             if (!gatesActive)
                 gateBlocks_++;
             cancel(!enabled_ ? "disabled" : "gate");
+            if (!gatesActive)
+            {
+                mode_ = LateEchoModeState::IDLE;
+                replayAttempts_ = 0;
+                profileIndex_ = 0;
+            }
             return;
         }
 
@@ -448,6 +512,7 @@ public:
         scheduledEchoes_++;
         pendingSendAtMs_ = cadence_.predictedNextRxMs() - kLateEchoLeadMs;
         pendingTorqueRaw_ = targetTorqueRaw(pendingSendAtMs_);
+        lastTargetTorqueRaw_ = pendingTorqueRaw_;
         blockedReason_ = "";
     }
 
@@ -492,6 +557,9 @@ public:
         {
             gateBlocks_++;
             cancel(gateBlockReason(gateReason));
+            mode_ = LateEchoModeState::IDLE;
+            replayAttempts_ = 0;
+            profileIndex_ = 0;
             return false;
         }
         if (currentHos <= 2)
@@ -563,10 +631,17 @@ public:
             {
                 sentLateEchoes_++;
                 lastRxToTxMs_ = static_cast<int>(nowMs - cadence_.lastRxMs());
+                lastInjectedCounter_ = cadence_.expectedNextCounter();
+                lastTxAtMs_ = nowMs;
+                awaitingNextOem_ = true;
+                if (profileIndex_ < kHumanProfileLen)
+                    profileIndex_++;
             }
             pendingEcho_ = false;
             builtPending_ = false;
             blockedReason_ = "";
+            if (profileIndex_ >= kHumanProfileLen)
+                enterBurstOff(nowMs);
             return;
         }
 
@@ -599,6 +674,18 @@ public:
         d.gateBlocks = gateBlocks_;
         d.txFailures = txFailures_;
         d.lastRxToTxMs = lastRxToTxMs_;
+        d.lastTxToNextOemMs = lastTxToNextOemMs_;
+        d.counterCollisions = counterCollisions_;
+        d.lastSourceCounter = lastSourceCounter_;
+        d.lastInjectedCounter = lastInjectedCounter_;
+        d.lastNextOemCounter = lastNextOemCounter_;
+        d.profileIndex = profileIndex_;
+        d.replayAttempts = replayAttempts_;
+        d.replaySuccesses = replaySuccesses_;
+        d.replayFailures = replayFailures_;
+        d.lastHosBefore = lastHosBefore_;
+        d.lastHosAfter = lastHosAfter_;
+        d.lastTargetTorqueRaw = lastTargetTorqueRaw_;
         d.preserveHandsOnLevel = preserveHandsOnLevel_;
         d.lastSourceHandsOnLevel = lastSourceHandsOnLevel_;
         d.lastTxHandsOnLevel = lastTxHandsOnLevel_;
@@ -608,6 +695,11 @@ public:
     }
 
 private:
+    static int decodeSignedTorque(const CanFrame &frame)
+    {
+        const int encoded = static_cast<int>(((frame.data[2] & 0x0F) << 8) | frame.data[3]);
+        return encoded - 0x800;
+    }
     static bool isEligibleApState(uint8_t apState)
     {
         return apState == 3 || apState == 4 || apState == 5 || apState == 6;
@@ -650,10 +742,18 @@ private:
         }
     }
 
-    int targetTorqueRaw(unsigned long nowMs) const
+    int targetTorqueRaw(unsigned long /*nowMs*/) const
     {
-        const unsigned long elapsed = nowMs - phaseStartMs_;
-        const int magnitude = 150 + static_cast<int>(((elapsed / 120UL) % 4UL) * 10UL);
+        // 25 x 40 ms points reconstructed from the Legacy vehicle's successful
+        // manual-dismiss captures. The serial capture logged every other source
+        // counter, so intermediate points are restored here instead of replaying
+        // the 10-13 visible samples at twice the real speed.
+        static constexpr int16_t magnitudeProfile[kHumanProfileLen] = {
+            50, 65, 80, 95, 110, 125, 140, 150, 158, 165,
+            170, 174, 176, 176, 174, 170, 165, 158, 150, 140,
+            128, 115, 100, 82, 65};
+        const uint8_t index = profileIndex_ < kHumanProfileLen ? profileIndex_ : kHumanProfileLen - 1;
+        const int magnitude = magnitudeProfile[index];
         return burstDirection_ > 0 ? magnitude : -magnitude;
     }
 
@@ -668,8 +768,13 @@ private:
     {
         mode_ = LateEchoModeState::BURST_ON;
         phaseStartMs_ = nowMs;
-        burstDirection_ = nextBurstDirection_;
-        nextBurstDirection_ = static_cast<int8_t>(-nextBurstDirection_);
+        profileIndex_ = 0;
+        replayAttempts_++;
+        if (replayAttempts_ == 1 && (lastObservedTorqueRaw_ >= 20 || lastObservedTorqueRaw_ <= -20))
+            burstDirection_ = lastObservedTorqueRaw_ > 0 ? 1 : -1;
+        else
+            burstDirection_ = nextBurstDirection_;
+        nextBurstDirection_ = static_cast<int8_t>(-burstDirection_);
         blockedReason_ = "";
     }
 
@@ -730,7 +835,18 @@ private:
         if (mode_ == LateEchoModeState::BURST_ON && elapsedSince(phaseStartMs_, nowMs) >= kBurstOnMs)
             enterBurstOff(phaseStartMs_ + kBurstOnMs);
         if (mode_ == LateEchoModeState::BURST_OFF && elapsedSince(phaseStartMs_, nowMs) >= kBurstOffMs)
-            enterBurstOn(phaseStartMs_ + kBurstOffMs);
+        {
+            if (lastHos_ > 2 && replayAttempts_ < kMaxReplayAttempts)
+                enterBurstOn(phaseStartMs_ + kBurstOffMs);
+            else if (lastHos_ > 2)
+            {
+                replayFailures_++;
+                lastHosAfter_ = lastHos_;
+                enterCooldown(nowMs, kReplayFailureCooldownMs, "replayFailed");
+            }
+            else
+                mode_ = LateEchoModeState::IDLE;
+        }
     }
 
     unsigned long phaseRemain(unsigned long nowMs) const
@@ -774,6 +890,21 @@ private:
     uint32_t gateBlocks_{0};
     uint32_t txFailures_{0};
     int lastRxToTxMs_{0};
+    int lastTxToNextOemMs_{0};
+    uint32_t counterCollisions_{0};
+    uint8_t lastSourceCounter_{0};
+    uint8_t lastInjectedCounter_{0};
+    uint8_t lastNextOemCounter_{0};
+    uint8_t profileIndex_{0};
+    uint8_t replayAttempts_{0};
+    uint32_t replaySuccesses_{0};
+    uint32_t replayFailures_{0};
+    uint8_t lastHosBefore_{0};
+    uint8_t lastHosAfter_{0};
+    int lastTargetTorqueRaw_{0};
+    int lastObservedTorqueRaw_{0};
+    bool awaitingNextOem_{false};
+    unsigned long lastTxAtMs_{0};
     bool preserveHandsOnLevel_{false};
     uint8_t lastSourceHandsOnLevel_{0};
     uint8_t lastTxHandsOnLevel_{0};

@@ -432,6 +432,10 @@ struct CarManagerBase
     }
     virtual void setNagMode(uint8_t mode) { (void)mode; }
     virtual DashReactiveDiag reactiveDiag() const { return dashMakeDisabledNagDiag(); }
+    virtual DashEpasLateEchoDiag lateEchoRuntimeDiag(uint32_t /*nowMs*/) const
+    {
+        return {};
+    }
     virtual DashReactiveDiag nagDiagForMode(DashNagMode /*mode*/) const
     {
         return dashMakeDisabledNagDiag();
@@ -604,6 +608,10 @@ struct LegacyHandler : public CarManagerBase
     }
 
     DashEpasLateEchoDiag lateEchoDiag(uint32_t nowMs) const { return lateNag.diag(nowMs); }
+    DashEpasLateEchoDiag lateEchoRuntimeDiag(uint32_t nowMs) const override
+    {
+        return lateNag.diag(nowMs);
+    }
 
     DashReactiveDiag nagDiagForMode(DashNagMode mode) const override
     {
@@ -644,6 +652,8 @@ struct LegacyHandler : public CarManagerBase
     {
         if (mode == DashNagMode::HumanReplayTsl6p)
             nag.resetCounters();
+        else if (mode == DashNagMode::EpasLateEcho)
+            lateNag.resetSessionCounters();
         else if (mode == DashNagMode::ReactiveHold)
             reactiveHoldNag.resetCounters();
     }
@@ -1397,6 +1407,16 @@ struct NagHandler : public CarManagerBase
 
     void setMode(uint8_t mode) { nagMode = clampNagMode(mode); }
 
+    void resetSessionCounters()
+    {
+        rxTarget_ = 0;
+        eligible_ = 0;
+        txOk_ = 0;
+        txFail_ = 0;
+        context399_ = 0;
+        context129_ = 0;
+    }
+
     const uint32_t *filterIds() const override
     {
         static constexpr uint32_t ids[] = {kTargetId};
@@ -1417,10 +1437,11 @@ struct NagHandler : public CarManagerBase
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
-        handleMessageAt(frame, driver, dashDiagNowMs());
+        handleMessageAt(frame, driver, dashDiagNowMs(), true);
     }
 
-    void handleMessageAt(CanFrame &frame, CanDriver &driver, uint32_t now)
+    void handleMessageAt(CanFrame &frame, CanDriver &driver, uint32_t now,
+                         bool transmissionAllowed = true)
     {
         uint8_t selectedMode = clampNagMode(nagMode);
         if (selectedMode != activeMode_)
@@ -1464,13 +1485,20 @@ struct NagHandler : public CarManagerBase
             blockedReason_ = "ownEcho";
             return;
         }
-        if (handsOn != 0)
+        const bool handsOnEligible = handsOn == 0 ||
+                                     (selectedMode == static_cast<uint8_t>(BuiltInNagMode::ModeC) && handsOn == 1);
+        if (!handsOnEligible)
         {
             blockedReason_ = "handsOn";
             return;
         }
 
         eligible_++;
+        if (!transmissionAllowed)
+        {
+            blockedReason_ = "outerGate";
+            return;
+        }
         uint16_t torque = kNagTorqueRawMax;
         bool setHandsOn = true;
         if (!decideInjection(selectedMode, now, torque, setHandsOn))
@@ -1489,7 +1517,7 @@ struct NagHandler : public CarManagerBase
         echo.data[3] = static_cast<uint8_t>(torque & 0xFF);
         echo.data[5] = frame.data[5];
         echo.data[4] = setHandsOn ? static_cast<uint8_t>(frame.data[4] | 0x40)
-                                  : static_cast<uint8_t>(frame.data[4] & ~0xC0);
+                                  : frame.data[4];
 
         uint8_t cnt = (frame.data[6] & 0x0F);
         cnt = (cnt + 1) & 0x0F;
@@ -1625,13 +1653,13 @@ private:
 
     void updateApState(const CanFrame &frame, uint32_t now)
     {
-        if (frame.dlc < 8)
+        if (frame.dlc < 6)
         {
             blockedReason_ = "context399Dlc";
             return;
         }
-        uint8_t apState = static_cast<uint8_t>((frame.data[0] >> 4) & 0x0F);
-        uint8_t handsOnState = static_cast<uint8_t>(frame.data[0] & 0x0F);
+        uint8_t apState = readDASAutopilotStatus(frame);
+        uint8_t handsOnState = readDASAutopilotHandsOnState(frame);
         apState_ = apState;
         lastApStateMs_ = now;
         apStateSeen_ = true;
@@ -1646,13 +1674,13 @@ private:
 
     void updateSteering(const CanFrame &frame, uint32_t now)
     {
-        if (frame.dlc < 8)
+        if (frame.dlc < 4 || readSCCMSteeringAngleValidity(frame) != 1)
         {
-            blockedReason_ = "context129Dlc";
+            steeringSeen_ = false;
+            blockedReason_ = frame.dlc < 4 ? "context129Dlc" : "context129Invalid";
             return;
         }
-        steeringAngleX10_ = static_cast<int16_t>((static_cast<uint16_t>(frame.data[1]) << 8) |
-                                                 frame.data[0]);
+        steeringAngleX10_ = static_cast<int16_t>(readSCCMSteeringAngle(frame) * 10.0f);
         lastSteeringMs_ = now;
         steeringSeen_ = true;
         context129_++;

@@ -15,18 +15,19 @@ The dashboard is organized around three usage surfaces:
 
 ## Waveshare Single-CAN Integrated Controls
 
-### Legacy NAG modes
+### Built-in NAG suppression
 
-The Waveshare standalone product exposes one stable four-mode selector in both desktop and mobile layouts:
+The persisted selector remains `0..3` for upgrade compatibility, but runtime behavior is selected by the effective vehicle generation:
 
-| Value | Label | Runtime behavior |
-|---:|---|---|
-| `0` | Off | No Legacy NAG algorithm |
-| `1` | Human Replay TSL6P | Existing TSL6P burst/replay behavior |
-| `2` | EPAS Late Echo | Cadence-aware delayed echo |
-| `3` | Reactive Sustained Hold | Proactive and reactive sustained-hold phases |
+| Vehicle | Runtime behavior |
+|---|---|
+| Legacy | Any migrated non-zero selection enables the single Late Human Replay algorithm. It reads HOS from `0x399`, learns the `0x370` cadence, preserves the source hands-on bits, and sends a bounded 25-point manual-dismiss profile near the predicted next OEM slot. |
+| HW3 | Modes A/B/C retain the corrected upstream behavior. Mode C uses the current `0x399` HOS and `0x129` steering layouts. |
+| HW4 | All built-in NAG modes fail closed to Off. |
 
-The defense master and historical `bionicSteering` field are parent enables, not a fifth algorithm. Turning the parent off makes the effective runtime mode Off without erasing the saved selection. `/status.reactiveNag` reports the common `selectedMode`, `selectedModeName`, and `runtimePhase` fields plus mode-specific evidence.
+Legacy permits at most two approximately one-second attempts with opposite directions. HOS returning to `<=2` stops immediately; a persistent warning after both attempts enters cooldown. Observation remains active while final transmit gates are closed, but no frame can transmit until CAN Write, OTA, AP Gate, Abort Guard, HOS freshness, cadence, and the late window all allow it.
+
+`/status.builtInNag` and the FSD Guard page expose profile progress, attempts, HOS before/after, learned cadence, RX/TX/OEM timing, counters, collisions, missed windows, and success/failure evidence. Reset Stats clears the active NAG session counters.
 
 ### AP Injection Gate and Instant Engage
 

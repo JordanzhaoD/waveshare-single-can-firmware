@@ -157,6 +157,7 @@ static const uint8_t mcpEflg = 0;
 #define DASH_INITIAL_HW_MODE DASH_DEFAULT_HW
 #endif
 static uint8_t hwMode = DASH_INITIAL_HW_MODE;
+static uint8_t dashEffectiveHwMode = DASH_DEFAULT_HW;
 static bool canActive = kDashInjectionDefaultEnabled;
 static bool forceActivate = false;
 static bool bootCanActive = kDashInjectionDefaultEnabled;
@@ -1197,22 +1198,32 @@ static void dashPostProcessFrame(const CanFrame &original, CanDriver &driver)
     if (isTarget)
         dashNagRouteDiag.seen370 = dashNagRouteDiag.seen370 + 1;
     const bool abortAllowed = !dashHandler || dashHandler->abortGuard.allowsInjection();
+    const bool hardwareAllowsNag = dashEffectiveHwMode != 2;
+    const bool nagModeEnabled = dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled);
     const DashNagRouteBlock routeBlock = dashNagRouteBlock(
-        dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled),
+        nagModeEnabled && hardwareAllowsNag,
         canActive, dashOtaGuardAllowInjection(), dashApInjectionAllowed(), abortAllowed);
     dashNagRouteDiag.blockedReason = routeBlock;
     if (routeBlock == DashNagRouteBlock::None)
     {
         if (isTarget)
             dashNagRouteDiag.routed370 = dashNagRouteDiag.routed370 + 1;
-        CanFrame nagFrame = original;
-        dashNagHandler.handleMessage(nagFrame, driver);
     }
     else if (isTarget)
     {
         dashNagRouteDiag.outerBlocks = dashNagRouteDiag.outerBlocks + 1;
         if (routeBlock == DashNagRouteBlock::AbortGuard && dashHandler)
             dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::Nag);
+    }
+    // Legacy observes 0x399/0x370 in LegacyHandler before this post-process
+    // hook and uses its cadence-aware late-human-replay engine. HW3 retains
+    // the upstream direct handler, but context observation continues even
+    // while the final transmit gate is closed. HW4 fails closed.
+    if (dashEffectiveHwMode == 1 && nagModeEnabled)
+    {
+        CanFrame nagFrame = original;
+        dashNagHandler.handleMessageAt(
+            nagFrame, driver, dashDiagNowMs(), routeBlock == DashNagRouteBlock::None);
     }
     // FSD activation injection is owned by Legacy/HW3/HW4 handlers.
     // Do not post-process mux0 here; doing so can double-send on dashboard builds.
@@ -1447,8 +1458,12 @@ static void dashApplyRuntimeState()
     emergencyVehicleDetectionRuntime = false;
     isaSpeedChimeSuppressRuntime = false;
     enhancedAutopilotRuntime = false;
-    nagKillerRuntime = canActive && dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled);
-    dashNagHandler.setMode(dashNagMode);
+    const bool nagSelected = dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled);
+    const bool legacyLateHumanReplay = dashEffectiveHwMode == 0 && nagSelected;
+    const bool hw3UpstreamNag = dashEffectiveHwMode == 1 && nagSelected;
+    nagKillerRuntime = canActive && hw3UpstreamNag;
+    dashNagHandler.setMode(
+        hw3UpstreamNag ? dashNagMode : static_cast<uint8_t>(BuiltInNagMode::Disabled));
 
     if (dashHandler)
     {
@@ -1457,14 +1472,20 @@ static void dashApplyRuntimeState()
         dashHandler->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->checkNag = dashCheckNagDisabled;
-        // The old experimental engines remain available to native regression
-        // tests but are not driven by dashboard modes 1..3. Running both paths
-        // would double-inject the same 0x370 source frame.
-        dashHandler->bionicSteering = false;
+        // Legacy uses one vehicle-evidence-driven path for every migrated
+        // non-zero selection: fresh 0x399 HOS triggers cadence-aware late
+        // human replay. HW3 keeps upstream A/B/C. HW4 fails closed.
+        dashHandler->bionicSteering = legacyLateHumanReplay;
+        dashHandler->setNagMode(legacyLateHumanReplay
+                                    ? dashNagModeToRaw(DashNagMode::EpasLateEcho)
+                                    : dashNagModeToRaw(DashNagMode::Off));
         if (CarManagerBase *reactive = dashReactiveNagHandler())
         {
-            reactive->bionicSteering = false;
-            reactive->setNagMode(0);
+            if (reactive != dashHandler)
+            {
+                reactive->bionicSteering = false;
+                reactive->setNagMode(dashNagModeToRaw(DashNagMode::Off));
+            }
         }
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
@@ -2058,9 +2079,11 @@ static void dashApplyRuntimeFilters()
         return;
 
     uint32_t mergedIds[32] = {};
-    const bool nagEnabled = dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled);
-    const uint32_t *nagIds = nagEnabled ? dashNagHandler.modeFilterIds() : nullptr;
-    const uint8_t nagCount = nagEnabled ? dashNagHandler.modeFilterIdCount(dashNagMode) : 0;
+    const bool nagEnabled = dashNagMode != static_cast<uint8_t>(BuiltInNagMode::Disabled) &&
+                            dashEffectiveHwMode != 2;
+    const bool upstreamNagFilters = nagEnabled && dashEffectiveHwMode == 1;
+    const uint32_t *nagIds = upstreamNagFilters ? dashNagHandler.modeFilterIds() : nullptr;
+    const uint8_t nagCount = upstreamNagFilters ? dashNagHandler.modeFilterIdCount(dashNagMode) : 0;
     const uint8_t count = dashMergeNagFilterIds(
         dashHandler->filterIds(), dashHandler->filterIdCount(), nagIds, nagCount,
         mergedIds, static_cast<uint8_t>(sizeof(mergedIds) / sizeof(mergedIds[0])));
@@ -2663,24 +2686,46 @@ static void handleStatus()
     j += ",\"nagMode\":";
     j += String(dashNagModeIsValid(dashNagMode) ? dashNagMode : dashNagModeToRaw(DashNagMode::Off));
     NagRuntimeDiag nagDiag = dashNagHandler.diag();
+    const bool legacyNagPath = dashEffectiveHwMode == 0;
+    DashEpasLateEchoDiag legacyNagDiag = dashHandler ? dashHandler->lateEchoRuntimeDiag(now)
+                                                     : DashEpasLateEchoDiag{};
     j += ",\"builtInNag\":{";
-    j += "\"implementation\":\"upstream_v3.0.2-beta.8\"";
-    j += ",\"mode\":" + String(nagDiag.mode);
-    j += ",\"modeName\":\"" + String(nagModeName(nagDiag.mode)) + "\"";
-    j += ",\"runtimeEnabled\":" + String((bool)nagKillerRuntime ? "true" : "false");
-    j += ",\"rxTarget\":" + String(nagDiag.rxTarget);
-    j += ",\"eligible\":" + String(nagDiag.eligible);
-    j += ",\"txOk\":" + String(nagDiag.txOk);
-    j += ",\"txFail\":" + String(nagDiag.txFail);
+    j += "\"implementation\":\"";
+    j += legacyNagPath ? "legacy_late_human_replay_v1"
+                       : (dashEffectiveHwMode == 2 ? "hw4_fail_closed" : "upstream_v3.0.2-beta.12");
+    j += "\"";
+    j += ",\"mode\":" + String(legacyNagPath ? dashNagMode : nagDiag.mode);
+    j += ",\"modeName\":\"" + String(legacyNagPath && dashNagMode != 0 ? "Legacy Late Human Replay" : nagModeName(nagDiag.mode)) +
+         "\"";
+    j += ",\"runtimeEnabled\":" + String(
+                                      legacyNagPath ? (legacyNagDiag.enabled ? "true" : "false")
+                                                    : ((bool)nagKillerRuntime ? "true" : "false"));
+    j += ",\"rxTarget\":" + String(legacyNagPath ? (uint32_t)dashNagRouteDiag.seen370 : nagDiag.rxTarget);
+    j += ",\"eligible\":" + String(legacyNagPath ? legacyNagDiag.scheduledEchoes : nagDiag.eligible);
+    j += ",\"txOk\":" + String(legacyNagPath ? legacyNagDiag.sentLateEchoes : nagDiag.txOk);
+    j += ",\"txFail\":" + String(legacyNagPath ? legacyNagDiag.txFailures : nagDiag.txFail);
     j += ",\"context399\":" + String(nagDiag.context399);
     j += ",\"context129\":" + String(nagDiag.context129);
-    j += ",\"apState\":" + String(nagDiag.apState);
-    j += ",\"handsOnState\":" + String(nagDiag.handsOnState);
+    j += ",\"apState\":" + String(legacyNagPath ? legacyNagDiag.lastApState : nagDiag.apState);
+    j += ",\"handsOnState\":" + String(legacyNagPath ? legacyNagDiag.lastHos : nagDiag.handsOnState);
     j += ",\"steeringAngleX10\":" + String(nagDiag.steeringAngleX10);
-    j += ",\"lastTorqueRaw\":" + String(nagDiag.lastTorqueRaw);
-    j += ",\"lastRxCounter\":" + String(nagDiag.lastRxCounter);
-    j += ",\"lastTxCounter\":" + String(nagDiag.lastTxCounter);
-    j += ",\"blockedReason\":\"" + String(nagDiag.blockedReason) + "\"";
+    j += ",\"lastTorqueRaw\":" + String(legacyNagPath ? legacyNagDiag.lastTargetTorqueRaw : nagDiag.lastTorqueRaw);
+    j += ",\"lastRxCounter\":" + String(legacyNagPath ? legacyNagDiag.lastSourceCounter : nagDiag.lastRxCounter);
+    j += ",\"lastTxCounter\":" + String(legacyNagPath ? legacyNagDiag.lastInjectedCounter : nagDiag.lastTxCounter);
+    j += ",\"blockedReason\":\"" + String(legacyNagPath ? legacyNagDiag.blockedReason : nagDiag.blockedReason) + "\"";
+    j += ",\"profileIndex\":" + String(legacyNagDiag.profileIndex);
+    j += ",\"replayAttempts\":" + String(legacyNagDiag.replayAttempts);
+    j += ",\"replaySuccesses\":" + String(legacyNagDiag.replaySuccesses);
+    j += ",\"replayFailures\":" + String(legacyNagDiag.replayFailures);
+    j += ",\"lastHosBefore\":" + String(legacyNagDiag.lastHosBefore);
+    j += ",\"lastHosAfter\":" + String(legacyNagDiag.lastHosAfter);
+    j += ",\"periodMs\":" + String(legacyNagDiag.periodMs);
+    j += ",\"jitterMs\":" + String(legacyNagDiag.jitterMs);
+    j += ",\"rxToTxMs\":" + String(legacyNagDiag.lastRxToTxMs);
+    j += ",\"txToNextOemMs\":" + String(legacyNagDiag.lastTxToNextOemMs);
+    j += ",\"nextOemCounter\":" + String(legacyNagDiag.lastNextOemCounter);
+    j += ",\"counterCollisions\":" + String(legacyNagDiag.counterCollisions);
+    j += ",\"lateWindowMissed\":" + String(legacyNagDiag.lateWindowMissed);
     j += ",\"routeBlockedReason\":\"";
     j += dashNagRouteBlockName(dashNagRouteDiag.blockedReason);
     j += "\"";
@@ -3778,6 +3823,18 @@ static void handleDefenseConfig()
         nvsBanShieldEnable = dashDefenseEnabled;
         if (dashHandler)
             dashHandler->banShieldEnable = dashDefenseEnabled;
+        if (hasNagModeArg && previousNagMode != dashNagMode)
+        {
+            dashNagRouteDiag.seen370 = 0;
+            dashNagRouteDiag.routed370 = 0;
+            dashNagRouteDiag.outerBlocks = 0;
+            dashNagHandler.resetSessionCounters();
+            if (dashHandler)
+            {
+                dashHandler->resetBionic(static_cast<uint32_t>(millis()));
+                dashHandler->resetNagCounters(DashNagMode::EpasLateEcho);
+            }
+        }
         dashApplyRuntimeState();
         if (hasNagModeArg && previousNagMode != dashNagMode)
             dashApplyRuntimeFilters();
@@ -4171,6 +4228,12 @@ static void handleResetStats()
     memset(muxRx, 0, sizeof(muxRx));
     memset(muxTx, 0, sizeof(muxTx));
     memset(muxErr, 0, sizeof(muxErr));
+    dashNagRouteDiag.seen370 = 0;
+    dashNagRouteDiag.routed370 = 0;
+    dashNagRouteDiag.outerBlocks = 0;
+    dashNagHandler.resetSessionCounters();
+    if (dashHandler)
+        dashHandler->resetNagCounters(DashNagMode::EpasLateEcho);
     dashResetWriteProbe();
     dashLog("[CFG] Stats reset");
     server.send(200, "application/json", "{\"ok\":true}");
@@ -7603,6 +7666,7 @@ static void dashSwapHandler(uint8_t mode)
     }
     appActiveHandler = next;
     dashHandler = next;
+    dashEffectiveHwMode = effective;
     dashApplyRuntimeState();
     // Preserve the independent NAG acceptance IDs across handler changes.
     dashApplyRuntimeFilters();

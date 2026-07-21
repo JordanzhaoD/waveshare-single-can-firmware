@@ -1443,7 +1443,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">内置 NAG 抑制 <span class="exp-badge">Party CAN</span></div>
-      <div class="setting-desc">选择即启用，不依赖防护总开关、车辆代际或插件。</div>
+      <div class="setting-desc">Legacy 使用实车 Late Human Replay；HW3 使用上游模式；HW4 安全关闭。</div>
     </div>
     <select id="nag-mode-select" style="display:none" onchange="saveDefenseConfig()">
       <option value="0">Off</option>
@@ -1458,12 +1458,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="sel-card" data-value="3" onclick="selectCard('nag-mode-select',3)"><div class="sel-lbl">0x399 + 0x129</div><div class="sel-name">Mode C</div></div>
     </div>
   </div>
-  <div class="hint warn">上游 beta.8 对齐：A 固定 +1.80 Nm；B 循环 +1.80/+1.50/-1.50/-1.80 Nm；C 仅在 0x399/0x129 均新鲜、AP 状态 3..6 且方向盘 ±5° 内运行。默认 Off，仍受 CAN、启动、OTA 与 AP 注入门控约束。</div>
+  <div class="hint warn">Legacy：历史非零选择自动迁移为唯一的 Late Human Replay，按 40 ms 节拍在下一原厂 0x370 前约 3 ms 发送，保留 hands-on 位，最多两次反向重试。HW3：A/B/C 对齐 beta.12。HW4：所有内置 NAG fail-closed。默认 Off，最终 TX 仍受 CAN、启动、OTA、AP Gate 与 Abort Guard 约束。</div>
   <div class="diag-grid" style="margin-top:10px">
     <div class="diag-item"><span class="lbl">NAG 路由</span><span class="v-warn" id="nag-route">--</span></div>
     <div class="diag-item"><span class="lbl">0x370 RX / Routed</span><span class="v-info" id="nag-rx-route">0 / 0</span></div>
     <div class="diag-item"><span class="lbl">Eligible / TX OK</span><span class="v-acc" id="nag-eligible-tx">0 / 0</span></div>
     <div class="diag-item"><span class="lbl">过滤器 370/399/129</span><span class="v-dim" id="nag-filters">--</span></div>
+    <div class="diag-item"><span class="lbl">算法 / Profile</span><span class="v-info" id="nag-profile">--</span></div>
+    <div class="diag-item"><span class="lbl">RX→TX / TX→OEM</span><span class="v-dim" id="nag-timing">--</span></div>
+    <div class="diag-item"><span class="lbl">HOS Before→After</span><span class="v-dim" id="nag-hos-result">--</span></div>
+    <div class="diag-item"><span class="lbl">Success / Fail / Collision</span><span class="v-dim" id="nag-outcome">--</span></div>
   </div>
   <div class="setting-row">
     <div>
@@ -2712,6 +2716,10 @@ function updateDefensePage(d){
   setText('nag-rx-route',(nag.seen370||0)+' / '+(nag.routed370||0));
   setText('nag-eligible-tx',(nag.eligible||0)+' / '+(nag.txOk||0)+(nag.txFail?(' · fail '+nag.txFail):''));
   setText('nag-filters',(nag.filterHas370?'Y':'N')+'/'+(nag.filterHas399?'Y':'N')+'/'+(nag.filterHas129?'Y':'N')+' · '+(nag.filterCount||0));
+  setText('nag-profile',(nag.implementation||'--')+' · '+(nag.profileIndex||0)+'/25 · try '+(nag.replayAttempts||0));
+  setText('nag-timing',(nag.rxToTxMs!==undefined?nag.rxToTxMs:'--')+' ms / '+(nag.txToNextOemMs!==undefined?nag.txToNextOemMs:'--')+' ms · period '+(nag.periodMs||0));
+  setText('nag-hos-result',(nag.lastHosBefore!==undefined?nag.lastHosBefore:'--')+'→'+(nag.lastHosAfter!==undefined?nag.lastHosAfter:'--')+' · now '+(nag.handsOnState!==undefined?nag.handsOnState:'--'));
+  setText('nag-outcome',(nag.replaySuccesses||0)+' / '+(nag.replayFailures||0)+' / '+(nag.counterCollisions||0)+(nag.lateWindowMissed?(' · missed '+nag.lateWindowMissed):''));
   var dot=$('def-dot');
   var statusEl=$('def-status');
   if(d.hw3OffsetSlew){

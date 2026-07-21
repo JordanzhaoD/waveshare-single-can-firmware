@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.13] - 2026-07-21
+
+### Fixed
+- Replaced the ineffective immediate `counter + 1` NAG echo on Legacy vehicles with a cadence-aware Late Human Replay path derived from the recorded vehicle's successful manual-dismiss torque traces.
+- Corrected HW3 Mode C decoding to read AP state from `0x399` byte 0 low nibble, hands-on state from byte 5 bits 2-5, and valid steering angle from `0x129` bytes 2-3.
+- Split NAG runtime behavior by vehicle generation: Legacy uses Late Human Replay, HW3 retains the corrected upstream modes, and HW4 fails closed to Off.
+
+### Changed
+- Legacy now learns a stable 35-45 ms `0x370` cadence and schedules each replay frame about 3 ms before the predicted next OEM slot instead of transmitting 0-1 ms after the previous frame.
+- The Legacy replay uses a 25-point, approximately one-second, same-direction ramp/hold/decay profile bounded to `±1.80 Nm`, preserves the source hands-on bits, advances only after a successful TX queue operation, and permits at most one opposite-direction retry before cooldown.
+- `0x370`, `0x399`, and `0x129` observation continues while final transmit gates are closed; CAN Write, OTA, AP Gate, Abort Guard, current HOS, cadence freshness, and the late send window are revalidated at TX time.
+
+### Diagnostics
+- Added per-session reset behavior plus replay profile index, attempts, HOS before/after, success/failure, learned period/jitter, RX-to-TX and TX-to-next-OEM timing, source/injected/next counters, counter-collision, and missed-window diagnostics to `/status` and the WebUI.
+
+### Safety
+- NAG remains default-off. No `0x399` or `0x129` frames are transmitted, Legacy `0x370` hands-on bits are not forged, torque remains hard-bounded to `±1.80 Nm`, and a lost gate cancels the active attempt without consuming a retry.
+
 ## [1.12] - 2026-07-21
 
 ### Fixed

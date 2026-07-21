@@ -396,10 +396,12 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('virtual void setNagMode(uint8_t', self.handlers)
         self.assertIn('void setNagMode(uint8_t mode) override', self.handlers)
         self.assertIn('static NagHandler dashNagHandler;', self.dash)
-        self.assertIn('dashNagHandler.setMode(dashNagMode);', self.dash)
-        self.assertIn('dashNagHandler.handleMessage(nagFrame, driver);', self.dash)
-        self.assertIn('reactive->bionicSteering = false', self.dash)
-        self.assertIn('reactive->setNagMode(0)', self.dash)
+        self.assertIn('dashNagHandler.setMode(', self.dash)
+        self.assertIn('hw3UpstreamNag ? dashNagMode', self.dash)
+        self.assertIn('dashNagHandler.handleMessageAt(', self.dash)
+        self.assertIn('routeBlock == DashNagRouteBlock::None', self.dash)
+        self.assertIn('dashHandler->bionicSteering = legacyLateHumanReplay', self.dash)
+        self.assertIn('DashNagMode::EpasLateEcho', self.dash)
         self.assertIn('reactive && reactive != dashHandler', self.dash)
         self.assertIn('reactive->resetBionic(resetSeed)', self.dash)
         self.assertNotIn('static_cast<LegacyHandler *>(reactive)->setNagMode', self.dash)
@@ -431,7 +433,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("abortGuard.allowsInjection()", block)
         self.assertIn("abortGuard.recordBlock(DashAbortGuardBlockPath::Nag)", block)
         self.assertIn("CanFrame nagFrame = original;", block)
-        self.assertIn("dashNagHandler.handleMessage(nagFrame, driver);", block)
+        self.assertIn("dashNagHandler.handleMessageAt(", block)
+        self.assertIn("routeBlock == DashNagRouteBlock::None", block)
+        self.assertIn("dashEffectiveHwMode == 1", block)
         self.assertNotIn("dashPluginEngine", block)
 
         gate_start = self.dash.find("static bool dashInjectionActive()")
@@ -519,8 +523,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertLess(handler_body.index(parse_call), handler_body.index("bool prevDefenseEnabled"))
         self.assertNotIn("raw.toInt()", handler_body)
         self.assertNotIn("dashNagMode = 0", handler_body)
-        self.assertIn("dashNagHandler.setMode(dashNagMode);", self.dash)
-        self.assertIn("canActive && dashNagMode !=", self.dash)
+        self.assertIn("dashNagHandler.setMode(", self.dash)
+        self.assertIn("hw3UpstreamNag ? dashNagMode", self.dash)
+        self.assertIn("nagKillerRuntime = canActive && hw3UpstreamNag", self.dash)
 
         export = re.search(
             r"static void handleSettingsExport\(\).*?"
@@ -1983,7 +1988,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         runtime_body = runtime.group(0)
         for token in [
-            "dashHandler->bionicSteering = false",
+            "dashHandler->bionicSteering = legacyLateHumanReplay",
             "dashHandler->isaChimeSuppress = nvsIsaChimeSuppress",
             "dashHandler->banShieldEnable = nvsBanShieldEnable",
             "dashHandler->legacyOffset = nvsLegacyOffset",
@@ -2045,7 +2050,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn('id="def-epnag-tgl"', body)
 
     def test_phase3_defense_ui_explains_independent_nag(self) -> None:
-        self.assertIn("选择即启用，不依赖防护总开关", self.ui)
+        self.assertIn("Legacy 使用实车 Late Human Replay", self.ui)
+        self.assertIn("最终 TX 仍受 CAN、启动、OTA、AP Gate 与 Abort Guard 约束", self.ui)
         self.assertNotIn('id="def-bionic-tgl"', self.ui)
 
     def test_phase3_defense_js_saves_dnd_params(self) -> None:
@@ -2079,8 +2085,9 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_phase3_defense_runtime_and_persistence_are_wired(self) -> None:
         """Built-in NAG is independent while other defense settings persist."""
-        self.assertIn("nagKillerRuntime = canActive && dashNagMode !=", self.dash)
-        self.assertIn("dashNagHandler.setMode(dashNagMode)", self.dash)
+        self.assertIn("nagKillerRuntime = canActive && hw3UpstreamNag", self.dash)
+        self.assertIn("dashNagHandler.setMode(", self.dash)
+        self.assertIn("hw3UpstreamNag ? dashNagMode", self.dash)
         self.assertIn("uint32_t resetSeed = (uint32_t)millis();", self.dash)
         self.assertIn("dashHandler->resetBionic(resetSeed)", self.dash)
         self.assertIn('prefs.putBool("def_dv", dashDndVolume);', self.dash)

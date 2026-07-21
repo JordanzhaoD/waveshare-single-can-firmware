@@ -97,6 +97,23 @@ inline uint8_t readDASAutopilotStatus(const CanFrame &frame)
     return frame.data[0] & 0x0F;
 }
 
+inline uint8_t readDASAutopilotHandsOnState(const CanFrame &frame)
+{
+    return static_cast<uint8_t>((frame.data[5] >> 2) & 0x0F);
+}
+
+inline uint8_t readSCCMSteeringAngleValidity(const CanFrame &frame)
+{
+    return static_cast<uint8_t>((frame.data[3] >> 6) & 0x03);
+}
+
+inline float readSCCMSteeringAngle(const CanFrame &frame)
+{
+    const uint16_t raw = static_cast<uint16_t>(frame.data[2]) |
+                         static_cast<uint16_t>((frame.data[3] & 0x3F) << 8);
+    return raw * 0.1f - 819.2f;
+}
+
 inline bool isDASAutopilotActive(uint8_t status)
 {
     // DAS_autopilotState (0x399 byte0 low nibble). AP is actively engaged on

@@ -644,7 +644,7 @@ void test_gate_loss_during_tx_fail_cooldown_preserves_cooldown()
     TEST_ASSERT_GREATER_THAN_UINT32(0, d.cooldownRemainMs);
 }
 
-void test_hos_clear_during_burst_off_preserves_off_interval()
+void test_hos_clear_during_burst_off_records_success_and_returns_idle()
 {
     DashEpasLateEcho n;
     n.setEnabled(true);
@@ -656,17 +656,17 @@ void test_hos_clear_during_burst_off_preserves_off_interval()
 
     n.onDasStatus(6, 2, 1100, true, nullptr);
     DashEpasLateEchoDiag clear = n.diag(1100);
-    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, clear.mode);
+    TEST_ASSERT_EQUAL(LateEchoModeState::IDLE, clear.mode);
     TEST_ASSERT_EQUAL_STRING("hosClear", clear.blockedReason);
+    TEST_ASSERT_EQUAL_UINT32(1, clear.replaySuccesses);
+    TEST_ASSERT_EQUAL_UINT8(3, clear.lastHosBefore);
+    TEST_ASSERT_EQUAL_UINT8(2, clear.lastHosAfter);
 
     n.onDasStatus(6, 3, 1200, true, nullptr);
-    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, n.diag(1200).mode);
-
-    n.onDasStatus(6, 3, DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs, true, nullptr);
-    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_ON, n.diag(DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs).mode);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_ON, n.diag(1200).mode);
 }
 
-void test_gate_loss_during_burst_off_preserves_off_interval()
+void test_gate_loss_during_burst_off_cancels_attempt_but_keeps_context()
 {
     DashEpasLateEcho n;
     n.setEnabled(true);
@@ -678,14 +678,13 @@ void test_gate_loss_during_burst_off_preserves_off_interval()
 
     n.onDasStatus(6, 3, 1100, false, "gateLost");
     DashEpasLateEchoDiag gated = n.diag(1100);
-    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, gated.mode);
+    TEST_ASSERT_EQUAL(LateEchoModeState::IDLE, gated.mode);
     TEST_ASSERT_EQUAL_STRING("gate", gated.blockedReason);
+    TEST_ASSERT_EQUAL_UINT8(3, gated.lastHos);
+    TEST_ASSERT_EQUAL_UINT8(6, gated.lastApState);
 
     n.onDasStatus(6, 3, 1200, true, nullptr);
-    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_OFF, n.diag(1200).mode);
-
-    n.onDasStatus(6, 3, DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs, true, nullptr);
-    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_ON, n.diag(DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs).mode);
+    TEST_ASSERT_EQUAL(LateEchoModeState::BURST_ON, n.diag(1200).mode);
 }
 
 void test_gate_loss_on_epas_rx_cancels_pending_echo()
@@ -827,7 +826,7 @@ void test_late_echo_torque_walk_stays_same_sign_within_burst()
     DashEpasLateEchoTxToken token1 = {};
     TEST_ASSERT_TRUE(n.buildDueFrame(first.pendingSendAtMs, out1, true, 6, 3, nullptr, token1));
     const int tq1 = decodeSignedTorque(out1);
-    TEST_ASSERT_GREATER_OR_EQUAL_INT(150, tq1 > 0 ? tq1 : -tq1);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(50, tq1 > 0 ? tq1 : -tq1);
     TEST_ASSERT_LESS_OR_EQUAL_INT(180, tq1 > 0 ? tq1 : -tq1);
     n.notifyTxResult(token1, true, first.pendingSendAtMs);
 
@@ -836,7 +835,7 @@ void test_late_echo_torque_walk_stays_same_sign_within_burst()
     CanFrame out2 = {};
     TEST_ASSERT_TRUE(buildLateEcho(n, second.pendingSendAtMs, out2, true, 6, 3, nullptr));
     const int tq2 = decodeSignedTorque(out2);
-    TEST_ASSERT_GREATER_OR_EQUAL_INT(150, tq2 > 0 ? tq2 : -tq2);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(50, tq2 > 0 ? tq2 : -tq2);
     TEST_ASSERT_LESS_OR_EQUAL_INT(180, tq2 > 0 ? tq2 : -tq2);
     TEST_ASSERT_TRUE((tq1 > 0 && tq2 > 0) || (tq1 < 0 && tq2 < 0));
 }
@@ -864,9 +863,89 @@ void test_late_echo_torque_direction_alternates_on_next_burst()
     CanFrame out2 = {};
     TEST_ASSERT_TRUE(buildLateEcho(n, secondBurst.pendingSendAtMs, out2, true, 6, 3, nullptr));
     const int tq2 = decodeSignedTorque(out2);
-    TEST_ASSERT_GREATER_OR_EQUAL_INT(150, tq2 > 0 ? tq2 : -tq2);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(50, tq2 > 0 ? tq2 : -tq2);
     TEST_ASSERT_LESS_OR_EQUAL_INT(180, tq2 > 0 ? tq2 : -tq2);
     TEST_ASSERT_TRUE((tq1 > 0 && tq2 < 0) || (tq1 < 0 && tq2 > 0));
+}
+
+void test_late_human_profile_advances_only_after_successful_tx()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag first = n.diag(1280);
+    CanFrame out1 = {};
+    DashEpasLateEchoTxToken token1 = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(first.pendingSendAtMs, out1, true, 6, 3, nullptr, token1));
+    TEST_ASSERT_EQUAL_INT(50, decodeSignedTorque(out1));
+    TEST_ASSERT_EQUAL_UINT8(0, n.diag(first.pendingSendAtMs).profileIndex);
+    n.notifyTxResult(token1, true, first.pendingSendAtMs);
+    TEST_ASSERT_EQUAL_UINT8(1, n.diag(first.pendingSendAtMs).profileIndex);
+
+    n.onEpasFrame(makeEpasFrame(8), 1320, true);
+    DashEpasLateEchoDiag second = n.diag(1320);
+    CanFrame out2 = {};
+    TEST_ASSERT_TRUE(buildLateEcho(n, second.pendingSendAtMs, out2, true, 6, 3, nullptr));
+    TEST_ASSERT_EQUAL_INT(65, decodeSignedTorque(out2));
+}
+
+void test_late_human_diag_correlates_next_oem_counter_and_timing()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, true, nullptr);
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, true);
+
+    DashEpasLateEchoDiag before = n.diag(1280);
+    CanFrame out = {};
+    DashEpasLateEchoTxToken token = {};
+    TEST_ASSERT_TRUE(n.buildDueFrame(before.pendingSendAtMs, out, true, 6, 3, nullptr, token));
+    n.notifyTxResult(token, true, before.pendingSendAtMs);
+    n.onEpasFrame(makeEpasFrame(8), 1320, true);
+
+    DashEpasLateEchoDiag after = n.diag(1320);
+    TEST_ASSERT_EQUAL_UINT8(8, after.lastInjectedCounter);
+    TEST_ASSERT_EQUAL_UINT8(8, after.lastNextOemCounter);
+    TEST_ASSERT_EQUAL_UINT32(1, after.counterCollisions);
+    TEST_ASSERT_EQUAL_INT(3, after.lastTxToNextOemMs);
+}
+
+void test_late_human_observes_context_while_final_gate_is_closed()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 900, false, "gate");
+    for (uint8_t i = 0; i < 8; ++i)
+        n.onEpasFrame(makeEpasFrame(i), 1000 + i * 40, false);
+
+    DashEpasLateEchoDiag observed = n.diag(1280);
+    TEST_ASSERT_TRUE(observed.cadenceStable);
+    TEST_ASSERT_EQUAL_UINT8(3, observed.lastHos);
+    TEST_ASSERT_EQUAL_UINT8(6, observed.lastApState);
+    TEST_ASSERT_FALSE(observed.pendingEcho);
+
+    n.onDasStatus(6, 3, 1281, true, nullptr);
+    n.onEpasFrame(makeEpasFrame(8), 1320, true);
+    TEST_ASSERT_TRUE(n.diag(1320).pendingEcho);
+}
+
+void test_late_human_limits_retries_then_enters_failure_cooldown()
+{
+    DashEpasLateEcho n;
+    n.setEnabled(true);
+    n.onDasStatus(6, 3, 0, true, nullptr);
+    TEST_ASSERT_EQUAL_UINT8(1, n.diag(0).replayAttempts);
+    n.onDasStatus(6, 3, DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs, true, nullptr);
+    TEST_ASSERT_EQUAL_UINT8(2, n.diag(2500).replayAttempts);
+    n.onDasStatus(6, 3, 2 * (DashEpasLateEcho::kBurstOnMs + DashEpasLateEcho::kBurstOffMs), true, nullptr);
+    DashEpasLateEchoDiag failed = n.diag(5000);
+    TEST_ASSERT_EQUAL(LateEchoModeState::COOLDOWN, failed.mode);
+    TEST_ASSERT_EQUAL_STRING("replayFailed", failed.blockedReason);
+    TEST_ASSERT_EQUAL_UINT32(1, failed.replayFailures);
 }
 
 void test_inflight_ap_abort_enters_cooldown_without_losing_token_ownership()
@@ -1163,8 +1242,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_abort_state_cancels_pending_and_enters_cooldown);
     RUN_TEST(test_hos_clear_during_abort_cooldown_preserves_cooldown);
     RUN_TEST(test_gate_loss_during_tx_fail_cooldown_preserves_cooldown);
-    RUN_TEST(test_hos_clear_during_burst_off_preserves_off_interval);
-    RUN_TEST(test_gate_loss_during_burst_off_preserves_off_interval);
+    RUN_TEST(test_hos_clear_during_burst_off_records_success_and_returns_idle);
+    RUN_TEST(test_gate_loss_during_burst_off_cancels_attempt_but_keeps_context);
     RUN_TEST(test_gate_loss_on_epas_rx_cancels_pending_echo);
     RUN_TEST(test_inflight_hos_clear_preserves_token_for_tx_failure);
     RUN_TEST(test_inflight_gate_loss_blocks_new_pending_until_token_resolved);
@@ -1173,6 +1252,10 @@ int main(int argc, char **argv)
     RUN_TEST(test_cadence_tracker_recovers_after_transient_instability);
     RUN_TEST(test_late_echo_torque_walk_stays_same_sign_within_burst);
     RUN_TEST(test_late_echo_torque_direction_alternates_on_next_burst);
+    RUN_TEST(test_late_human_profile_advances_only_after_successful_tx);
+    RUN_TEST(test_late_human_diag_correlates_next_oem_counter_and_timing);
+    RUN_TEST(test_late_human_observes_context_while_final_gate_is_closed);
+    RUN_TEST(test_late_human_limits_retries_then_enters_failure_cooldown);
     RUN_TEST(test_inflight_ap_abort_enters_cooldown_without_losing_token_ownership);
     RUN_TEST(test_inflight_real_epas_frame_advances_cadence_without_rescheduling_or_losing_token);
     RUN_TEST(test_inflight_tx_blocks_real_epas_reschedule_until_notify_failure);

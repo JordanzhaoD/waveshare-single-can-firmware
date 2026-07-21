@@ -82,6 +82,14 @@ inline DashReactiveDiag dashMapLateEchoDiag(
     out.abortBlocks = source.abortBlocks;
     out.gateBlocks = source.gateBlocks;
     out.txFailures = source.txFailures;
+    out.replayAttempts = source.replayAttempts;
+    out.replaySuccesses = source.replaySuccesses;
+    out.replayFailures = source.replayFailures;
+    out.profileIndex = source.profileIndex;
+    out.lastHosBefore = source.lastHosBefore;
+    out.lastHosAfter = source.lastHosAfter;
+    out.lastPeakRaw = source.lastTargetTorqueRaw;
+    out.echoSent = source.sentLateEchoes;
     out.lastApState = source.lastApState;
     out.phaseRemainMs = source.phaseRemainMs;
     out.lateEchoMode = true;

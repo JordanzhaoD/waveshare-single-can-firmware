@@ -51,16 +51,17 @@ static CanFrame makeEpasFrame(uint8_t handsOn, float torqueNm, uint8_t counter, 
 static CanFrame makeApStateFrame(uint8_t apState, uint8_t handsOnState)
 {
     CanFrame f = {.id = NagHandler::kApStateId, .dlc = 8};
-    f.data[0] = static_cast<uint8_t>((apState << 4) | (handsOnState & 0x0F));
+    f.data[0] = static_cast<uint8_t>(apState & 0x0F);
+    f.data[5] = static_cast<uint8_t>((handsOnState & 0x0F) << 2);
     return f;
 }
 
 static CanFrame makeSteeringFrame(float degrees)
 {
     CanFrame f = {.id = NagHandler::kSteeringId, .dlc = 8};
-    int16_t raw = static_cast<int16_t>(degrees * 10.0f);
-    f.data[0] = static_cast<uint8_t>(raw & 0xFF);
-    f.data[1] = static_cast<uint8_t>((static_cast<uint16_t>(raw) >> 8) & 0xFF);
+    uint16_t raw = static_cast<uint16_t>((degrees + 819.2f) * 10.0f + 0.5f);
+    f.data[2] = static_cast<uint8_t>(raw & 0xFF);
+    f.data[3] = static_cast<uint8_t>(0x40 | ((raw >> 8) & 0x3F));
     return f;
 }
 
@@ -620,7 +621,9 @@ void test_nag_mode_c_injects_after_state2_delay_with_fresh_context()
     steering = makeSteeringFrame(2.0f);
     handler.handleMessageAt(ap, mock, 2100);
     handler.handleMessageAt(steering, mock, 2100);
-    CanFrame f = makeEpasFrame(0, 0.33, 1);
+    // beta.12 parity: a real Mode-C level-1 frame remains eligible unless it
+    // matches our own echo payload.
+    CanFrame f = makeEpasFrame(1, 0.33, 1);
     handler.handleMessageAt(f, mock, 2200);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     uint16_t raw = static_cast<uint16_t>((mock.sent[0].data[2] & 0x0F) << 8) |
@@ -628,6 +631,7 @@ void test_nag_mode_c_injects_after_state2_delay_with_fresh_context()
     TEST_ASSERT_TRUE(raw >= kNagTorqueRawMin);
     TEST_ASSERT_TRUE(raw <= kNagTorqueRawMax);
     TEST_ASSERT_TRUE(raw < 0x0802);
+    TEST_ASSERT_EQUAL_UINT8(1, (mock.sent[0].data[4] >> 6) & 0x03);
     TEST_ASSERT_TRUE(verifyChecksum(mock.sent[0]));
 }
 
