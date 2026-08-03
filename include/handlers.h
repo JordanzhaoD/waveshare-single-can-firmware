@@ -18,7 +18,7 @@
 #include "dash_nag_diag.h"
 #include "dash_legacy_370_echo.h"
 #include "dash_epas_late_echo.h"
-#include "dash_ap_first_gate.h"
+#include "dash_legacy_steer_defense.h"
 #include "dash_fsd_diag.h"
 
 #ifndef DASH_FSD_252_COMPAT
@@ -422,29 +422,27 @@ struct CarManagerBase
     virtual uint8_t filterIdCount() const = 0;
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
-    virtual void observeApFirstState(uint8_t apState, uint32_t nowMs)
+    virtual void observeLegacySteer(uint8_t apState, uint32_t nowMs)
     {
         (void)apState;
         (void)nowMs;
     }
-    virtual DashApFirstDecision decideApFirst(bool gateEnabled,
-                                              bool instantEnabled,
-                                              uint32_t debounceMs,
-                                              uint32_t nowMs)
-    {
-        (void)gateEnabled;
-        (void)instantEnabled;
-        (void)debounceMs;
-        (void)nowMs;
-        return DashApFirstDecision{};
-    }
-    virtual void clearApFirstTiming() {}
-    virtual void resetApFirstRuntime() {}
-    virtual DashApFirstDiag apFirstDiag(uint32_t nowMs) const
+    virtual DashLegacySteerDecision decideLegacySteer(uint32_t nowMs)
     {
         (void)nowMs;
-        return DashApFirstDiag{};
+        return DashLegacySteerDecision{};
     }
+    virtual void clearLegacySteerTiming() {}
+    virtual void resetLegacySteerRuntime() {}
+    virtual DashLegacySteerDiag legacySteerDiag(uint32_t nowMs) const
+    {
+        (void)nowMs;
+        return DashLegacySteerDiag{};
+    }
+    // Push Legacy steer-jerk toggle/debounce config into the defense (LegacyHandler
+    // overrides; base/HW3/HW4 no-op).
+    virtual void applyLegacySteerConfig(bool /*instantEnabled*/, bool /*minimalEnabled*/,
+                                        uint32_t /*debounceMs*/) {}
     virtual void setNagMode(uint8_t mode) { (void)mode; }
     virtual DashReactiveDiag reactiveDiag() const { return dashMakeDisabledNagDiag(); }
     virtual DashEpasLateEchoDiag lateEchoRuntimeDiag(uint32_t /*nowMs*/) const
@@ -476,7 +474,7 @@ struct LegacyHandler : public CarManagerBase
     DashReactiveNagBurst nag; // TSL6P replay burst state machine
     DashReactiveHoldNag reactiveHoldNag;
     DashEpasLateEcho lateNag;
-    DashApFirstGate apFirstGate;
+    DashLegacySteerDefense legacySteerDefense;
     DashNagMode nagMode{DashNagMode::Off};
     uint8_t lastNagApState{0};
     uint8_t lastNagHos{0};
@@ -563,24 +561,28 @@ struct LegacyHandler : public CarManagerBase
         return effectiveOffset;
     }
 
-    void observeApFirstState(uint8_t apState, uint32_t nowMs) override
+    void observeLegacySteer(uint8_t apState, uint32_t nowMs) override
     {
-        apFirstGate.observe(apState, nowMs);
+        legacySteerDefense.observe(apState, nowMs);
     }
 
-    DashApFirstDecision decideApFirst(bool gateEnabled,
-                                      bool instantEnabled,
-                                      uint32_t debounceMs,
-                                      uint32_t nowMs) override
+    DashLegacySteerDecision decideLegacySteer(uint32_t nowMs) override
     {
-        return apFirstGate.decide(gateEnabled, instantEnabled, debounceMs, nowMs);
+        return legacySteerDefense.decide(nowMs);
     }
 
-    void clearApFirstTiming() override { apFirstGate.clearTiming(); }
-    void resetApFirstRuntime() override { apFirstGate.resetRuntime(); }
-    DashApFirstDiag apFirstDiag(uint32_t nowMs) const override
+    void clearLegacySteerTiming() override { legacySteerDefense.clearTiming(); }
+    void resetLegacySteerRuntime() override { legacySteerDefense.resetRuntime(); }
+    DashLegacySteerDiag legacySteerDiag(uint32_t nowMs) const override
     {
-        return apFirstGate.diag(nowMs);
+        return legacySteerDefense.diag(nowMs);
+    }
+    void applyLegacySteerConfig(bool instantEnabled, bool minimalEnabled,
+                                uint32_t debounceMs) override
+    {
+        legacySteerDefense.setInstantEnabled(instantEnabled);
+        legacySteerDefense.setMinimalEnabled(minimalEnabled);
+        legacySteerDefense.setDebounceMs(debounceMs);
     }
 
     void refreshLateNagEnabled()
@@ -908,7 +910,7 @@ struct LegacyHandler : public CarManagerBase
             {
                 const uint32_t apNowMs = dashDiagNowMs();
                 observeSafetyApState(apState, apNowMs);
-                observeApFirstState(apState, apNowMs);
+                observeLegacySteer(apState, apNowMs);
             }
             APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
@@ -1018,14 +1020,9 @@ struct LegacyHandler : public CarManagerBase
                             return;
                     }
                 }
-                if (activationAllowed && !minimalInjectAllowsInjection("legacy_fsd_mux0"))
-                {
-                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
-                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
-                    if (!speedOffsetRequested)
-                        return;
-                    activationAllowed = false;
-                }
+                // Minimal Inject burst verdict now lives inside decideLegacySteer()
+                // (dashLegacyFsdActivationAllowed); the base minimalInject budget is
+                // no longer consulted on the Legacy path (HW3/HW4 still use it).
                 if (checkAD && !checkAD())
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
@@ -1072,7 +1069,7 @@ struct LegacyHandler : public CarManagerBase
                 legacySpeedDiag.mux0TxByte7 = frame.data[7];
                 legacyFsdDiag.mux0.recordAfter(frame.data);
                 if (activationAllowed)
-                    minimalInject.recordInjection();
+                    legacySteerDefense.recordMinimalInjection("legacy_fsd_mux0");
                 framesSent++;
                 bool ok = driver.send(frame);
                 if (effectiveOffset > 0)

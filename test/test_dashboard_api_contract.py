@@ -217,7 +217,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('p.putBool("apfe", device["apFirstEdge"].as<bool>())', restore.group(0))
 
         clear_timing = re.search(
-            r"static void dashClearLegacyApFirstTiming\(\).*?\n\}",
+            r"static void dashClearLegacySteerTiming\(\).*?\n\}",
             self.dash,
             re.S,
         )
@@ -906,7 +906,7 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.dash)
 
     def test_instant_engage_runtime_diagnostics_contract(self) -> None:
-        gate_header = (ROOT / "include" / "dash_ap_first_gate.h").read_text(encoding="utf-8")
+        gate_header = (ROOT / "include" / "dash_legacy_steer_defense.h").read_text(encoding="utf-8")
         self.assertIn("bool instantBypassLast", gate_header)
 
         append = re.search(
@@ -916,7 +916,7 @@ class DashboardApiContractTests(unittest.TestCase):
         )
         self.assertIsNotNone(append)
         body = append.group(0)
-        self.assertIn("dashHandler->apFirstDiag(now)", body)
+        self.assertIn("dashHandler->legacySteerDiag(now)", body)
         for token in [
             '"instantEngageEnabled"',
             '"apEngaged"',
@@ -940,7 +940,7 @@ class DashboardApiContractTests(unittest.TestCase):
         )
         self.assertIsNotNone(serial)
         serial_body = serial.group(0)
-        self.assertEqual(serial_body.count("dashHandler->apFirstDiag(now)"), 1)
+        self.assertEqual(serial_body.count("dashHandler->legacySteerDiag(now)"), 1)
         for token in [
             "instantEngageEnabled=",
             "apEngaged=",
@@ -1754,7 +1754,7 @@ class DashboardApiContractTests(unittest.TestCase):
             '"minimal_inject"',
             '"minimalInject"',
             'minimal-inject-toggle',
-            'minimalInjectAllowsInjection("legacy_fsd_mux0")',
+            'legacySteerDefense.recordMinimalInjection("legacy_fsd_mux0")',
             'minimalInjectAllowsInjection("hw3_fsd_mux0")',
             'minimalInjectAllowsInjection("hw4_fsd_mux0")',
         ]:
@@ -1763,7 +1763,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('dashMinimalInjectEnabled = prefs.getBool("apmi", false);', self.dash)
         self.assertIn('handlerPool[i]->minimalInject.setEnabled(dashMinimalInjectEnabled);', self.dash)
         self.assertIn('dashHandler->minimalInject.setEnabled(dashMinimalInjectEnabled);', self.dash)
-        self.assertIn('const bool minimalBypass = dashMinimalInjectEnabled && ap.engaged;', self.dash)
+        self.assertIn('dashHandler->decideLegacySteer(nowMs)', self.dash)
         self.assertNotIn('minimalInjectAllowsInjection("hw3_fsd_mux1")', self.handlers)
         self.assertNotIn('minimalInjectAllowsInjection("hw4_fsd_mux2")', self.handlers)
 

@@ -982,10 +982,10 @@ static bool dashApInjectionAllowed()
     return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
 }
 
-static void dashClearLegacyApFirstTiming()
+static void dashClearLegacySteerTiming()
 {
     if (dashHandler)
-        dashHandler->clearApFirstTiming();
+        dashHandler->clearLegacySteerTiming();
     legacyFsdApActiveSinceMs = 0;
     legacySoftEngageSent = false;
 }
@@ -998,14 +998,14 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
 {
     if (!canActive)
     {
-        dashClearLegacyApFirstTiming();
+        dashClearLegacySteerTiming();
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
     if (!dashOtaGuardAllowInjection())
     {
-        dashClearLegacyApFirstTiming();
+        dashClearLegacySteerTiming();
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
@@ -1017,11 +1017,7 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
         return false;
     }
 
-    DashApFirstDecision ap = dashHandler->decideApFirst(
-        apInjectionGate,
-        dashInstantEngage,
-        legacyFsdRequiredStableMs,
-        nowMs);
+    DashLegacySteerDecision ap = dashHandler->decideLegacySteer(nowMs);
     if (!apInjectionGate)
     {
         legacyFsdApActiveSinceMs = 0;
@@ -1042,12 +1038,9 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
         legacyFsdApActiveSinceMs = nowMs;
         legacySoftEngageSent = false;
     }
-    // Upstream v2.16-beta.19 makes Minimal Inject a persistent debounce
-    // bypass for the engaged episode, not Instant Engage's one-shot edge.
-    // Its five-frame budget below bounds the extra writes to the onset and
-    // prevents a delayed burst from entering the later abort window.
-    const bool minimalBypass = dashMinimalInjectEnabled && ap.engaged;
-    if (!ap.allowed && !minimalBypass)
+    // Minimal Inject burst verdict (edge-triggered) now lives inside
+    // decideLegacySteer().allowed; no separate episode-bypass here.
+    if (!ap.allowed)
     {
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
@@ -1509,6 +1502,11 @@ static void dashApplyRuntimeState()
         dashHandler->legacySmartOffsetConfig.customPctVeryHigh = dashClampLegacySmartPct(dashLegacyCustomPctVeryHigh);
         dashHandler->abortGuard.setEnabled(dashAbortGuardEnabled);
         dashHandler->minimalInject.setEnabled(dashMinimalInjectEnabled);
+        // Legacy steer-jerk defense (Instant edge + Minimal edge burst). HW3/HW4
+        // hit the base no-op override; abort guard + base minimalInject above stay
+        // for the NAG/HW3/HW4 shared paths.
+        dashHandler->applyLegacySteerConfig(dashInstantEngage, dashMinimalInjectEnabled,
+                                            legacyFsdRequiredStableMs);
         dashHandler->tlsscBypass = nvsTlsscBypass;
         dashHandler->emergencyVehicleDetection = nvsEmergencyVehicleDetection;
         dashHandler->hw4OffsetRaw = nvsHw4OffsetRaw;
@@ -1519,7 +1517,7 @@ static void dashApplyRuntimeState()
         dashHandler->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
         dashApplySpeedProfileState();
         if (!canActive || !apInjectionGate)
-            dashClearLegacyApFirstTiming();
+            dashClearLegacySteerTiming();
         if (!canActive)
         {
             dashHandler->ADEnabled = false;
@@ -2419,11 +2417,11 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     bool parked = false;
     bool apActive = false;
     bool summoning = false;
-    DashApFirstDiag ap{};
+    DashLegacySteerDiag ap{};
     if (dashHandler)
     {
         diag = dashHandler->legacyFsdDiag;
-        ap = dashHandler->apFirstDiag(now);
+        ap = dashHandler->legacySteerDiag(now);
         parked = (bool)dashHandler->Parked;
         apActive = (bool)dashHandler->APActive;
         summoning = (bool)dashHandler->Summoning;
@@ -2460,7 +2458,7 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     j += R"JSON(,"lastApEdgeAgeMs":)JSON";
     j += ap.hasApEdge ? String(dashAgeMs(now, ap.lastApEdgeMs)) : String(0);
     j += R"JSON(,"apDebounceBypassCount":)JSON";
-    j += ap.apDebounceBypassCount;
+    j += ap.instantBypassCount;
     j += R"JSON(,"edgePending":)JSON";
     j += ap.edgePending ? "true" : "false";
     j += R"JSON(,"debounceSatisfied":)JSON";
@@ -5921,9 +5919,9 @@ static void dashSerialPrintHelp()
 static void dashSerialPrintSystemStatus()
 {
     const uint32_t now = millis();
-    const DashApFirstDiag ap = dashHandler
-                                   ? dashHandler->apFirstDiag(now)
-                                   : DashApFirstDiag{};
+    const DashLegacySteerDiag ap = dashHandler
+                                       ? dashHandler->legacySteerDiag(now)
+                                       : DashLegacySteerDiag{};
     const uint32_t lastApEdgeAgeMs = ap.hasApEdge
                                          ? dashAgeMs(now, ap.lastApEdgeMs)
                                          : 0;
@@ -5982,7 +5980,7 @@ static void dashSerialPrintSystemStatus()
                   (int)ap.debounceSatisfied, (int)ap.instantBypassLast);
     Serial.printf("apEdgeCount=%lu lastApEdgeAgeMs=%lu apDebounceBypassCount=%lu\n",
                   (unsigned long)ap.apEdgeCount, (unsigned long)lastApEdgeAgeMs,
-                  (unsigned long)ap.apDebounceBypassCount);
+                  (unsigned long)ap.instantBypassCount);
     Serial.println();
 }
 
@@ -7670,7 +7668,7 @@ static void dashInitHandlers()
     for (int i = 0; i < 3; i++)
     {
         handlerPool[i]->onFrame = mcpDashOnFrame;
-        handlerPool[i]->resetApFirstRuntime();
+        handlerPool[i]->resetLegacySteerRuntime();
         handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason;
         handlerPool[i]->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         handlerPool[i]->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
@@ -7692,8 +7690,8 @@ static void dashSwapHandler(uint8_t mode)
     if (dashHandler != next)
     {
         if (dashHandler)
-            dashHandler->clearApFirstTiming();
-        next->clearApFirstTiming();
+            dashHandler->clearLegacySteerTiming();
+        next->clearLegacySteerTiming();
         legacyFsdApActiveSinceMs = 0;
         legacySoftEngageSent = false;
         legacyFsdLastAllowed = false;
@@ -7742,6 +7740,8 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->legacySmartOffsetConfig.customPctVeryHigh = dashClampLegacySmartPct(dashLegacyCustomPctVeryHigh);
         handlerPool[i]->abortGuard.setEnabled(dashAbortGuardEnabled);
         handlerPool[i]->minimalInject.setEnabled(dashMinimalInjectEnabled);
+        handlerPool[i]->applyLegacySteerConfig(dashInstantEngage, dashMinimalInjectEnabled,
+                                               legacyFsdRequiredStableMs);
         handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         handlerPool[i]->overrideSpeedLimit = nvsOverrideSpeedLimit;
         handlerPool[i]->legacyFsdDiag.policy = dashLegacyFsdPolicy;
