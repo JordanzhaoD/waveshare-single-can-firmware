@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.15] - 2026-08-03
+
+### Changed
+- Rewrote the Legacy (`0x3EE` mux0) steer-jerk defense as a single deep module, `DashLegacySteerDefense` (`include/dash_legacy_steer_defense.h`), replacing the prior intent split across `DashApFirstGate`, the base `DashMinimalInject`, and the dashboard activation bypass.
+- Minimal Inject is now strictly edge-triggered: it opens a five-frame burst window only at the autopilot engagement rising edge, and toggling the mode on mid-engagement does not open a window. Five frames is a hard stop (a satisfied AP debounce no longer rescues it). Previously the bypass persisted for the whole engagement episode. A single five-frame budget is now the sole authority, removing the prior double-limit.
+- Instant Engage (edge bypass) and the settle fallback retain their existing semantics; when both Instant and Minimal are enabled, Minimal governs and enforces the five-frame cap.
+
+### Preserved
+- Abort Guard and the base `DashMinimalInject` — shared by fifteen transmit paths across NAG late-echo/hold/replay, HW3 mux0/1/2, and HW4 mux0/1/2 — are unchanged. `dash_ap_first_gate.h` is retained as dead code (contract and file-read tests still reference it).
+- Instant Engage, Minimal Inject, and the debounce window remain default-off, so behavior with all toggles off is identical to 1.14 (zero regression).
+
+### Diagnostics
+- `legacySteerDiag` exposes edge count, genuine-edge flag, instant bypass count/last, minimal budget/used/blocks, debounce satisfaction, and last-edge age, surfaced under the existing Instant/Minimal cards in `/status` and the WebUI.
+
+### Safety
+- Legacy FSD activation remains default-off. The shared Abort Guard, CAN Write, OTA, AP Gate, HOS, cadence, checksum, retry, cooldown, and `±1.80 Nm` torque limits are unchanged.
+
 ## [1.14] - 2026-07-22
 
 ### Changed
