@@ -99,7 +99,7 @@
 
 ### CAN 接线
 
-将开发板 TWAI 接入特斯拉车辆的 party CAN 总线（通常经由维修连接器或 OBD-X197 接口的 party bus 引脚）：
+将开发板 TWAI 接入特斯拉车辆的 party CAN 总线（通常经由 **X179 诊断连接器**（位于后中控后方）或 **OBD-II 诊断口**的 party CAN 引脚；详细 pinout 与各年款车型差异见 [hypery11/HARDWARE.md](https://github.com/hypery11/flipper-tesla-fsd/blob/main/HARDWARE.md)）：
 
 | 开发板 | 连接 |
 |--------|------|
@@ -253,7 +253,7 @@ A web dashboard is served over the onboard WiFi hotspot — no app needed, just 
 
 ### CAN Wiring
 
-Connect the board's TWAI to the Tesla vehicle's party CAN bus (typically via the service connector or the party-bus pins of the OBD-X197 connector):
+Connect the board's TWAI to the Tesla vehicle's party CAN bus (typically via the **X179 diagnostic connector** behind the rear center console, or the party-CAN pins of the **OBD-II port**; for detailed pinouts and model-year differences see [hypery11/HARDWARE.md](https://github.com/hypery11/flipper-tesla-fsd/blob/main/HARDWARE.md)):
 
 | Board | Connection |
 |-------|------------|
