@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.17] - 2026-08-09
+
+### Changed
+- Abort Guard re-arm threshold restored to upstream `v2.16-beta.11` parity (`include/dash_abort_guard.h`). The latch that suppresses activation injection after an abort (`DAS_autopilotState` 8 ABORTING / 9 ABORTED) now only clears on a clean disengage of `das_ap_state < 2` (UNAVAIL=0 / AVAIL=1), exactly matching upstream `fsd_abort_guard_update`. State 2 (ACTIVE_NOMINAL) is no longer treated as a clean disengage, so it does not re-arm the latch — the guard keeps suppressing injection until a true UNAVAIL/AVAIL state. The local had drifted to a `< 3` threshold (an off-by-one from the upstream it was mirroring), which re-armed prematurely at state 2. `v2.16-beta.11` is the version that tested best on the jerk-prone road, hence the verbatim override. Latch-on 8/9 and the `!(enabled && latched)` gate logic are unchanged; named constants `kDasApStateAborting` / `kDasApStateAborted` now mirror upstream's `DAS_APSTATE_*` defines. Off by default, unchanged.
+
 ## [1.16] - 2026-08-09
 
 ### Added

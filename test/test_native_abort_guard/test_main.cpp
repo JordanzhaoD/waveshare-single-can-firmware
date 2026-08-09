@@ -69,14 +69,17 @@ void test_latched_state1_clears()
     TEST_ASSERT_EQUAL_STRING("cleanDisengage", guard.diag().lastClearReason);
 }
 
-void test_latched_state2_clears_as_available()
+void test_latched_state2_does_not_clear()
 {
+    // Upstream v2.16-beta.11: state 2 (ACTIVE_NOMINAL) is NOT a clean disengage
+    // (clean = das_ap_state < 2), so the latch stays armed and injection stays
+    // suppressed until a true UNAVAIL/AVAIL (< 2) state arrives.
     guard.setEnabled(true);
     guard.onApState(8, 1000);
     guard.onApState(2, 1500);
-    TEST_ASSERT_FALSE(guard.diag().latched);
-    TEST_ASSERT_TRUE(guard.allowsInjection());
-    TEST_ASSERT_EQUAL_STRING("cleanDisengage", guard.diag().lastClearReason);
+    TEST_ASSERT_TRUE(guard.diag().latched);
+    TEST_ASSERT_FALSE(guard.allowsInjection());
+    TEST_ASSERT_EQUAL_UINT8(2, guard.diag().lastApState);
 }
 
 void test_minimal_inject_is_default_off_and_unbounded()
@@ -154,7 +157,7 @@ int main()
     RUN_TEST(test_state9_latches_and_blocks);
     RUN_TEST(test_latched_state6_does_not_clear);
     RUN_TEST(test_latched_state1_clears);
-    RUN_TEST(test_latched_state2_clears_as_available);
+    RUN_TEST(test_latched_state2_does_not_clear);
     RUN_TEST(test_record_block_counts_path_only_when_blocked);
     RUN_TEST(test_disabling_guard_clears_latch);
     RUN_TEST(test_minimal_inject_is_default_off_and_unbounded);

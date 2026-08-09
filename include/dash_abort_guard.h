@@ -2,6 +2,13 @@
 
 #include <cstdint>
 
+// Abort-Guard abort states — upstream v2.16-beta.11 `fsd_handler.h`
+// (`DAS_APSTATE_ABORTING` / `DAS_APSTATE_ABORTED`): DAS_autopilotState values
+// that mean the car is aborting an engage, the moment linked to the steer-jerk.
+// Kept as named constants to mirror upstream exactly.
+static constexpr uint8_t kDasApStateAborting = 8u;
+static constexpr uint8_t kDasApStateAborted = 9u;
+
 enum class DashAbortGuardBlockPath : uint8_t
 {
     None = 0,
@@ -111,7 +118,7 @@ public:
         if (!enabled_)
             return;
 
-        if (apState == 8 || apState == 9)
+        if (apState == kDasApStateAborting || apState == kDasApStateAborted)
         {
             if (!latched_)
                 latchedAtMs_ = nowMs;
@@ -121,9 +128,13 @@ public:
             return;
         }
 
-        // AP state 2 is AVAILABLE, not a valid engagement. Re-arm on every
-        // non-engaged state, matching upstream's DAS_APSTATE_ENGAGED == 3.
-        if (latched_ && apState < 3)
+        // Upstream v2.16-beta.11 `fsd_abort_guard_update`: a clean disengage is
+        // DAS_autopilotState < 2 (UNAVAIL=0 / AVAIL=1). State 2 is
+        // ACTIVE_NOMINAL — still an engaged-ish state — so it does NOT re-arm
+        // the latch; only a true disengage (< 2) does. This keeps the guard
+        // suppressing injection longer than a "< 3" threshold would, matching
+        // the upstream probe that tested best on the jerk-prone road.
+        if (latched_ && apState < 2)
         {
             latched_ = false;
             lastClearReason_ = "cleanDisengage";
