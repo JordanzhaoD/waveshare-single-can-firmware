@@ -2465,6 +2465,12 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     j += ap.debounceSatisfied ? "true" : "false";
     j += R"JSON(,"instantBypassLast":)JSON";
     j += ap.instantBypassLast ? "true" : "false";
+    j += R"JSON(,"dasFresh":)JSON";
+    j += ap.dasFresh ? "true" : "false";
+    j += R"JSON(,"lastDasSeenAgeMs":)JSON";
+    j += ap.hasDasSeen ? String(dashAgeMs(now, ap.lastDasSeenMs)) : String(0);
+    j += R"JSON(,"staleBlocks":)JSON";
+    j += ap.staleBlocks;
     j += ",\"canActive\":";
     j += canActive ? "true" : "false";
     j += ",\"otaAllowed\":";
@@ -5981,6 +5987,10 @@ static void dashSerialPrintSystemStatus()
     Serial.printf("apEdgeCount=%lu lastApEdgeAgeMs=%lu apDebounceBypassCount=%lu\n",
                   (unsigned long)ap.apEdgeCount, (unsigned long)lastApEdgeAgeMs,
                   (unsigned long)ap.instantBypassCount);
+    Serial.printf("dasFresh=%d lastDasSeenAgeMs=%lu staleBlocks=%lu\n",
+                  (int)ap.dasFresh,
+                  (unsigned long)(ap.hasDasSeen ? dashAgeMs(now, ap.lastDasSeenMs) : 0),
+                  (unsigned long)ap.staleBlocks);
     Serial.println();
 }
 

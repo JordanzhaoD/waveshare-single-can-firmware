@@ -229,11 +229,18 @@ void test_legacy_ap_first_instant_disabled_waits_default_2000ms()
     const uint32_t edgeMs = handler.legacySteerDiag(dashDiagNowMs()).lastApEdgeMs;
 
     advanceNativeDiagNowMsUntilNextCallReturns(edgeMs + 1999);
+    // Refresh the DAS timestamp WITHOUT advancing the native clock: dashDiagNowMs()
+    // is `++static` in native builds, so setDasApState()'s handleMessage() would
+    // burn ticks and push the clock past the settle boundary. observeLegacySteer()
+    // takes an explicit nowMs, keeping the DAS-freshness gate transparent so this
+    // still exercises the settle debounce (1999 ms < 2000 ms -> blocked).
+    handler.observeLegacySteer(3, edgeMs + 1999);
     CanFrame before = legacyMux0Frame();
     handler.handleMessage(before, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 
     advanceNativeDiagNowMsUntilNextCallReturns(edgeMs + 2000);
+    handler.observeLegacySteer(3, edgeMs + 2000); // same: refresh DAS, no clock burn
     CanFrame boundary = legacyMux0Frame();
     handler.handleMessage(boundary, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
@@ -250,11 +257,13 @@ void test_legacy_ap_first_instant_disabled_waits_custom_1000ms()
     const uint32_t edgeMs = handler.legacySteerDiag(dashDiagNowMs()).lastApEdgeMs;
 
     advanceNativeDiagNowMsUntilNextCallReturns(edgeMs + 999);
+    handler.observeLegacySteer(3, edgeMs + 999); // refresh DAS, no clock burn (see default_2000ms test)
     CanFrame before = legacyMux0Frame();
     handler.handleMessage(before, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 
     advanceNativeDiagNowMsUntilNextCallReturns(edgeMs + 1000);
+    handler.observeLegacySteer(3, edgeMs + 1000);
     CanFrame boundary = legacyMux0Frame();
     handler.handleMessage(boundary, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());

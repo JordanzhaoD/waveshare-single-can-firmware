@@ -40,12 +40,21 @@ struct DashLegacySteerDiag
     uint32_t minimalBlocks{0};
     const char *lastMinimalBlockPath{"none"};
     const char *lastResetReason{"none"};
+    bool dasFresh{false};      // DAS freshness at last decide (gate verdict)
+    bool hasDasSeen{false};    // a primary 0x399 DAS frame has ever been observed
+    uint32_t lastDasSeenMs{0}; // timestamp of the most recent observe()
+    uint32_t staleBlocks{0};   // cumulative mux0 frames blocked by staleness
 };
 
 class DashLegacySteerDefense
 {
 public:
     static constexpr uint8_t kMinimalBudget = kDashMinimalInjectBudget; // 5, no drift
+
+    // DAS freshness gate (#108 hardening / #122 parity): fail-closed activation
+    // injection when no primary 0x399 DAS frame has been seen in this window.
+    // 0x399 cycles ~50-100 ms on the bus, so 1000 ms tolerates many missed frames.
+    static constexpr uint32_t kDasFreshMs = 1000;
 
     // --- configuration (driven by toggles via dashApplyRuntimeState) ---
     void setInstantEnabled(bool e) { instantEnabled_ = e; }
@@ -65,6 +74,10 @@ public:
     // --- edge observation: once per primary 921 frame ---
     void observe(uint8_t apState, uint32_t nowMs)
     {
+        // DAS freshness: stamp every primary 0x399 frame, engaged or not, so the
+        // decide() gate can fail-closed when the bus stops delivering DAS state.
+        hasDasSeen_ = true;
+        lastDasSeenMs_ = nowMs;
         const bool engaged = isEngagedState(apState);
         if (!haveObservation_)
         {
@@ -124,6 +137,17 @@ public:
         {
             instantBypassLast_ = false;
             return d;
+        }
+
+        // DAS freshness gate: only inject while a primary DAS frame was observed
+        // recently. Fail-closed on stale/missing DAS so we never inject 0x3EE
+        // bit46 against an unknown autopilot state. Does NOT consume edgePending_
+        // or fire Instant — when DAS returns the engagement edge can still trigger.
+        const bool dasFresh = hasDasSeen_ && (nowMs - lastDasSeenMs_) <= kDasFreshMs;
+        if (!dasFresh)
+        {
+            ++staleBlocks_;
+            return d; // allowed stays false
         }
 
         d.genuineEdge = edgePending_;
@@ -193,6 +217,10 @@ public:
         apEngaged_ = false;
         disarmMinimalBurst("reset");
         clearTiming();
+        // DAS freshness is bus-health state, not engagement timing: clear on a
+        // full reset so we re-require a fresh DAS frame before injecting.
+        hasDasSeen_ = false;
+        lastDasSeenMs_ = 0;
     }
 
     DashLegacySteerDiag diag(uint32_t nowMs) const
@@ -213,6 +241,10 @@ public:
         d.minimalBlocks = minimalBlocks_;
         d.lastMinimalBlockPath = lastMinimalBlockPath_;
         d.lastResetReason = lastResetReason_;
+        d.dasFresh = hasDasSeen_ && (nowMs - lastDasSeenMs_) <= kDasFreshMs;
+        d.hasDasSeen = hasDasSeen_;
+        d.lastDasSeenMs = lastDasSeenMs_;
+        d.staleBlocks = staleBlocks_;
         return d;
     }
 
@@ -248,4 +280,8 @@ private:
     uint32_t minimalBlocks_{0};
     const char *lastMinimalBlockPath_{"none"};
     const char *lastResetReason_{"none"};
+
+    bool hasDasSeen_{false};
+    uint32_t lastDasSeenMs_{0};
+    uint32_t staleBlocks_{0};
 };

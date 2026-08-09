@@ -63,9 +63,11 @@ void test_instant_off_settle_waits_debounce()
     d.setInstantEnabled(false);
     d.observe(2, 100);
     d.observe(3, 200);
+    d.observe(3, 2199); // keep DAS fresh so this tests settle, not the freshness gate
     DashLegacySteerDecision before = d.decide(2199);
     TEST_ASSERT_FALSE(before.allowed);
     TEST_ASSERT_FALSE(before.instantBypass);
+    d.observe(3, 2200); // keep DAS fresh so this tests settle, not the freshness gate
     DashLegacySteerDecision at = d.decide(2200);
     TEST_ASSERT_TRUE(at.debounceSatisfied);
     TEST_ASSERT_TRUE(at.allowed);
@@ -268,6 +270,78 @@ void test_edge_age_is_zero_without_edge_and_wrap_safe_after_edge()
     TEST_ASSERT_EQUAL_UINT32(16, dashAgeMs(5, wrapped.lastApEdgeMs));
 }
 
+// --- DAS freshness gate (#108 hardening / #122 parity) ---------------------
+// Fail-closed: while engaged, block activation injection when no primary 0x399
+// DAS frame has been observed within kDasFreshMs. 0x399 normally cycles fast,
+// so the gate is invisible in normal operation and only bites on a stale bus.
+
+void test_das_fresh_allows_while_recent()
+{
+    DashLegacySteerDefense d;
+    d.setDebounceMs(0); // settle instantly so only freshness can block
+    d.observe(3, 5000); // engaged + DAS fresh at t=5000
+    for (uint32_t t = 5050; t <= 5999; t += 50)
+    {
+        TEST_ASSERT_TRUE(d.decide(t).allowed);
+        TEST_ASSERT_TRUE(d.diag(t).dasFresh);
+    }
+    TEST_ASSERT_EQUAL_UINT32(0, d.diag(5999).staleBlocks);
+}
+
+void test_das_stale_blocks_after_window()
+{
+    DashLegacySteerDefense d;
+    d.setDebounceMs(0);
+    d.observe(3, 1000); // lastDasSeenMs_=1000
+    // Within window (<= 1000 ms): allowed.
+    TEST_ASSERT_TRUE(d.decide(1500).allowed);
+    TEST_ASSERT_TRUE(d.decide(2000).allowed); // boundary inclusive
+    // 1 ms past the window: fail-closed, DAS not fresh.
+    DashLegacySteerDecision stale = d.decide(2001);
+    TEST_ASSERT_FALSE(stale.allowed);
+    DashLegacySteerDiag diag = d.diag(2001);
+    TEST_ASSERT_FALSE(diag.dasFresh);
+    TEST_ASSERT_EQUAL_UINT32(1, diag.staleBlocks);
+}
+
+void test_das_stale_does_not_consume_edge()
+{
+    DashLegacySteerDefense d;
+    d.setInstantEnabled(true);
+    d.setDebounceMs(5000); // settle NOT satisfied here -> only the edge can allow
+    d.observe(2, 100);
+    d.observe(3, 200); // rising edge at t=200, edgePending_=true
+    // DAS aged out (1300 - 200 = 1100 > 1000): blocked, Instant did NOT fire,
+    // and the edge must survive so it can still trigger once DAS returns.
+    DashLegacySteerDecision stale = d.decide(1300);
+    TEST_ASSERT_FALSE(stale.allowed);
+    TEST_ASSERT_FALSE(stale.instantBypass);
+    TEST_ASSERT_TRUE(d.diag(1300).edgePending);
+    // Re-feed primary DAS -> fresh -> Instant now consumes the preserved edge.
+    d.observe(3, 1350); // engaged==engaged: no new edge, just refreshes timestamp
+    DashLegacySteerDecision after = d.decide(1350);
+    TEST_ASSERT_TRUE(after.allowed);
+    TEST_ASSERT_TRUE(after.instantBypass);
+    TEST_ASSERT_FALSE(d.diag(1350).edgePending);
+    // Edge is one-shot: a later frame no longer bypasses debounce.
+    TEST_ASSERT_FALSE(d.decide(1351).instantBypass);
+}
+
+void test_reset_runtime_clears_das_freshness_keeps_stale_blocks()
+{
+    DashLegacySteerDefense d;
+    d.setDebounceMs(0);
+    d.observe(3, 1000);
+    d.decide(1000); // fresh, allowed (no stale block)
+    d.decide(2001); // stale -> staleBlocks=1
+    TEST_ASSERT_EQUAL_UINT32(1, d.diag(2001).staleBlocks);
+    d.resetRuntime();
+    DashLegacySteerDiag after = d.diag(2001);
+    TEST_ASSERT_FALSE(after.hasDasSeen); // freshness observation cleared
+    TEST_ASSERT_FALSE(after.dasFresh);
+    TEST_ASSERT_EQUAL_UINT32(1, after.staleBlocks); // cumulative counter survives
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -286,5 +360,9 @@ int main()
     RUN_TEST(test_uint32_wrap_preserves_debounce);
     RUN_TEST(test_reset_runtime_clears_observation_keeps_counters);
     RUN_TEST(test_edge_age_is_zero_without_edge_and_wrap_safe_after_edge);
+    RUN_TEST(test_das_fresh_allows_while_recent);
+    RUN_TEST(test_das_stale_blocks_after_window);
+    RUN_TEST(test_das_stale_does_not_consume_edge);
+    RUN_TEST(test_reset_runtime_clears_das_freshness_keeps_stale_blocks);
     return UNITY_END();
 }

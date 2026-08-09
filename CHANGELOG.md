@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.16] - 2026-08-09
+
+### Added
+- DAS freshness gate on the Legacy (`0x3EE` mux0) FSD activation path, inside `DashLegacySteerDefense` (`include/dash_legacy_steer_defense.h`): activation injection is fail-closed when no primary `0x399` DAS frame has been observed within `kDasFreshMs` (1000 ms). This is a default-on safety invariant (not an opt-in toggle), invisible in normal operation since `0x399` cycles roughly every 50-100 ms; it only bites when the DAS bus goes stale and the module would otherwise keep injecting against the last-known autopilot state. It matches upstream `fsd_das_ctx_fresh` parity and extends the same guard to the FSD path, which upstream also leaves unguarded. A stale gate does not consume the engagement edge or fire Instant — when DAS returns, the preserved edge can still trigger.
+
+### Diagnostics
+- `legacySteerDiag` exposes `dasFresh`, `hasDasSeen`, `lastDasSeenAgeMs`, and the cumulative `staleBlocks` counter, surfaced under the existing `gate` object in the `/status` JSON and in the serial system-status print.
+
+### Preserved
+- The shared base `DashMinimalInject` — used by fifteen NAG/HW3/HW4 transmit paths — is unchanged. Instant Engage, Minimal Inject, and the debounce window remain default-off and orthogonal to the freshness gate, so behavior with all toggles off is identical to 1.15 (zero regression).
+
 ## [1.15] - 2026-08-03
 
 ### Changed
