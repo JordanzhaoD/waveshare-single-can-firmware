@@ -1788,7 +1788,7 @@ static void dashLoadPrefs()
         prefs.putBool("boot_can", bootCanActive);
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", DASH_AP_GATE_DEFAULT);
-    prefs.remove("apfe"); // #108 Instant Engage removed in v1.18
+    prefs.remove("apfe");   // #108 Instant Engage removed in v1.18
     prefs.remove("ap_dly"); // AP-settle delay removed in v1.18
     apAutoRestore = prefs.getBool("ap_rst", false);
     // The persisted re-request flag alone never arms the coordinator —
@@ -2548,15 +2548,24 @@ static const char *dashApReRequestPhaseName(ApReRequestPhase p)
 {
     switch (p)
     {
-    case ApReRequestPhase::Disabled: return "disabled";
-    case ApReRequestPhase::WaitDriverIntent: return "waitDriverIntent";
-    case ApReRequestPhase::CancelSequence: return "cancelSequence";
-    case ApReRequestPhase::WaitCancelEvidence: return "waitCancelEvidence";
-    case ApReRequestPhase::RequestSequence: return "requestSequence";
-    case ApReRequestPhase::WaitQualification: return "waitQualification";
-    case ApReRequestPhase::ActiveInjection: return "activeInjection";
-    case ApReRequestPhase::Complete: return "complete";
-    case ApReRequestPhase::FailedLocked: return "failedLocked";
+    case ApReRequestPhase::Disabled:
+        return "disabled";
+    case ApReRequestPhase::WaitDriverIntent:
+        return "waitDriverIntent";
+    case ApReRequestPhase::CancelSequence:
+        return "cancelSequence";
+    case ApReRequestPhase::WaitCancelEvidence:
+        return "waitCancelEvidence";
+    case ApReRequestPhase::RequestSequence:
+        return "requestSequence";
+    case ApReRequestPhase::WaitQualification:
+        return "waitQualification";
+    case ApReRequestPhase::ActiveInjection:
+        return "activeInjection";
+    case ApReRequestPhase::Complete:
+        return "complete";
+    case ApReRequestPhase::FailedLocked:
+        return "failedLocked";
     }
     return "unknown";
 }
@@ -2565,11 +2574,16 @@ static const char *dashApReRequestStepName(ApReRequestStep s)
 {
     switch (s)
     {
-    case ApReRequestStep::Idle: return "idle";
-    case ApReRequestStep::PressPending: return "pressPending";
-    case ApReRequestStep::PressAccepted: return "pressAccepted";
-    case ApReRequestStep::ReleasePending: return "releasePending";
-    case ApReRequestStep::ReleaseAccepted: return "releaseAccepted";
+    case ApReRequestStep::Idle:
+        return "idle";
+    case ApReRequestStep::PressPending:
+        return "pressPending";
+    case ApReRequestStep::PressAccepted:
+        return "pressAccepted";
+    case ApReRequestStep::ReleasePending:
+        return "releasePending";
+    case ApReRequestStep::ReleaseAccepted:
+        return "releaseAccepted";
     }
     return "unknown";
 }

@@ -93,7 +93,7 @@ struct ApReRequestProfile
     // binds CAN_BUS_ANY here. VEH/PARTY remain valid for tests that model
     // the dual-bus firmware.
     uint8_t sourceBus = CAN_BUS_ANY;
-    uint32_t qualificationWindowMs = 0; // 0 = unconfigured
+    uint32_t qualificationWindowMs = 0;   // 0 = unconfigured
     uint32_t cancelEvidenceTimeoutMs = 0; // round start -> cancel evidence
     uint32_t requestSeqTimeoutMs = 0;     // evidence -> request press accepted
     uint16_t stalkReleaseGapMs = 0;       // press accepted -> release frame
@@ -264,10 +264,10 @@ struct ApReRequestDiag
     // activation edge for 6 s; coordinator correctly stayed idle but the
     // driver had no way to tell "car declined" from "box broken"). Purely
     // observational — it never gates or injects anything.
-    bool vehicleRefusal = false;   // last watched RWD press got no activation edge
-    bool rwdPressPending = false;  // RWD press seen, refusal window still open
-    uint32_t vehicleRefusals = 0;  // cumulative since configure()
-    uint32_t rwdPressMs = 0;       // stamp of the pending/last watched press (0 = none)
+    bool vehicleRefusal = false;  // last watched RWD press got no activation edge
+    bool rwdPressPending = false; // RWD press seen, refusal window still open
+    uint32_t vehicleRefusals = 0; // cumulative since configure()
+    uint32_t rwdPressMs = 0;      // stamp of the pending/last watched press (0 = none)
     // 4.5.0-beta09 P2 (0x399 flag tally): the high nibble of 0x399 byte0
     // carries vehicle-side flags (1 seen with hands-on/slow chains, 4 during
     // end-of-session standstill, 5 once after a violent capture). Semantics
@@ -327,10 +327,10 @@ public:
                                                     : Phase::Disabled)
                                       : Phase::Disabled)
                                : Phase::Disabled;
-        state_.reason = !enabled ? "disabled"
+        state_.reason = !enabled               ? "disabled"
                         : !state_.profileReady ? apReRequestProfileError(profile)
-                        : !apGateOpen ? "apGateOff"
-                                      : "waitIntent";
+                        : !apGateOpen          ? "apGateOff"
+                                               : "waitIntent";
     }
 
     void setPermit(bool allowed, const char *deniedReason)
@@ -396,7 +396,8 @@ public:
             if (fault) failLocked("apFaultState");
             break;
         case Phase::WaitCancelEvidence:
-            if (fault) failLocked("apFaultState");
+            if (fault)
+                failLocked("apFaultState");
             else if (state_.cancelEvidenceSeen && active)
             {
                 // The cancel landed (evidence seen) and AP then re-engaged
@@ -424,7 +425,8 @@ public:
             }
             break;
         case Phase::RequestSequence:
-            if (fault) failLocked("apFaultState");
+            if (fault)
+                failLocked("apFaultState");
             else if (evidence &&
                      !(state_.profile.requestApMask & (1u << (apState & 0x0F))))
             {
@@ -435,14 +437,16 @@ public:
             }
             break;
         case Phase::WaitQualification:
-            if (fault) failLocked("apFaultState");
+            if (fault)
+                failLocked("apFaultState");
             else if (!qualificationApAllowed(apState))
                 failLocked(apState <= 1 || apState == 8 || apState == 9
                                ? "apExitedDuringWindow"
                                : "apOutsideWindowSet");
             break;
         case Phase::ActiveInjection:
-            if (fault) failLocked("apFaultState");
+            if (fault)
+                failLocked("apFaultState");
             else if (!(state_.profile.postQualApMask & (1u << (apState & 0x0F))))
                 completeRound("apLeftInjectionSet");
             break;
@@ -519,8 +523,10 @@ public:
                 state_.vehicleRefusal = false; // prior watch superseded
                 state_.rwdPressMs = now;
             }
-            if (handshakeActive(state_.phase)) failLocked("physicalInput");
-            else if (state_.phase == Phase::ActiveInjection) completeRound("physicalInput");
+            if (handshakeActive(state_.phase))
+                failLocked("physicalInput");
+            else if (state_.phase == Phase::ActiveInjection)
+                completeRound("physicalInput");
             state_.prevNativeStalk = stalk;
             return;
         }
@@ -658,8 +664,10 @@ public:
             state_.pending = cancel ? ApReRequestAction::CancelPress
                                     : ApReRequestAction::RequestPress;
             state_.step = Step::PressPending;
-            if (cancel) ++state_.cancelAttempts;
-            else ++state_.requestAttempts;
+            if (cancel)
+                ++state_.cancelAttempts;
+            else
+                ++state_.requestAttempts;
         }
         else if (state_.step == Step::PressAccepted &&
                  now - state_.pressMs >= state_.profile.stalkReleaseGapMs)
@@ -901,11 +909,16 @@ private:
     {
         switch (a)
         {
-        case ApReRequestAction::CancelPress: return "cancelPress";
-        case ApReRequestAction::CancelRelease: return "cancelRelease";
-        case ApReRequestAction::RequestPress: return "requestPress";
-        case ApReRequestAction::RequestRelease: return "requestRelease";
-        default: return "none";
+        case ApReRequestAction::CancelPress:
+            return "cancelPress";
+        case ApReRequestAction::CancelRelease:
+            return "cancelRelease";
+        case ApReRequestAction::RequestPress:
+            return "requestPress";
+        case ApReRequestAction::RequestRelease:
+            return "requestRelease";
+        default:
+            return "none";
         }
     }
 

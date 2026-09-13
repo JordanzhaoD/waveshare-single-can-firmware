@@ -172,6 +172,5 @@ private:
     const char *lastBlockedPath_ = "none";
 };
 
-
 // (DashMinimalInject class removed in v1.18 with the #108 steer-jerk
 // defense family — see the note above dashAbortGuardBlockPathName.)

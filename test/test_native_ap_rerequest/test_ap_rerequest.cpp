@@ -37,8 +37,8 @@ static ApReRequestProfile synthProfile()
     p.availableWaitTimeoutMs = 800;
     p.stalkByte = 0;
     p.stalkMask = 0x07;
-    p.stalkFwdValue = 1; // user-frozen: FWD = cancel AP
-    p.stalkRwdValue = 2; // user-frozen: RWD = request AP
+    p.stalkFwdValue = 1;                      // user-frozen: FWD = cancel AP
+    p.stalkRwdValue = 2;                      // user-frozen: RWD = request AP
     p.postQualApMask = (1u << 2) | (1u << 3); // user-frozen qualification set {2,3}
     p.cancelEvidenceApMask = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 8) | (1u << 9);
     p.cancelFaultApMask = (1u << 14) | (1u << 15);
@@ -111,7 +111,7 @@ void test_power_on_inside_ap_never_backfills_driver_intent()
     DashApReRequestActivation c;
     arm(c);
     c.observeNative045(kIdleC, 8, CAN_BUS_ANY, 1000);
-    c.observeDriverIntent(true, 1000); // intent while already inside AP
+    c.observeDriverIntent(true, 1000);        // intent while already inside AP
     c.observeDasStatus(3, CAN_BUS_ANY, 1000); // no exit seen first
     TEST_ASSERT_EQUAL(0, c.diag().round);
     TEST_ASSERT_EQUAL(ApReRequestPhase::WaitDriverIntent, c.diag().phase);
@@ -221,7 +221,7 @@ void test_cancel_evidence_then_request_press_rwd()
     ApReRequestAction a = c.nextStalkFrame(1160, out);
     TEST_ASSERT_EQUAL(ApReRequestAction::RequestPress, a);
     TEST_ASSERT_EQUAL_HEX8((0x40 & ~0x07) | 0x02, out[0]); // stalk=RWD
-    TEST_ASSERT_EQUAL_HEX8(0xF0, out[6]); // template E counter + 1
+    TEST_ASSERT_EQUAL_HEX8(0xF0, out[6]);                  // template E counter + 1
     TEST_ASSERT_TRUE(ap_rerequest_045::crc8J1850(out, 7) == out[7]);
     c.recordStalkTxResult(true, 1161); // t_request
     TEST_ASSERT_EQUAL(1161, c.diag().requestMs);
@@ -280,7 +280,7 @@ void test_qualification_at_499ms_but_not_at_500ms()
 {
     DashApReRequestActivation c1;
     arm(c1);
-    reachWaitQualification(c1, 1000); // t_request = 1161
+    reachWaitQualification(c1, 1000);                  // t_request = 1161
     c1.observeNative045(kIdleE, 8, CAN_BUS_ANY, 1400); // keep template fresh
     c1.observeDasStatus(3, CAN_BUS_ANY, 1600);         // AP in frozen set, fresh
     c1.observeNative3ee(true, CAN_BUS_ANY, 1161 + 499);
@@ -474,7 +474,7 @@ void test_request_seq_timeout_when_evidence_but_no_press()
     c.observeDasStatus(2, CAN_BUS_ANY, 1100); // evidence at 1100, deadline 3100
     c.observeNative045(kIdleE, 8, CAN_BUS_ANY, 3090);
     c.observeNative045(kIdleE, 8, CAN_BUS_ANY, 3095); // template fresh, press eligible
-    c.observeDasStatus(2, CAN_BUS_ANY, 3100); // keep DAS fresh for the tick
+    c.observeDasStatus(2, CAN_BUS_ANY, 3100);         // keep DAS fresh for the tick
     c.tick(3101);
     TEST_ASSERT_EQUAL(ApReRequestPhase::FailedLocked, c.diag().phase);
     TEST_ASSERT_EQUAL_STRING("requestSeqTimeout", c.diag().reason);
@@ -524,10 +524,10 @@ void test_available_wait_timeout_locks()
     c.recordStalkTxResult(true, 1031);
     TEST_ASSERT_EQUAL(ApReRequestAction::CancelRelease, c.nextStalkFrame(1091, out));
     c.recordStalkTxResult(true, 1092);
-    c.observeDasStatus(1, CAN_BUS_ANY, 1110); // evidence latched at 1110
+    c.observeDasStatus(1, CAN_BUS_ANY, 1110);         // evidence latched at 1110
     c.observeNative045(kIdleE, 8, CAN_BUS_ANY, 1800); // native cadence
-    c.observeDasStatus(1, CAN_BUS_ANY, 1800); // still not available, keep waiting
-    c.tick(1909); // 799 ms since evidence: half-open boundary, still waiting
+    c.observeDasStatus(1, CAN_BUS_ANY, 1800);         // still not available, keep waiting
+    c.tick(1909);                                     // 799 ms since evidence: half-open boundary, still waiting
     TEST_ASSERT_EQUAL(ApReRequestPhase::WaitCancelEvidence, c.diag().phase);
     c.tick(1910); // 800 ms: the car never came back available
     TEST_ASSERT_EQUAL(ApReRequestPhase::FailedLocked, c.diag().phase);
@@ -593,7 +593,7 @@ void test_window_expired_rearms_and_round2_requires_full_exit_and_edge()
     // A direct AP bounce without a full exit must not start round 2.
     c.observeDasStatus(3, CAN_BUS_ANY, 1700);
     TEST_ASSERT_EQUAL(1, c.diag().round);
-    TEST_ASSERT_EQUAL_STRING("waitExit", c.diag().reason);              // moved on
+    TEST_ASSERT_EQUAL_STRING("waitExit", c.diag().reason);               // moved on
     TEST_ASSERT_EQUAL_STRING("windowExpired", c.diag().lastEndedReason); // kept
     // Full exit -> intent -> fresh template -> edge starts round 2.
     c.observeDasStatus(1, CAN_BUS_ANY, 1800);
@@ -684,7 +684,7 @@ void test_hardware_class_locks_still_lock_without_rearm()
     TEST_ASSERT_EQUAL_STRING("txFailed", d.reason);
     TEST_ASSERT_EQUAL_STRING("txFailed", d.lastEndedReason);
     TEST_ASSERT_EQUAL(0, d.autoRearms);
-    c.observeDasStatus(1, CAN_BUS_ANY, 2000);   // full exit does not unlock
+    c.observeDasStatus(1, CAN_BUS_ANY, 2000); // full exit does not unlock
     c.observeDriverIntent(true, 2010);
     c.observeNative045(kIdleC, 8, CAN_BUS_ANY, 2020);
     c.observeDasStatus(3, CAN_BUS_ANY, 2100);
@@ -779,7 +779,7 @@ void test_stale_last_tx_never_hijacks_next_round_press_anchor()
     c.observeNative045(kIdleE, 8, CAN_BUS_ANY, 1400);
     c.observeDasStatus(2, CAN_BUS_ANY, 1500);
     c.observeNative3ee(true, CAN_BUS_ANY, 1550); // qualify -> ActiveInjection
-    c.observeDasStatus(5, CAN_BUS_ANY, 1600); // leaves {2,3} -> Complete
+    c.observeDasStatus(5, CAN_BUS_ANY, 1600);    // leaves {2,3} -> Complete
     TEST_ASSERT_EQUAL(ApReRequestPhase::Complete, c.diag().phase);
     // 83 s of native traffic later the template is E — the stale lastTx 0
     // "leads" it by exactly 1 on the ring (the CSV shape: car at 5, stale 6).
@@ -787,7 +787,7 @@ void test_stale_last_tx_never_hijacks_next_round_press_anchor()
     c.observeDasStatus(1, CAN_BUS_ANY, t2); // full exit again
     c.observeDriverIntent(true, t2 + 10);
     c.observeNative045(kIdleE, 8, CAN_BUS_ANY, t2 + 20); // fresh template E
-    c.observeDasStatus(3, CAN_BUS_ANY, t2 + 100); // round 2 edge
+    c.observeDasStatus(3, CAN_BUS_ANY, t2 + 100);        // round 2 edge
     TEST_ASSERT_EQUAL(2, c.diag().round);
     uint8_t out[8];
     TEST_ASSERT_EQUAL(ApReRequestAction::CancelPress, c.nextStalkFrame(t2 + 110, out));
@@ -870,7 +870,7 @@ void test_next_round_after_complete_needs_full_exit_again()
     c.observeNative045(kIdleE, 8, CAN_BUS_ANY, 1400);
     c.observeDasStatus(2, CAN_BUS_ANY, 1500);
     c.observeNative3ee(true, CAN_BUS_ANY, 1550); // qualify -> ActiveInjection
-    c.observeDasStatus(5, CAN_BUS_ANY, 1600); // Complete
+    c.observeDasStatus(5, CAN_BUS_ANY, 1600);    // Complete
     TEST_ASSERT_EQUAL(ApReRequestPhase::Complete, c.diag().phase);
     // Direct 5 -> 3 bounce must not start round 2.
     c.observeDasStatus(3, CAN_BUS_ANY, 1700);
@@ -946,7 +946,8 @@ void test_diag_queries_have_no_side_effects()
 static uint32_t clk() { return dashDiagNowMs(); }
 static void pump(uint32_t target)
 {
-    while (dashDiagNowMs() < target) (void)dashDiagNowMs();
+    while (dashDiagNowMs() < target)
+        (void)dashDiagNowMs();
 }
 
 static DashApReRequestActivation gWireCtrl;

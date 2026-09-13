@@ -450,7 +450,6 @@ int main()
     RUN_TEST(test_ui_bit6_still_reads_real_bit);
     RUN_TEST(test_runtime_defaults_start_disabled);
 
-
     RUN_TEST(test_strict_bool_parser_accepts_documented_values_case_insensitively);
     RUN_TEST(test_strict_bool_parser_rejects_malformed_and_decorated_values);
     RUN_TEST(test_persisted_bool_update_invalid_input_never_calls_persistence);
