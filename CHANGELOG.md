@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.18] - 2026-09-13
+
+### Added
+- 8.3.6 anti-jerk coordinator (`DashApReRequestActivation`, `include/dash_ap_rerequest_activation.h`), ported from the dual-CAN 4.5.0-beta09 firmware: on an AP activation edge (fresh full exit → driver intent → state 3-6 edge) the device first synthesizes a 0x045 stalk cancel (FWD), waits for the vehicle to return to the available state (0x399=2, request waits up to 3000 ms), then re-requests AP (RWD) and — once a qualifying native 0x3EE mux0 frame with the intent bit arrives inside the 2400 ms window with AP∈{2,3} — injects bit46 on that same frame. The coordinator owns the stalk while a round is active (own-echo window, 4-bit rolling-counter time-recency anchor, counter-conflict/physical-input/tx-failure fail-closed locks) and is the sole authority over Legacy FSD activation while armed. Vehicle-side end conditions (window expired, AP exit during window, AP re-engage during the available wait, fault state) auto re-arm with the full-exit fence, capped at 3 consecutive re-arms before a real lock; `configure()` preserves an ActiveInjection round across identical `/config` re-applies. Observation layer included: P1 vehicle-refusal hint (a native RWD press with no activation edge within 2500 ms shows "vehicle refused") and the P2 0x399 high-nibble flag histogram (`apFlagCounts[16]`).
+- Wiring: `/defense_config` flat key `ap_re_request` (NVS `apr_on`, default off), top-level `apReRequest` diagnostics object on `/status` shared with `/defense_config`, per-phase/reason localization on the defense page card (阶段/原因, 轮次/纪元, 车辆响应, 取消/请求, 回声/冲突, 上次结束原因, 自动重武装), and the coordinator tick on the CAN task (`appApReRequestTick`). The AP injection gate (`ap-gate-tgl`, cockpit AP 注入安全 card) is the arm-level precondition: gate closed = coordinator fully inert and the Legacy direct path stays the legal normal mode. Timing profile uses the dual-CAN 2026-09-10/11/12 real-vehicle 0x045 calibration (window 2400 ms, cancel evidence {1,2}, qualification {2,3,4,5,6}, request-available {2}).
+- Single-CAN vehicle validation procedure (`docs/AP-REREQUEST-VEHICLE-VALIDATION-PROCEDURE.md`), rewritten from the dual-CAN Tier 0-3规程: Tier 0 step 1 is a single-CAN 0x045 visibility check (record with filter `45,399,3EE` for 120 s and confirm native 0x045 R frames at roughly 10 Hz) — own-echo/counter-follow behavior is device- and wiring-specific, so the dual-CAN 9-round field data does NOT carry over and Tier 1 must be redone on the single-CAN harness.
+- WebUI simulator mirrors the standby `apReRequest` status object and the `ap_re_request` config toggle.
+
+### Removed
+- The #108 steer-jerk defense family, deleted without a compatibility shim (dual-CAN 4.5.0-beta02 deletion style): `DashLegacySteerDefense` + `dash_legacy_steer_defense.h`, `DashApFirstGate` + `dash_ap_first_gate.h`, Instant Engage (`ap_first_edge` / NVS `apfe`), Minimal Inject (`minimal_inject` / NVS `apmi` / `DashMinimalInject`), Soft Engage (`soft_engage` / NVS `def_se` / `dashSoftEngageRelease`), the AP-settle delay chain (`ap_delay_ms` / NVS `ap_dly` / `dashClampApDelayMs` / the 延迟注入 select), and the whole `observe/decide/diag/config` steer-defense HTTP+NVS+UI surface. Stale NVS keys (`apfe`, `apmi`, `def_se`, `ap_dly`) are actively removed on load. Anti-regression contract tests keep every removed POST param, JSON key, NVS var, and UI control dead.
+- **Abort Guard is kept** — it is the 0x399 state 8/9 latch safety guard, and the coordinator's injection path runs through it (`FsdGateBlockReason::LegacyFsdSettle` survives as the gate-blocked reason).
+- Native suites retired with the modules: `env:native_legacy_steer_defense` (directory deleted), the steer-defense tests in `native_injection_after_ap` (29→15), `native_abort_guard` (12→9), and `native_helpers` (49→39); replaced by the ported `env:native_ap_rerequest` suite (60/60).
+
+### Caveats
+- The 8.3.6 switch ships **default off**; anti-jerk effectiveness on the single-CAN harness is **not yet vehicle-verified** — the dual-CAN calibration is inherited for timing only. 「不甩」 remains a single-vehicle small sample; no claim that the steering jerk is fixed.
+
 ## [1.17] - 2026-08-09
 
 ### Changed

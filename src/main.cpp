@@ -719,12 +719,53 @@ static bool app_main_loop()
 #define APP_CAN_TASK_CORE 0
 #endif
 
+#ifdef ESP32_DASHBOARD
+// v1.18 AP cancel + re-request coordinator tick (8.3.6 anti-jerk; mirrors the
+// dual-CAN firmware's t2canApReRequestTick). The permit cascade is the
+// coordinator's license to run a handshake round: canActive / Legacy handler /
+// driver / OTA / abort guard. Losing any of them mid-round locks the round
+// fail-closed (permitLost) until the mode is reconfigured.
+// The AP injection gate is deliberately NOT part of the permit expression:
+// setPermit is fail-closed, so a gate toggle mid-round would trigger a
+// permitLost lock requiring an 8.3.6-switch off->on cycle. Instead, gate
+// toggles flow through dashApplyRuntimeState -> configure(), which resets
+// to Disabled (roundActive == false, never permitLost) and re-arms
+// automatically when the gate reopens.
+// Runs on the CAN task: the same task that feeds it observations from
+// mcpDashOnFrame, keeping dashApReRequestCtrl single-threaded.
+static void appApReRequestTick()
+{
+    const uint32_t now = millis();
+    const bool permit = canActive && dashLegacyHandlerActive() && appDriver &&
+                        !vehicleOtaActive &&
+                        (!dashHandler || dashHandler->abortGuard.allowsInjection());
+    dashApReRequestCtrl.setPermit(permit, "permitLost");
+    dashApReRequestCtrl.tick(now);
+    uint8_t data[8];
+    if (dashApReRequestCtrl.nextStalkFrame(now, data) == ApReRequestAction::None)
+        return;
+    // Synthetic stalk frame on the single CAN bus. nextStalkFrame() already
+    // encoded byte0 stalk bits, the rolling counter, and the CRC8-J1850 byte.
+    CanFrame f = {};
+    f.id = 0x045;
+    f.dlc = 8;
+    memcpy(f.data, data, 8);
+    f.bus = CAN_BUS_DEFAULT;
+    const bool ok = appDriver->send(f);
+    dashRecordCanFrame(f, ok ? 'T' : 'E');
+    dashApReRequestCtrl.recordStalkTxResult(ok, millis());
+}
+#endif // ESP32_DASHBOARD
+
 static void app_can_task(void *)
 {
     appCanTaskDedicated = true;
     for (;;)
     {
         bool processed = appLoop<TWAIDriver>();
+#ifdef ESP32_DASHBOARD
+        appApReRequestTick();
+#endif
 #ifdef DRIVER_T2CAN_DUAL
         t2canDrainSecondary();
         t2canServiceModeTick();

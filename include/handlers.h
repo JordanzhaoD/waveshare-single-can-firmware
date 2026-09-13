@@ -18,7 +18,6 @@
 #include "dash_nag_diag.h"
 #include "dash_legacy_370_echo.h"
 #include "dash_epas_late_echo.h"
-#include "dash_legacy_steer_defense.h"
 #include "dash_fsd_diag.h"
 
 #ifndef DASH_FSD_252_COMPAT
@@ -169,7 +168,6 @@ struct CarManagerBase
     LegacySmartOffsetEngine legacySmartOffsetEngine{};
     LegacySpeedRuntimeDiag legacySpeedDiag{};
     DashAbortGuard abortGuard{};
-    DashMinimalInject minimalInject{};
     Shared<bool> tlsscBypass{false};
     Shared<bool> emergencyVehicleDetection{true};
     Shared<bool> isaChimeSuppress{false};
@@ -257,6 +255,13 @@ struct CarManagerBase
     bool (*checkEvd)() = nullptr;
     FsdGateBlockReason (*gateBlockReason)() = nullptr;
     bool (*legacyFsdActivationAllowed)(uint32_t nowMs) = nullptr;
+    // v1.18 re-request mode hooks (see dash_ap_rerequest_activation.h). The
+    // observe wrapper is fed from the Legacy mux0 branch with the driver
+    // intent BEFORE any gate decision (a frame the gates swallow must still
+    // count for qualification); the inhibit wrapper is barrier A for every
+    // device 0x3EE write.
+    void (*reRequestObserve3ee)(bool intentPresent, uint8_t bus, uint32_t nowMs) = nullptr;
+    bool (*reRequestInhibit3ee)() = nullptr;
     // When set and returns true, an installed plugin owns the FSD activation
     // frames (1006/1021/2047) and the built-in handler must suppress its own
     // injection to avoid duplicate frames. Defaults to nullptr so the built-in
@@ -284,15 +289,6 @@ struct CarManagerBase
     void observeSafetyApState(uint8_t apState, uint32_t nowMs)
     {
         abortGuard.onApState(apState, nowMs);
-        minimalInject.onApState(apState);
-    }
-
-    bool minimalInjectAllowsInjection(const char *path)
-    {
-        if (minimalInject.allowsInjection())
-            return true;
-        minimalInject.recordBlock(path);
-        return false;
     }
 
     bool injectionGateOpen() const
@@ -422,27 +418,13 @@ struct CarManagerBase
     virtual uint8_t filterIdCount() const = 0;
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
-    virtual void observeLegacySteer(uint8_t apState, uint32_t nowMs)
-    {
-        (void)apState;
-        (void)nowMs;
-    }
-    virtual DashLegacySteerDecision decideLegacySteer(uint32_t nowMs)
-    {
-        (void)nowMs;
-        return DashLegacySteerDecision{};
-    }
-    virtual void clearLegacySteerTiming() {}
-    virtual void resetLegacySteerRuntime() {}
-    virtual DashLegacySteerDiag legacySteerDiag(uint32_t nowMs) const
-    {
-        (void)nowMs;
-        return DashLegacySteerDiag{};
-    }
-    // Push Legacy steer-jerk toggle/debounce config into the defense (LegacyHandler
-    // overrides; base/HW3/HW4 no-op).
-    virtual void applyLegacySteerConfig(bool /*instantEnabled*/, bool /*minimalEnabled*/,
-                                        uint32_t /*debounceMs*/) {}
+    // The Legacy virtual steer-defense interface (observeLegacySteer /
+    // decideLegacySteer / clearLegacySteerTiming / resetLegacySteerRuntime /
+    // legacySteerDiag / applyLegacySteerConfig) was removed in v1.18 together
+    // with the #108 steer-jerk defense family (dual-CAN 4.5.0-beta02
+    // precedent): Instant/Minimal Inject and Soft Engage proved unable to
+    // stop the 2026.8.3.6 activation jerk, and the 8.3.6 cancel/re-request
+    // coordinator replaces the whole admission chain when armed.
     virtual void setNagMode(uint8_t mode) { (void)mode; }
     virtual DashReactiveDiag reactiveDiag() const { return dashMakeDisabledNagDiag(); }
     virtual DashEpasLateEchoDiag lateEchoRuntimeDiag(uint32_t /*nowMs*/) const
@@ -474,7 +456,6 @@ struct LegacyHandler : public CarManagerBase
     DashReactiveNagBurst nag; // TSL6P replay burst state machine
     DashReactiveHoldNag reactiveHoldNag;
     DashEpasLateEcho lateNag;
-    DashLegacySteerDefense legacySteerDefense;
     DashNagMode nagMode{DashNagMode::Off};
     uint8_t lastNagApState{0};
     uint8_t lastNagHos{0};
@@ -559,30 +540,6 @@ struct LegacyHandler : public CarManagerBase
                                             ? "ready"
                                             : legacySpeedDiag.result.blockedReason;
         return effectiveOffset;
-    }
-
-    void observeLegacySteer(uint8_t apState, uint32_t nowMs) override
-    {
-        legacySteerDefense.observe(apState, nowMs);
-    }
-
-    DashLegacySteerDecision decideLegacySteer(uint32_t nowMs) override
-    {
-        return legacySteerDefense.decide(nowMs);
-    }
-
-    void clearLegacySteerTiming() override { legacySteerDefense.clearTiming(); }
-    void resetLegacySteerRuntime() override { legacySteerDefense.resetRuntime(); }
-    DashLegacySteerDiag legacySteerDiag(uint32_t nowMs) const override
-    {
-        return legacySteerDefense.diag(nowMs);
-    }
-    void applyLegacySteerConfig(bool instantEnabled, bool minimalEnabled,
-                                uint32_t debounceMs) override
-    {
-        legacySteerDefense.setInstantEnabled(instantEnabled);
-        legacySteerDefense.setMinimalEnabled(minimalEnabled);
-        legacySteerDefense.setDebounceMs(debounceMs);
     }
 
     void refreshLateNagEnabled()
@@ -910,7 +867,6 @@ struct LegacyHandler : public CarManagerBase
             {
                 const uint32_t apNowMs = dashDiagNowMs();
                 observeSafetyApState(apState, apNowMs);
-                observeLegacySteer(apState, apNowMs);
             }
             APActive = isDASAutopilotActive(apState);
             if (frame.dlc >= 2)
@@ -984,6 +940,12 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.forceRuntime = forced;
                 legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
 
+                // v1.18 re-request mode: observe every native mux0 frame BEFORE
+                // any gate below can return, so qualification detection sees
+                // frames the gates would otherwise swallow.
+                if (reRequestObserve3ee)
+                    reRequestObserve3ee((bool)fsdTriggered, frame.bus, nowMs);
+
                 const bool speedOffsetRequested = legacySpeedOffsetRequested();
                 if (!(bool)fsdTriggered && !speedOffsetRequested)
                 {
@@ -1003,6 +965,18 @@ struct LegacyHandler : public CarManagerBase
                                                : DashAbortGuardBlockPath::LegacyFsdMux0);
                     return;
                 }
+                // Barrier A: while a re-request handshake round runs, ALL device
+                // 0x3EE mux0 writes stop — activation bit46 AND the shared
+                // speed-offset frame. The vehicle's own frame passes untouched.
+                if (reRequestInhibit3ee && reRequestInhibit3ee())
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ReRequestHandshake;
+                    if (speedOffsetRequested)
+                        legacySpeedDiag.blockedReason = "apReRequestHandshake";
+                    return;
+                }
                 bool activationAllowed = false;
                 if ((bool)fsdTriggered)
                 {
@@ -1020,9 +994,6 @@ struct LegacyHandler : public CarManagerBase
                             return;
                     }
                 }
-                // Minimal Inject burst verdict now lives inside decideLegacySteer()
-                // (dashLegacyFsdActivationAllowed); the base minimalInject budget is
-                // no longer consulted on the Legacy path (HW3/HW4 still use it).
                 if (checkAD && !checkAD())
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
@@ -1068,8 +1039,6 @@ struct LegacyHandler : public CarManagerBase
                 legacySpeedDiag.mux0RxByte7 = legacyFsdDiag.mux0.before[7];
                 legacySpeedDiag.mux0TxByte7 = frame.data[7];
                 legacyFsdDiag.mux0.recordAfter(frame.data);
-                if (activationAllowed)
-                    legacySteerDefense.recordMinimalInjection("legacy_fsd_mux0");
                 framesSent++;
                 bool ok = driver.send(frame);
                 if (effectiveOffset > 0)
@@ -1131,6 +1100,14 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
                     legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ApGate;
                     abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux1);
+                    return;
+                }
+                // Barrier A covers mux1 device writes too (see the mux0 branch).
+                if (reRequestInhibit3ee && reRequestInhibit3ee())
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ReRequestHandshake;
                     return;
                 }
                 if (!injectionAllowed())
@@ -1296,8 +1273,7 @@ struct HW3Handler : public CarManagerBase
             }
             if (index == 0 && (bool)fsdTriggered && injectionAllowed() &&
                 builtInFsdInjectionAllowed() &&
-                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux0) &&
-                minimalInjectAllowsInjection("hw3_fsd_mux0"))
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw3FsdMux0))
             {
                 speedOffset = std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
                 hw3StockOffsetKph = (int)speedOffset;
@@ -1305,7 +1281,6 @@ struct HW3Handler : public CarManagerBase
                 if ((bool)tlsscBypass)
                     setBit(frame, 38, true);
                 setSpeedProfileV12V13(frame, speedProfile);
-                minimalInject.recordInjection();
                 framesSent++;
                 driver.send(frame);
                 if (onSend)
@@ -1982,8 +1957,7 @@ struct HW4Handler : public CarManagerBase
             }
             if (index == 0 && (bool)fsdTriggered && injectionAllowed() &&
                 builtInFsdInjectionAllowed() &&
-                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux0) &&
-                minimalInjectAllowsInjection("hw4_fsd_mux0"))
+                abortGuardAllowsInjection(DashAbortGuardBlockPath::Hw4FsdMux0))
             {
                 setBit(frame, 46, true);
                 setBit(frame, 60, true);
@@ -1991,7 +1965,6 @@ struct HW4Handler : public CarManagerBase
                     setBit(frame, 59, true);
                 if ((bool)tlsscBypass)
                     setBit(frame, 38, true);
-                minimalInject.recordInjection();
                 framesSent++;
                 driver.send(frame);
                 if (onSend)

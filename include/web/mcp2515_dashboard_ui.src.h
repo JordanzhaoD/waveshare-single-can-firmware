@@ -861,22 +861,14 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           </div>
           <div class="src-row"><span>注入来源</span><b id="injection-source">Disabled</b></div>
           <div class="ctl-section">注入门控（服务端强制）</div>
-          <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">默认开：等 AP 稳定再注入（防 8.3.6 猛甩）。非 8.3.6 车型可关闭以直接注入</div></div>
+          <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">默认开：等 AP 确认活动后再注入（防 8.3.6 猛甩）。非 8.3.6 车型可关闭以直接注入</div></div>
             <label class="tgl"><input id="ap-core-gate-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
-          <div class="ctl-row"><div><div class="cn">延迟注入</div><div class="cd">AP 激活后等待再注入（推荐 2000ms）</div></div>
-            <select id="ap-delay-select" class="ap-delay-select" style="display:none" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select>
-<div class="sel-cards c4 ap-delay-cards" data-for="ap-delay-select">
-  <div class="sel-card" data-value="0" onclick="setApDelayCards(0)"><div class="sel-lbl">立即</div><div class="sel-name">0</div></div>
-  <div class="sel-card" data-value="1000" onclick="setApDelayCards(1000)"><div class="sel-lbl">秒</div><div class="sel-name">1.0</div></div>
-  <div class="sel-card" data-value="2000" onclick="setApDelayCards(2000)"><div class="sel-lbl">推荐</div><div class="sel-name">2.0</div></div>
-  <div class="sel-card" data-value="3000" onclick="setApDelayCards(3000)"><div class="sel-lbl">保守</div><div class="sel-name">3.0</div></div>
-</div></div>
-          <div class="ctl-row toggle-row"><div><div class="cn">Instant Engage (experimental)</div><div class="cd">Allow the first eligible injection immediately when AP truly becomes engaged.</div></div>
-            <label class="tgl"><input class="ap-instant-edge-tgl" type="checkbox" onchange="saveInstantEngage(this)"><div class="tgl-track"></div></label></div>
+          <!-- 延迟注入 / Instant Engage 行已在 v1.18 删除（#108 steer-jerk defense
+               家族 + AP-settle 延时；由 8.3.6 取消/重请求协调器取代，见防御页）。 -->
           <div class="ctl-row"><div><div class="cn">AP 自动恢复</div><div class="cd">重启后恢复上次 AP 配置</div></div>
             <label class="tgl"><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
           <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
-          <div class="safety-strip"><b>⚠️ China 2026.8.3.6 风险：</b>该固件收紧预检，AP 激活边沿注入仍可能触发方向盘猛甩（即使开启 AP-First 仍有 &lt;5% 残留）。研究/教学用途，风险自担；强烈建议先 Listen-Only 验证。</div>
+          <div class="safety-strip"><b>⚠️ China 2026.8.3.6 风险：</b>该固件收紧预检，AP 激活边沿注入仍可能触发方向盘猛甩。8.3.6 车型请在防御页开启「8.3.6 防甩协调器」。研究/教学用途，风险自担；强烈建议先 Listen-Only 验证。</div>
         </div>
           </div>
         </div>
@@ -1388,38 +1380,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-defense-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-defense-run">待检测</div></div>
 </div>
-<!-- AP injection delay (mobile-accessible, fixes missing delay option on phone UI) -->
-<div class="card cockpit-card">
-  <div class="card-title">AP 注入门控</div>
-  <div class="card-subtitle">AP 激活后延迟注入，服务端 fail-closed 强制</div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">延迟注入时间</div>
-      <div class="setting-desc">AP 激活后等待再注入（推荐 2000ms，0=立即）</div>
-    </div>
-    <select class="ap-delay-select" style="display:none" onchange="saveApDelay(this)"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select>
-<div class="sel-cards c4 ap-delay-cards" data-for="ap-delay-select">
-  <div class="sel-card" data-value="0" onclick="setApDelayCards(0)"><div class="sel-lbl">立即</div><div class="sel-name">0</div></div>
-  <div class="sel-card" data-value="1000" onclick="setApDelayCards(1000)"><div class="sel-lbl">秒</div><div class="sel-name">1.0</div></div>
-  <div class="sel-card" data-value="2000" onclick="setApDelayCards(2000)"><div class="sel-lbl">推荐</div><div class="sel-name">2.0</div></div>
-  <div class="sel-card" data-value="3000" onclick="setApDelayCards(3000)"><div class="sel-lbl">保守</div><div class="sel-name">3.0</div></div>
-</div>
-  </div>
-  <div class="setting-row toggle-row">
-    <div>
-      <div class="setting-name">Instant Engage (experimental)</div>
-      <div class="setting-desc">Allow the first eligible injection immediately when AP truly becomes engaged.</div>
-    </div>
-    <label class="tgl"><input class="ap-instant-edge-tgl" type="checkbox" onchange="saveInstantEngage(this)"><div class="tgl-track"></div></label>
-  </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">Soft Engage 方向盘居中</div>
-      <div class="setting-desc">激活时 hold 到方向盘近居中再注入，降弯道猛甩（超时 5s 兜底）</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-soft-engage-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
-</div>
+<!-- (移动端 AP 延迟注入卡片已在 v1.18 删除：延迟注入 / Instant Engage / Soft Engage
+     随 #108 steer-jerk defense 家族一并移除，由下方 8.3.6 取消/重请求协调器取代。) -->
 <div class="card cockpit-card">
   <div class="card-title">FSD 防护状态</div>
   <div class="card-subtitle">NAG 使用上游 beta.8 独立引擎；其他防护仍由总开关控制</div>
@@ -1523,23 +1485,38 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="tgl"><input type="checkbox" id="abort-guard-toggle" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">Minimal Inject <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">每次 AP engagement 仅发送 5 个 FSD activation mux0 帧，随后停止，避开后续 abort 窗口。</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="minimal-inject-toggle" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
+  <!-- Minimal Inject 行与诊断格已在 v1.18 随 #108 steer-jerk defense 家族删除
+      （Abort Guard 保留：0x399 state 8/9 锁止安全护栏，8.3.6 协调器注入路径同样受其约束）。 -->
   <div class="diag-grid">
     <div class="diag-item"><span class="lbl">Guard 状态</span><span class="v-dim" id="abort-guard-state">关闭</span></div>
     <div class="diag-item"><span class="lbl">AP state</span><span class="v-dim" id="abort-guard-ap">--</span></div>
     <div class="diag-item"><span class="lbl">Abort state</span><span class="v-dim" id="abort-guard-abort">--</span></div>
     <div class="diag-item"><span class="lbl">阻止次数</span><span class="v-warn" id="abort-guard-blocks">0</span></div>
     <div class="diag-item"><span class="lbl">阻止路径</span><span class="v-dim" id="abort-guard-path">--</span></div>
-    <div class="diag-item"><span class="lbl">Minimal 状态</span><span class="v-dim" id="minimal-inject-state">off</span></div>
-    <div class="diag-item"><span class="lbl">Minimal 已用</span><span class="v-dim" id="minimal-inject-used">-- / --</span></div>
-    <div class="diag-item"><span class="lbl">Minimal 阻止</span><span class="v-warn" id="minimal-inject-blocks">0</span></div>
-    <div class="diag-item"><span class="lbl">Minimal 路径</span><span class="v-dim" id="minimal-inject-path">--</span></div>
+  </div>
+</div>
+
+<!-- 8.3.6 AP cancel + re-request coordinator (v1.18) -->
+<div class="card cockpit-card" id="ap-rerequest-card">
+  <div class="card-title">8.3.6 防甩协调器 <span class="exp-badge">实验 · 未验证实车防甩</span></div>
+  <div class="card-subtitle">AP 激活边沿先合成 0x045 取消再重请求，通过资格窗口后接管 bit46 注入。</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">启用 8.3.6 重请求</div>
+      <div class="setting-desc" id="ap-rr-desc">AP 激活边沿自动先模拟 0x045 取消，等车回到可用状态（0x399=2，双 CAN 实车约 1s）再重请求；2.4s 窗口内读到原生 0x3EE 且 AP∈{2,3} 立即注入 bit46。车辆侧异常（窗口过期/AP 退出/故障态）自动重新武装（连续 3 次后锁定），无需拨开关恢复。需先开启「AP 注入门控」（驾驶舱 AP 注入安全页）——门控关闭时本开关仅记忆状态、机制不运行，Legacy 走原始直通路径。时序参数沿用双 CAN 实车标定值；单 CAN 侧防甩效果未验证，需按验证规程重新实车验证。</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-ap-rerequest-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="diag-grid" style="margin:6px 0 4px">
+    <div class="diag-item"><span class="lbl">生效状态</span><span class="v-dim" id="ap-rr-effective">关闭</span></div>
+    <div class="diag-item"><span class="lbl">阶段 / 原因</span><span class="v-dim" id="ap-rr-phase">-- / --</span></div>
+    <div class="diag-item"><span class="lbl">轮次 / 纪元</span><span class="v-dim" id="ap-rr-round">0 / 1</span></div>
+    <div class="diag-item"><span class="lbl">AP / 意图</span><span class="v-dim" id="ap-rr-ap">-- / --</span></div>
+    <div class="diag-item"><span class="lbl">车辆响应</span><span class="v-dim" id="ap-rr-vehicle">--</span></div>
+    <div class="diag-item"><span class="lbl">取消 / 请求（成/试）</span><span class="v-dim" id="ap-rr-gestures">0·0 / 0·0</span></div>
+    <div class="diag-item"><span class="lbl">回声 / 冲突</span><span class="v-dim" id="ap-rr-echo">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">上次结束原因</span><span class="v-dim" id="ap-rr-lastend">--</span></div>
+    <div class="diag-item"><span class="lbl">自动重武装</span><span class="v-dim" id="ap-rr-rearm">0</span></div>
   </div>
 </div>
 
@@ -2071,45 +2048,14 @@ function syncNagModeAvailability(parentEnabled){
   var sel=$('nag-mode-select');
   if(sel)sel.disabled=false;
 }
-var instantEngageValue=false;
-function syncInstantEngage(value,parentEnabled){
-  document.querySelectorAll('.ap-instant-edge-tgl').forEach(function(el){
-    el.checked=!!value;
-    el.disabled=!parentEnabled;
-    var row=el.closest('.toggle-row');
-    if(row)row.classList.toggle('inactive',!parentEnabled);
-  });
-}
-function apGateParentEnabled(){
-  var core=$('ap-core-gate-tgl');
-  if(core)return !!core.checked;
-  var gate=$('ap-gate-tgl');
-  return !!(gate&&gate.checked);
-}
+// (instantEngageValue / syncInstantEngage / apGateParentEnabled / updateApDelayCards /
+//  setApDelayCards removed in v1.18 with the #108 Instant Engage + AP-settle delay UI.)
 function selectCard(id,value){
   var sel=$(id); if(!sel)return;
   sel.value=String(value);
   syncSelCardsVisual(id);
   if(typeof sel.onchange==='function'){try{sel.onchange()}catch(e){}}
   else{sel.dispatchEvent(new Event('change'));}
-}
-// === AP delay cards (two control sites, one logical value) ===
-function updateApDelayCards(){
-  var cur='2000';
-  var main=$('ap-delay-select'); if(main)cur=String(main.value);
-  document.querySelectorAll('.ap-delay-cards').forEach(function(wrap){
-    var cards=wrap.querySelectorAll('.sel-card');
-    for(var i=0;i<cards.length;i++){
-      cards[i].classList.toggle('active',String(cards[i].getAttribute('data-value'))===cur);
-    }
-  });
-}
-function setApDelayCards(value){
-  var main=$('ap-delay-select');
-  if(main){main.value=String(value); if(typeof main.onchange==='function'){try{main.onchange()}catch(e){}} else{main.dispatchEvent(new Event('change'));}}
-  // saveApGateControls → /config 已发；同步另一处隐藏 select + 刷新两处卡片
-  document.querySelectorAll('.ap-delay-select').forEach(function(s){if(s!==main)s.value=String(value);});
-  updateApDelayCards();
 }
 function setText(id,txt){var e=$(id);if(e)e.textContent=txt}
 function setFsdVisualState(on){
@@ -2449,13 +2395,14 @@ async function poll(){
   setCls('ov-can','stat-val '+(d.can?'v-ok':'v-err'));
   setText('ov-can', d.can ? 'CAN1 Online' : 'CAN1 Offline');
   // AP 激活状态（问题2：替换 CAN2，与 ap-core-state-pill 同源字段 d.apInjectionState）
+  // v1.18: 'settling' 随 AP-settle 延时一并删除（8.3.6 协调器取代）。
   var apState = d.apInjectionState || 'blocked';
-  var apActive = (apState === 'injecting' || apState === 'settling');
+  var apActive = (apState === 'injecting');
   setText('ov-ap', apActive ? '激活' : '等待');
   var apMetric = $('ov-ap-metric');
   if (apMetric) apMetric.style.borderColor = apActive ? 'rgba(52,211,153,.45)' : '';
   var apHint = $('ov-ap-hint');
-  if (apHint) apHint.textContent = (apState==='settling') ? ('Gate ' + (d.apDelayMs || 2000) + 'ms · 已就绪') : (apState==='injecting' ? '正在注入' : '门控未触发');
+  if (apHint) apHint.textContent = apState==='injecting' ? '正在注入' : '门控未触发';
   setText('ov-up',fmtUp(uptime));
   var mCan=$('m-can');
   if(mCan){mCan.className=(mCan.classList&&mCan.classList.contains('val')?'val ':'stat-val ')+(d.can?'v-ok':'v-err');mCan.textContent=d.can?'Online':'Offline';}
@@ -2720,11 +2667,40 @@ function updateDefensePage(d){
   setText('abort-guard-abort',ag.lastAbortState!==undefined?ag.lastAbortState:'--');
   setText('abort-guard-blocks',ag.blocks||0);
   setText('abort-guard-path',ag.lastBlockedPath||ag.lastClearReason||'--');
-  var mi=d.minimalInject||{};
-  setText('minimal-inject-state',mi.enabled?(mi.apEngaged?'armed':'waiting'):'off');
-  setText('minimal-inject-used',(mi.used!==undefined?mi.used:'--')+' / '+(mi.budget!==undefined?mi.budget:'--'));
-  setText('minimal-inject-blocks',mi.blocks||0);
-  setText('minimal-inject-path',mi.lastBlockedPath||mi.lastResetReason||'--');
+  // (var mi=d.minimalInject 块已在 v1.18 随 #108 Minimal Inject 删除。)
+  // v1.18 8.3.6 协调器诊断：单 CAN 的 diag 位于 /status 顶层 apReRequest 对象
+  // （与 abortGuard 平级；双 CAN 是 legacyInjectionSafety.apReRequest，此处为单 CAN 适配）。
+  var rr=d.apReRequest||{};
+  var rrReasonMap={apGateOff:'AP 门控未开启'};
+  var rrPhaseMap={
+    disabled:'已关闭',apGateOff:'AP 门控未开启',
+    waitIntent:'等待拨杆意图',waitExit:'等待 AP 退出',waitApActive:'等待 AP 激活',
+    cancelArmed:'取消序列进行',cancelPressAccepted:'取消按压已发',
+    waitCancelEvidence:'等待取消生效',waitAvailable:'等待车辆可用(状态2)',
+    requestArmed:'重请求就绪',requestPressAccepted:'重请求已发',
+    waitQualification:'等待资格窗口',qualified:'资格达成·注入中',
+    intentWithdrawn:'意图撤回·轮次完成',apLeftInjectionSet:'离开注入集·轮次完成',
+    physicalInput:'物理拨杆介入·锁定',otaGuard:'OTA 更新保护·锁定',
+    cancelSeqTimeout:'取消序列超时·锁定',cancelEvidenceTimeout:'取消证据超时·锁定',
+    availableWaitTimeout:'等待可用超时·锁定',apActiveDuringWait:'等待中 AP 自恢复·已自动重武装',
+    apExitedBeforeRequest:'请求前 AP 退出·锁定',apExitedDuringRequest:'请求中 AP 退出·锁定',
+    apExitedDuringWindow:'窗口内 AP 退出·已自动重武装',apOutsideWindowSet:'窗口内状态异常·锁定',
+    windowExpired:'资格窗口超时·已自动重武装',counterConflict:'计数器冲突·锁定',
+    txFailed:'发送失败·锁定',permitLost:'许可丢失·锁定',
+    apFaultState:'AP 故障状态·已自动重武装',dasStale:'DAS 数据过期·锁定',
+    invalidNative045:'原生 0x045 无效·锁定',
+    autoRearmLimit:'连续车辆侧异常·锁定(开关关→开重置)'};
+  setText('ap-rr-effective',rr.effective?(rr.permit?'生效 / 运行':'生效 / 等待许可'):(rr.requested?('不可用 · '+(rrReasonMap[rr.unavailableReason]||rr.unavailableReason||'profile 未配置')):'关闭'));
+  setText('ap-rr-phase',(rr.phase||'disabled')+' / '+(rrPhaseMap[rr.reason]||rr.reason||'--'));
+  setText('ap-rr-round',(rr.round||0)+' / '+(rr.epoch||1));
+  setText('ap-rr-ap',(rr.apState!=null?rr.apState:'--')+' / '+(rr.intentPresent?'有':'无'));
+  // P1 车辆响应观测：拨杆后车侧是否接受激活（等待中→拒绝→被下一次按压/激活边沿清除）。
+  // 「--」= 拨杆未被设备看到或车已正常响应。
+  setText('ap-rr-vehicle',rr.vehicleRefusal?('未接受激活 · 车侧拒绝'+((rr.vehicleRefusals||0)>1?(' ×'+rr.vehicleRefusals):'')):(rr.rwdPressPending?'等待车辆响应…':'--'));
+  setText('ap-rr-gestures',(rr.cancelAccepted||0)+'·'+(rr.cancelAttempts||0)+' / '+(rr.requestAccepted||0)+'·'+(rr.requestAttempts||0));
+  setText('ap-rr-echo',(rr.ownEchoRx||0)+' / '+(rr.counterConflicts||0));
+  setText('ap-rr-lastend',(rr.lastEndedReason&&rr.lastEndedReason!=='none')?(rrPhaseMap[rr.lastEndedReason]||rr.lastEndedReason):'--');
+  setText('ap-rr-rearm',String(rr.autoRearms||0));
   var nag=d.builtInNag||{};
   var route=nag.routeBlockedReason||nag.blockedReason||'--';
   setText('nag-route',route);
@@ -2760,9 +2736,9 @@ async function loadDefenseConfig(){
   syncNagModeAvailability(!!d.enabled);
   var ntt=$('def-ntt-tgl');if(ntt)ntt.checked=!!d.nag_torque_tamper;
   var nttWarn=$('def-ntt-warn');if(nttWarn)nttWarn.style.display=!!d.nag_torque_tamper?'block':'none';
-  var se=$('def-soft-engage-tgl');if(se)se.checked=!!d.soft_engage;
+  // (soft_engage / minimal_inject 开关装载已在 v1.18 随 #108 家族删除。)
   var ag=$('abort-guard-toggle');if(ag)ag.checked=!!d.abort_guard;
-  var mi=$('minimal-inject-toggle');if(mi)mi.checked=!!d.minimal_inject;
+  var rrTgl=$('def-ap-rerequest-tgl');if(rrTgl)rrTgl.checked=!!d.ap_re_request;
   // Bionic auto-disabled warning
   var bioWarn=$('def-bionic-warn');
   if(bioWarn)bioWarn.style.display=!!d.bionic_disabled?'block':'none';
@@ -2774,7 +2750,7 @@ async function loadDefenseConfig(){
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
-  var exp=(d.abort_guard||d.minimal_inject||d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
+  var exp=(d.abort_guard||d.ap_re_request||d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
   setStatusTriplet('defense',d.enabled?'防御 ON':'防御 OFF',
     'NVS '+(d.enabled?'ON':'OFF')+(exp?' / 含实验项':''),
     exp?'实验项需实车验证':'等待 /status 运行确认',
@@ -2932,27 +2908,8 @@ async function saveSpeedCustom(){
   setStatusTriplet('speed','custom','cp1-cp4 已保存','等待 /status 速度确认','warn');
 }
 
-async function loadInstantEngageConfig(){
-  var d=await fetchJson('/config');
-  if(!d||d.ap_first_edge===undefined)return false;
-  instantEngageValue=!!d.ap_first_edge;
-  syncInstantEngage(instantEngageValue,apGateParentEnabled());
-  return true;
-}
-async function saveInstantEngage(src){
-  var checked=!!(src&&src.checked);
-  syncInstantEngage(checked,apGateParentEnabled());
-  try{
-    await postForm('/config',{ap_first_edge:checked?'1':'0'});
-    instantEngageValue=checked;
-    syncInstantEngage(instantEngageValue,apGateParentEnabled());
-    showToast(T('已保存')||'Saved',true);
-  }catch(e){
-    var restored=await loadInstantEngageConfig();
-    if(!restored)syncInstantEngage(instantEngageValue,apGateParentEnabled());
-    showToast(T('保存失败')||'Save failed',false);
-  }
-}
+// (loadInstantEngageConfig / saveInstantEngage 已在 v1.18 随 #108 Instant Engage
+//  UI 删除；ap_first_edge POST 参数服务端同样不再接受。)
 
 // ── Save Config (generic toggle) ───────────────────────────
 async function saveConfig(){
@@ -2967,36 +2924,24 @@ function updateApGateControl(d){
   var gate=$('ap-gate-tgl');
   var parentEnabled=!!(d&&d.apGateEnabled);
   if(gate)gate.checked=parentEnabled;
-  syncInstantEngage(instantEngageValue,parentEnabled);
 }
 async function saveApGate(){
   var gate=$('ap-gate-tgl');
   var parentEnabled=!!(gate&&gate.checked);
-  syncInstantEngage(instantEngageValue,parentEnabled);
   try{await postForm('/config',{apg:parentEnabled?'1':'0'});}
-  catch(e){if(gate)gate.checked=!gate.checked;syncInstantEngage(instantEngageValue,!parentEnabled)}
+  catch(e){if(gate)gate.checked=!gate.checked}
 }
 
 // ── AP injection core controls (standalone driving status) ────────────
+// v1.18: ap_delay_ms 随 AP-settle 延时功能删除（8.3.6 协调器取代）。
 async function saveApGateControls(){
   var gate=document.getElementById('ap-core-gate-tgl');
-  var delay=document.getElementById('ap-delay-select');
   var restore=document.getElementById('ap-auto-restore-tgl');
-  syncInstantEngage(instantEngageValue,!!(gate&&gate.checked));
   try{
     await postForm('/config',{
       apg:gate&&gate.checked?'1':'0',
-      ap_delay_ms:delay?delay.value:'2000',
       ap_auto_restore:restore&&restore.checked?'1':'0'
     });
-    showToast(T('已保存'));
-  }catch(e){}
-}
-async function saveApDelay(src){
-  try{
-    await postForm('/config',{ap_delay_ms:src?src.value:'2000'});
-    document.querySelectorAll('.ap-delay-select').forEach(function(s){if(s!==src)s.value=src.value;});
-    updateApDelayCards();
     showToast(T('已保存'));
   }catch(e){}
 }
@@ -3004,25 +2949,21 @@ function renderApInjectionState(d){
   if(!d)return;
   var gate=(d.fsdDiag&&d.fsdDiag.gate)?d.fsdDiag.gate:{};
   var state=d.apInjectionState||'blocked';
-  var label=state==='waiting_ap'?'等待 AP':state==='settling'?'稳定计时中':state==='injecting'?'正在注入':'已阻断';
+  // v1.18: 'settling' 随 AP-settle 延时删除；armed = 门控开、协调器/直通已就绪。
+  var label=state==='waiting_ap'?'等待 AP':state==='injecting'?'正在注入':state==='armed'?'已就绪':'已阻断';
   setText('ap-core-state-pill',label);
   // 驾驶舱状态主区 + Gate 进度条（仅显示层，不读新后端字段）
-  var apActive = (state==='injecting'||state==='settling');
+  var apActive = (state==='injecting'||state==='armed');
   var apBig = document.getElementById('ap-core-state-big');
   var apPanel = document.getElementById('ap-state-panel');
   var apFill = document.getElementById('ap-gate-fill');
   if (apBig) apBig.textContent = apActive ? '激活' : '等待';
   if (apPanel) apPanel.classList.toggle('active', apActive);
   if (apFill) apFill.style.width = (apActive ? '100%' : '0%');
-  var stable=gate.apStableMs||0, req=gate.requiredStableMs||d.apDelayMs||2000;
   var reason=gate.lastBlockedBy||gate.gateReason||'';
-  setText('ap-core-state-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));
+  setText('ap-core-state-detail',label+(reason?' · '+reason:''));
   setText('injection-source',d.injectionSource||'Disabled');
   var apg=document.getElementById('ap-core-gate-tgl'); if(apg)apg.checked=!!d.apGateEnabled;
-  syncInstantEngage(instantEngageValue,!!d.apGateEnabled);
-  var delayVal=(d.apDelayMs!=null&&d.apDelayMs!==undefined)?d.apDelayMs:(req||2000);
-  document.querySelectorAll('.ap-delay-select').forEach(function(s){if(document.activeElement!==s)s.value=String(delayVal);});
-  updateApDelayCards();
   var rst=document.getElementById('ap-auto-restore-tgl'); if(rst)rst.checked=!!d.apAutoRestore;
 }
 // ── 插件管理（JSON 插件） ──────────────────────────────────────
@@ -3113,23 +3054,23 @@ async function saveDefenseConfig(){
   var master=$('def-master-tgl');
   var bio=$('def-bionic-tgl');
   var ntt=$('def-ntt-tgl');
-  var se=$('def-soft-engage-tgl');
   var ag=$('abort-guard-toggle');
-  var mi=$('minimal-inject-toggle');
+  var rrTgl=$('def-ap-rerequest-tgl');
   var sound=$('def-sound-tgl');
   var isaOvr=$('def-isa-override-tgl');
   var dndVol=$('def-dnd-vol-tgl');
   var nd=$('def-speed-nd-tgl');
   var dndSpd=$('def-dnd-spd-tgl');
   var apeap=$('def-apeap-tgl');
+  // v1.18: soft_engage / minimal_inject 参数随 #108 家族删除；新增
+  // ap_re_request（8.3.6 协调器请求开关，生效状态看防御页诊断格）。
   var data={
     enabled:master&&master.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
     nagMode: parseInt(val('nag-mode-select')||'0',10),
     nag_torque_tamper:ntt&&ntt.checked?'1':'0',
-    soft_engage:se&&se.checked?'1':'0',
     abort_guard:ag&&ag.checked?'1':'0',
-    minimal_inject:mi&&mi.checked?'1':'0',
+    ap_re_request:rrTgl&&rrTgl.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
     isa_override:isaOvr&&isaOvr.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
@@ -4277,7 +4218,6 @@ document.addEventListener('DOMContentLoaded',function(){
   loadFirmwareInfo();
   loadCanPins();
   loadLegacyFsdConfig();
-  loadInstantEngageConfig();
   loadPlugins();
 
   // Start polling

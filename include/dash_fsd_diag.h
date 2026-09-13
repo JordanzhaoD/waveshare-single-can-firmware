@@ -47,6 +47,11 @@ enum class FsdGateBlockReason : uint8_t
     ApGate = 4,
     CompileGate = 5,
     LegacyFsdSettle = 6,
+    // 7 is AbortGuard / 8 was MinimalInject in the dual-CAN firmware — 8 was
+    // removed there with the #108 steer-jerk defense in 4.5.0-beta02 and here
+    // in v1.18; the values stay unused so persisted diag numbering stays
+    // stable across the port.
+    ReRequestHandshake = 9,
 };
 
 enum class FsdHealthState : uint8_t
@@ -146,6 +151,8 @@ static inline const char *fsdGateBlockReasonName(FsdGateBlockReason reason)
         return "compile_gate";
     case FsdGateBlockReason::LegacyFsdSettle:
         return "legacy_fsd_settle";
+    case FsdGateBlockReason::ReRequestHandshake:
+        return "ap_re_request_handshake";
     }
     return "none";
 }

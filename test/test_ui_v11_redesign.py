@@ -60,7 +60,8 @@ class ApInjectionRedesignTests(UiV11RedesignTests):
 
     def test_controls_chinese(self):
         self.assert_present("AP 门控")
-        self.assert_present("延迟注入")
+        # ("延迟注入" removed in v1.18 with the AP-settle delay feature —
+        # only a tombstone comment mentions it now.)
         self.assert_present("AP 自动恢复")
 
     def test_failclosed_note_present(self):
@@ -68,8 +69,9 @@ class ApInjectionRedesignTests(UiV11RedesignTests):
 
     def test_original_ids_preserved(self):
         # 硬要求：原 id 全保留（review 会查）
+        # ("ap-delay-select" removed in v1.18 with the AP-settle delay.)
         for i in ["ap-core-card", "ap-core-state-pill", "ap-core-gate-tgl",
-                  "ap-delay-select", "ap-auto-restore-tgl", "injection-source",
+                  "ap-auto-restore-tgl", "injection-source",
                   "ap-core-state-detail"]:
             self.assert_id_present(i)
 

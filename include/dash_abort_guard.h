@@ -44,18 +44,11 @@ struct DashAbortGuardDiag
 // v2.16-beta.19 parity: when enabled, send only a short AP-enable burst at
 // the real engagement edge. This is separate from Abort Guard's abort latch:
 // it keeps optional activation injection away from the later 6 -> 8/9 window.
-static constexpr uint8_t kDashMinimalInjectBudget = 5;
-
-struct DashMinimalInjectDiag
-{
-    bool enabled = false;
-    bool apEngaged = false;
-    uint8_t budget = kDashMinimalInjectBudget;
-    uint8_t used = 0;
-    uint32_t blocks = 0;
-    const char *lastBlockedPath = "none";
-    const char *lastResetReason = "none";
-};
+// (The DashMinimalInject family — kDashMinimalInjectBudget, DashMinimalInjectDiag,
+// the class below — was removed in v1.18 with the #108 steer-jerk defense
+// (dual-CAN 4.5.0-beta02 precedent); Abort Guard itself is kept: it is the
+// 0x399 state 8/9 latch safety guard and the coordinator's injection path
+// goes through it.)
 
 inline const char *dashAbortGuardBlockPathName(DashAbortGuardBlockPath path)
 {
@@ -179,72 +172,6 @@ private:
     const char *lastBlockedPath_ = "none";
 };
 
-class DashMinimalInject
-{
-public:
-    void setEnabled(bool enabled)
-    {
-        if (enabled_ == enabled)
-            return;
-        enabled_ = enabled;
-        used_ = 0;
-        blocks_ = 0;
-        lastBlockedPath_ = "none";
-        lastResetReason_ = enabled ? "enabled" : "disabled";
-    }
 
-    void onApState(uint8_t apState)
-    {
-        apEngaged_ = apState >= 3 && apState <= 6;
-        if (!enabled_ || apEngaged_)
-            return;
-
-        // A disengage or abort starts a fresh engagement budget. Abort Guard
-        // remains responsible for blocking the abort itself.
-        if (used_ != 0)
-            lastResetReason_ = "disengage";
-        used_ = 0;
-    }
-
-    bool allowsInjection() const
-    {
-        return !enabled_ || used_ < kDashMinimalInjectBudget;
-    }
-
-    bool recordInjection()
-    {
-        if (!allowsInjection())
-            return false;
-        if (enabled_)
-            ++used_;
-        return true;
-    }
-
-    void recordBlock(const char *path)
-    {
-        if (allowsInjection())
-            return;
-        ++blocks_;
-        lastBlockedPath_ = path ? path : "unknown";
-    }
-
-    DashMinimalInjectDiag diag() const
-    {
-        DashMinimalInjectDiag d;
-        d.enabled = enabled_;
-        d.apEngaged = apEngaged_;
-        d.used = used_;
-        d.blocks = blocks_;
-        d.lastBlockedPath = lastBlockedPath_;
-        d.lastResetReason = lastResetReason_;
-        return d;
-    }
-
-private:
-    bool enabled_ = false;
-    bool apEngaged_ = false;
-    uint8_t used_ = 0;
-    uint32_t blocks_ = 0;
-    const char *lastBlockedPath_ = "none";
-    const char *lastResetReason_ = "none";
-};
+// (DashMinimalInject class removed in v1.18 with the #108 steer-jerk
+// defense family — see the note above dashAbortGuardBlockPathName.)

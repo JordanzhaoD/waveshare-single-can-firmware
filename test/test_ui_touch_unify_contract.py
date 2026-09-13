@@ -82,45 +82,12 @@ class NagModeCardsTests(TouchUnifyTests):
         self.assertIn("nagMode: parseInt(val('nag-mode-select')||'0',10)", save.group(0))
 
 
-class ApDelayCardsTests(TouchUnifyTests):
-    def test_ap_delay_cards_present(self):
-        self.assert_present('data-for="ap-delay-select"')
-        self.assert_present("function setApDelayCards(")
-        self.assert_present("function updateApDelayCards(")
-    def test_ap_delay_hidden_select_kept(self):
-        # 两处 select 都保留 hidden 作为 .value / class sync 载体
-        self.assertRegex(SRC, r'<select[^>]*id="ap-delay-select"[^>]*display:none')
-        self.assert_present('class="ap-delay-select"')
-
-
-class InstantEngageToggleTests(TouchUnifyTests):
-    def test_desktop_and_mobile_controls_are_present(self):
-        self.assertEqual(SRC.count('class="ap-instant-edge-tgl"'), 2)
-        self.assertEqual(SRC.count('Instant Engage (experimental)'), 2)
-        self.assertEqual(
-            SRC.count('Allow the first eligible injection immediately when AP truly becomes engaged.'),
-            2,
-        )
-
-    def test_sync_preserves_checked_value_when_parent_is_disabled(self):
-        sync = re.search(r"function syncInstantEngage\([^)]*\)\{.*?\n\}", SRC, re.S)
-        self.assertIsNotNone(sync)
-        body = sync.group(0)
-        self.assertIn("document.querySelectorAll('.ap-instant-edge-tgl')", body)
-        self.assertIn("el.checked=!!value", body)
-        self.assertIn("el.disabled=!parentEnabled", body)
-        self.assertIn("classList.toggle('inactive',!parentEnabled)", body)
-        self.assertNotIn("checked=false", body)
-
-    def test_save_uses_existing_config_and_restores_backend_on_failure(self):
-        save = re.search(r"async function saveInstantEngage\([^)]*\)\{.*?\n\}", SRC, re.S)
-        self.assertIsNotNone(save)
-        body = save.group(0)
-        self.assertIn("postForm('/config'", body)
-        self.assertIn("ap_first_edge:checked?'1':'0'", body)
-        self.assertIn("loadInstantEngageConfig()", body)
-        self.assertIn("showToast(T('保存失败')||'Save failed',false)", body)
-        self.assertNotIn("/ap_first_edge", body)
+# (ApDelayCardsTests and InstantEngageToggleTests were removed in v1.18 with
+# the #108 steer-jerk defense family: the AP-settle delay cards and the
+# Instant Engage desktop/mobile toggles were deleted with their features —
+# see test/test_dashboard_api_contract.py::test_steer_defense_family_removed_in_v118
+# and ::test_ap_settle_delay_chain_removed_in_v118 for the anti-regression
+# guards.)
 
 
 class LegacyOffsetModeCardsTests(TouchUnifyTests):

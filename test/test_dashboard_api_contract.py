@@ -146,103 +146,88 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(legacy)
         self.assertIn("(void)putBoolChecked(key, value);", legacy.group(0))
 
-    def test_instant_engage_config_persistence_contract(self) -> None:
-        self.assertIn('#include "dash_config_update.h"', self.dash)
-        self.assertEqual(self.dash.count('server.on("/config", HTTP_GET, handleConfigGet);'), 1)
-        self.assertEqual(self.dash.count('server.on("/config", HTTP_POST, handleConfig);'), 1)
-        self.assertNotIn('server.on("/ap_first_edge"', self.dash)
+    # (test_instant_engage_config_persistence_contract and
+    # test_instant_engage_ui_uses_existing_config_contract were removed in
+    # v1.18 with the #108 steer-jerk defense family — see
+    # test_steer_defense_family_removed_in_v118 for the anti-regression guard
+    # that keeps Instant Engage from coming back.)
 
-        load = re.search(r"static void dashLoadPrefs\(\).*?prefs\.end\(\);", self.dash, re.S)
-        self.assertIsNotNone(load)
-        self.assertIn('dashInstantEngage = prefs.getBool("apfe", false);', load.group(0))
+    def test_steer_defense_family_removed_in_v118(self) -> None:
+        """v1.18 deletes the #108 steer-jerk defense family end to end.
 
-        get_handler = re.search(r"static void handleConfigGet\(\).*?server\.send\(200", self.dash, re.S)
-        self.assertIsNotNone(get_handler)
-        self.assertIn('\\"ap_first_edge\\":', get_handler.group(0))
-        self.assertIn("dashInstantEngage", get_handler.group(0))
+        Removed with it: Instant Engage (ap_first_edge), Minimal Inject
+        (minimal_inject / apmi), Soft Engage (soft_engage / def_se), the
+        Legacy steer-defense module (dash_legacy_steer_defense.h and its
+        observe/decide/diag/config API), and the AP-settle delay
+        (ap_delay_ms / ap_dly / dashClampApDelayMs). Abort Guard SURVIVES on
+        purpose — it is the 0x399 state 8/9 latch safety guard and the 8.3.6
+        coordinator's injection path runs through it.
 
-        self.assertIn("static bool dashPutBoolChecked(const char *key, bool value)", self.dash)
-        wrapper = re.search(
-            r"static bool dashPutBoolChecked\(const char \*key, bool value\).*?\n\}",
-            self.dash,
-            re.S,
+        The dashboard, handlers, and can_helpers keep one-line tombstone
+        comments that NAME the removed symbols, so a bare token search would
+        trip over tombstones, not live code. Assert against comment-stripped
+        code surfaces instead (the beta02 dual-CAN lesson).
+        """
+        dash_code = "\n".join(
+            line.split("//", 1)[0] for line in self.dash.splitlines()
         )
-        self.assertIsNotNone(wrapper)
-        wrapper_body = wrapper.group(0)
-        self.assertIn("prefs.begin(PREFS_NS, false)", wrapper_body)
-        self.assertIn("prefs.putBoolChecked(key, value)", wrapper_body)
-        self.assertIn("prefs.end()", wrapper_body)
-        self.assertIn("return ok;", wrapper_body)
-
-        post = re.search(
-            r"static void handleConfig\(\).*?static void handleLoggingConfig\(\)",
-            self.dash,
-            re.S,
+        handlers_code = "\n".join(
+            line.split("//", 1)[0] for line in self.handlers.splitlines()
         )
-        self.assertIsNotNone(post)
-        post_body = post.group(0)
-        self.assertIn('server.hasArg("ap_first_edge")', post_body)
-        self.assertIn("dashPreparePersistedBoolUpdate", post_body)
-        self.assertIn('dashPutBoolChecked("apfe", value)', post_body)
-        self.assertIn('server.send(400, "application/json"', post_body)
-        self.assertIn('server.send(500, "application/json"', post_body)
-        self.assertNotIn('server.arg("ap_first_edge").toInt()', post_body)
-        parse_idx = post_body.index("dashPreparePersistedBoolUpdate")
-        invalid_idx = post_body.index("if (!update.valid)", parse_idx)
-        persist_idx = post_body.index("if (!update.persisted)", invalid_idx)
-        assign_idx = post_body.index("dashInstantEngage = update.value;", persist_idx)
-        apply_idx = post_body.index("dashApplyRuntimeState()", assign_idx)
-        self.assertLess(parse_idx, invalid_idx)
-        self.assertLess(invalid_idx, persist_idx)
-        self.assertLess(persist_idx, assign_idx)
-        self.assertLess(assign_idx, apply_idx)
-
-        export = re.search(
-            r"static void handleSettingsExport\(\).*?static void handleSettingsImport\(\)",
-            self.dash,
-            re.S,
+        # POST params must no longer be accepted anywhere.
+        for param in ("minimal_inject", "instant_engage", "soft_engage",
+                      "ap_first_edge", "ap_delay_ms"):
+            with self.subTest(removed_post_param=param):
+                self.assertNotIn(f'server.hasArg("{param}")', dash_code)
+        # Module state variables and helpers must be gone from live code.
+        for token in ("dashMinimalInjectEnabled", "dashInstantEngage",
+                      "dashSoftEngage", "dashClampApDelayMs",
+                      "kDashMinimalInjectBudget", "legacySoftEngageSent",
+                      "SOFT_ENGAGE_ANGLE_THRESH_X10", "SOFT_ENGAGE_TIMEOUT_MS",
+                      "kSoftEngageDefaultEnabled"):
+            with self.subTest(removed_dash_symbol=token):
+                self.assertNotIn(token, dash_code)
+        # The steer-defense observation/decision/diag API must be gone.
+        for token in ("legacySteerDiag", "decideLegacySteer", "observeLegacySteer",
+                      "clearLegacySteerTiming", "resetLegacySteerRuntime",
+                      "applyLegacySteerConfig", "minimalInjectAllowsInjection",
+                      "recordMinimalInjection"):
+            with self.subTest(removed_api=token):
+                self.assertNotIn(token, dash_code)
+                self.assertNotIn(token, handlers_code)
+        # Soft Engage's pure helper lives in can_helpers.h behind a tombstone.
+        can_helpers_code = "\n".join(
+            line.split("//", 1)[0] for line in self.can_helpers.splitlines()
         )
-        self.assertIsNotNone(export)
-        export_body = export.group(0)
-        self.assertIn('p.getBool("apfe", dashInstantEngage)', export_body)
-        self.assertIn('\\"apFirstEdge\\":', export_body)
-
-        restore = re.search(
-            r"static void handleSettingsImport\(\).*?dashLog\(\"\[BACKUP\] Settings imported",
-            self.dash,
-            re.S,
+        self.assertNotIn("dashSoftEngageRelease", can_helpers_code)
+        # JSON echo keys (both /status and /defense_config) must stay dead.
+        for key in ('minimal_inject', 'instant_engage', 'soft_engage',
+                    'ap_first_edge', 'apFirstEdge', 'softEngage',
+                    'minimalInject', 'apDelayMs'):
+            with self.subTest(removed_json_key=key):
+                self.assertNotIn(f'\\"{key}\\"', dash_code)
+        # The removed module header must not be included anywhere.
+        self.assertNotIn("dash_legacy_steer_defense.h", dash_code)
+        self.assertNotIn("dash_legacy_steer_defense.h", handlers_code)
+        # UI controls must not come back. The source UI keeps tombstone
+        # comments that NAME the removed JS helpers (syncInstantEngage & co.
+        # live in JS // tombstones), so strip both the HTML <!-- --> and JS //
+        # comment forms before the anti-pins — same strip as the settle-delay
+        # removal test.
+        ui_stripped = re.sub(r"<!--.*?-->", "", self.ui, flags=re.S)
+        ui_stripped = "\n".join(
+            line.split("//", 1)[0] for line in ui_stripped.splitlines()
         )
-        self.assertIsNotNone(restore)
-        self.assertIn('if (device["apFirstEdge"].is<bool>())', restore.group(0))
-        self.assertIn('p.putBool("apfe", device["apFirstEdge"].as<bool>())', restore.group(0))
-
-        clear_timing = re.search(
-            r"static void dashClearLegacySteerTiming\(\).*?\n\}",
-            self.dash,
-            re.S,
-        )
-        self.assertIsNotNone(clear_timing)
-        self.assertNotIn("dashInstantEngage", clear_timing.group(0))
-        declaration = "static bool dashInstantEngage = false;"
-        self.assertEqual(self.dash.count(declaration), 1)
-        self.assertNotIn("dashInstantEngage = false", self.dash.replace(declaration, "", 1))
-
-    def test_instant_engage_ui_uses_existing_config_contract(self) -> None:
-        self.assertEqual(self.ui.count('class="ap-instant-edge-tgl"'), 2)
-        self.assertIn("async function loadInstantEngageConfig()", self.ui)
-        self.assertIn("fetchJson('/config')", self.ui)
-        self.assertIn("d.ap_first_edge", self.ui)
-        self.assertIn("ap_first_edge:checked?'1':'0'", self.ui)
-        self.assertIn("loadInstantEngageConfig()", self.ui)
-        self.assertNotIn("'/ap_first_edge'", self.ui)
-        for token in [
-            "ap-instant-edge-tgl",
-            "Instant Engage (experimental)",
-            "syncInstantEngage",
-            "ap_first_edge",
-        ]:
-            with self.subTest(token=token):
-                self.assertIn(token, self.ui_gen)
+        for token in ('id="minimal-inject-toggle"', 'class="ap-instant-edge-tgl"',
+                      "Instant Engage (experimental)", "syncInstantEngage",
+                      "saveInstantEngage", "loadInstantEngageConfig"):
+            with self.subTest(removed_ui_control=token):
+                self.assertNotIn(token, ui_stripped)
+        # Abort Guard survives the family deletion on purpose (on single-CAN
+        # its include lives in handlers.h, not the dashboard header).
+        self.assertIn('server.hasArg("abort_guard")', dash_code)
+        self.assertIn('#include "dash_abort_guard.h"', self.handlers)
+        self.assertIn('id="abort-guard-toggle"', self.ui)
 
     def test_dashboard_ui_generation_is_dependency_aware(self) -> None:
         """PlatformIO must rebuild firmware when the generated dashboard header changes."""
@@ -272,9 +257,9 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_generated_dashboard_header_contains_task1_ui_contract_tokens(self) -> None:
         """Generated dashboard header must stay synchronized with Task 1 source UI contracts."""
+        # ("ap-delay-select" removed in v1.18 with the AP-settle delay feature.)
         for token in [
             "ap-gate-tgl",
-            "ap-delay-select",
             "mob-more-single",
             "renderPluginsStatus",
             "/plugins/status",
@@ -685,15 +670,16 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
 
-    def test_single_can_driving_status_exposes_ap_gate_delay_and_restore(self) -> None:
+    def test_single_can_driving_status_exposes_ap_gate_and_restore(self) -> None:
+        # (AP-settle delay tokens removed in v1.18: ap-delay-select /
+        # apDelayMs / ap_delay_ms / ap_dly / 稳定计时中 are gone with the
+        # delay chain — see test_ap_settle_delay_chain_removed_in_v118.)
         for token in [
             'id="ap-gate-tgl"',
-            'id="ap-delay-select"',
             'id="ap-auto-restore-tgl"',
             'saveApGateControls()',
             'renderApInjectionState',
             '等待 AP',
-            '稳定计时中',
             '正在注入',
             '已阻断',
             'AP 自动恢复',
@@ -702,13 +688,9 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.ui)
 
         for token in [
-            r'\"apDelayMs\"',
             r'\"apInjectionState\"',
             '"apAutoRestore"',
-            'server.hasArg("ap_delay_ms")',
             'server.hasArg("ap_auto_restore")',
-            'prefs.putUInt("ap_dly"',
-            'prefs.getUInt("ap_dly"',
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.dash)
@@ -905,53 +887,10 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.dash)
 
-    def test_instant_engage_runtime_diagnostics_contract(self) -> None:
-        gate_header = (ROOT / "include" / "dash_legacy_steer_defense.h").read_text(encoding="utf-8")
-        self.assertIn("bool instantBypassLast", gate_header)
-
-        append = re.search(
-            r"static void appendFsdDiagJson\(.*?\n\}",
-            self.dash,
-            re.S,
-        )
-        self.assertIsNotNone(append)
-        body = append.group(0)
-        self.assertIn("dashHandler->legacySteerDiag(now)", body)
-        for token in [
-            '"instantEngageEnabled"',
-            '"apEngaged"',
-            '"apEdgeCount"',
-            '"lastApEdgeAgeMs"',
-            '"apDebounceBypassCount"',
-            '"edgePending"',
-            '"debounceSatisfied"',
-            '"instantBypassLast"',
-        ]:
-            with self.subTest(token=token):
-                self.assertIn(token, body)
-        self.assertIn("ap.hasApEdge", body)
-        self.assertIn("dashAgeMs(now, ap.lastApEdgeMs)", body)
-        self.assertRegex(body, r"ap\.hasApEdge\s*\?\s*String\(dashAgeMs\(now, ap\.lastApEdgeMs\)\)\s*:\s*String\(0\)")
-
-        serial = re.search(
-            r"static void dashSerialPrintSystemStatus\(\).*?static void dashSerialPrintCanStatus\(\)",
-            self.dash,
-            re.S,
-        )
-        self.assertIsNotNone(serial)
-        serial_body = serial.group(0)
-        self.assertEqual(serial_body.count("dashHandler->legacySteerDiag(now)"), 1)
-        for token in [
-            "instantEngageEnabled=",
-            "apEngaged=",
-            "apEdgeCount=",
-            "lastApEdgeAgeMs=",
-            "apDebounceBypassCount=",
-            "instantBypassLast=",
-        ]:
-            with self.subTest(token=token):
-                self.assertIn(token, serial_body)
-        self.assertNotIn('strcmp(start, "ap_first_status")', self.dash)
+    # (test_instant_engage_runtime_diagnostics_contract was removed in v1.18
+    # with the #108 steer-jerk defense family: dash_legacy_steer_defense.h,
+    # legacySteerDiag, and every instantEngage*/apEdge* diagnostic field were
+    # deleted with the module — see test_steer_defense_family_removed_in_v118.)
 
     def test_legacy_tesla_parity_policy_is_wired(self) -> None:
         diag = (ROOT / "include" / "dash_fsd_diag.h").read_text(encoding="utf-8")
@@ -1746,26 +1685,11 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.dash)
         self.assertIn('prefs.getBool("def_ag", false)', self.dash)
 
-    def test_minimal_inject_api_contract(self) -> None:
-        """Minimal Inject is default-off, persisted, visible, and bounded to mux0 activation."""
-        for token in [
-            'kDashMinimalInjectBudget = 5',
-            '"apmi"',
-            '"minimal_inject"',
-            '"minimalInject"',
-            'minimal-inject-toggle',
-            'legacySteerDefense.recordMinimalInjection("legacy_fsd_mux0")',
-            'minimalInjectAllowsInjection("hw3_fsd_mux0")',
-            'minimalInjectAllowsInjection("hw4_fsd_mux0")',
-        ]:
-            with self.subTest(token=token):
-                self.assertIn(token, self.dash + self.handlers + self.ui + self.abort_guard)
-        self.assertIn('dashMinimalInjectEnabled = prefs.getBool("apmi", false);', self.dash)
-        self.assertIn('handlerPool[i]->minimalInject.setEnabled(dashMinimalInjectEnabled);', self.dash)
-        self.assertIn('dashHandler->minimalInject.setEnabled(dashMinimalInjectEnabled);', self.dash)
-        self.assertIn('dashHandler->decideLegacySteer(nowMs)', self.dash)
-        self.assertNotIn('minimalInjectAllowsInjection("hw3_fsd_mux1")', self.handlers)
-        self.assertNotIn('minimalInjectAllowsInjection("hw4_fsd_mux2")', self.handlers)
+    # (test_minimal_inject_api_contract was removed in v1.18 with the #108
+    # steer-jerk defense family: Minimal Inject, its apmi NVS key, and its
+    # mux0 budget were deleted — see test_steer_defense_family_removed_in_v118.
+    # Abort Guard itself is kept and still pinned by
+    # test_abort_guard_api_contract above.)
 
     def test_legacy_speed_ui_mentions_smart_offset_and_0x2f8_absence(self) -> None:
         """UI must explain smart speed and frame visibility."""
@@ -1803,7 +1727,8 @@ class DashboardApiContractTests(unittest.TestCase):
             "syncLegacyOffsetInputs('legacy-offset-manual')",
             "syncLegacyOffsetInputs('legacy-offset-inp')",
             "legacyOffset:clampNum('legacy-offset-inp',0,0,33)",
-            "d.abort_guard||d.minimal_inject||d.bionic_steering||d.speed_no_disturb",
+            # v1.18: minimal_inject left the strip; ap_re_request joined it.
+            "d.abort_guard||d.ap_re_request||d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
@@ -1981,29 +1906,11 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("kSteeringId = 0x129", body)
         self.assertIn('blockedReason_ = "steeringAngle"', body)
 
-    def test_soft_engage_is_wired_into_legacy_gate(self) -> None:
-        """Soft Engage angle gate must be wired into the Legacy dashboard gate
-        and exposed via NVS + HTTP (spec rev.3). The pure helper lives in
-        can_helpers.h; the ESP-only dashboard gate calls it and reads
-        apRestoreState, with a per-episode latch."""
-        # 1. pure helper defined in can_helpers.h
-        self.assertIn("dashSoftEngageRelease(", self.can_helpers)
-        # 2. dashboard gate calls helper + reads steering angle + manages latch
-        self.assertIn("dashSoftEngageRelease(", self.dash)
-        self.assertIn("apRestoreState.steerSeen", self.dash)
-        self.assertIn("apRestoreState.steerValidity", self.dash)
-        self.assertIn("apRestoreState.steerAngleX10", self.dash)
-        self.assertIn("legacySoftEngageSent", self.dash)
-        self.assertIn("legacySoftEngageSent = false", self.dash)  # re-arm on new AP episode
-        # 3. constants + state
-        self.assertIn("SOFT_ENGAGE_ANGLE_THRESH_X10", self.dash)
-        self.assertIn("SOFT_ENGAGE_TIMEOUT_MS", self.dash)
-        self.assertIn("kSoftEngageDefaultEnabled", self.dash)
-        self.assertIn("dashSoftEngage", self.dash)
-        # 4. NVS key + HTTP fields
-        self.assertIn('"def_se"', self.dash)
-        self.assertIn('"soft_engage"', self.dash)
-        self.assertIn('"softEngage"', self.dash)
+    # (test_soft_engage_is_wired_into_legacy_gate was removed in v1.18 with
+    # the #108 steer-jerk defense family: the Soft Engage angle gate, its
+    # dashSoftEngageRelease helper, the def_se NVS key, and every
+    # softEngage/soft_engage HTTP field were deleted — see
+    # test_steer_defense_family_removed_in_v118.)
 
     def test_dashboard_runtime_state_syncs_defense_to_handlers(self) -> None:
         """Loaded NVS/UI defense state must reach active handler and handlerPool."""
@@ -2759,9 +2666,381 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('"/gear_assist_status"', self.simulator)
         self.assertIn('gear_assist_status', self.simulator)
 
+    def test_ap_re_request_switch_is_wired_fail_closed(self) -> None:
+        """The v1.18 8.3.6 coordinator toggle must persist, apply, and diagnose end to end.
+
+        Ported from the dual-CAN 4.5.0-beta09 contract; the only adaptation is
+        the single-CAN bus binding (sourceBus = CAN_BUS_ANY — the one TWAI bus;
+        the dual-CAN pin was CAN_BUS_VEH) and the tick call site name
+        (appApReRequestTick; dual was t2canApReRequestTick).
+        """
+        # NVS persistence: short key, default off, saved and loaded.
+        self.assertIn('prefs.putBool("apr_on", dashApReRequestEnabled)', self.dash)
+        self.assertIn('prefs.getBool("apr_on", false)', self.dash)
+        # /defense_config GET flat key + POST parsing + runtime reconfigure.
+        self.assertIn('j += ",\\"ap_re_request\\":"', self.dash)
+        self.assertIn('server.hasArg("ap_re_request")', self.dash)
+        self.assertIn(
+            "dashApReRequestCtrl.configure(dashApReRequestEnabled,", self.dash
+        )
+        # The compiled profile is the activation authority and carries the
+        # 2026-09-10/11/12 dual-CAN real-vehicle 0x045 calibration. Pin the
+        # calibrated constants: an accidental revert to the empty profile would
+        # silently break the switch again, and an inconsistent edit would fail
+        # apReRequestProfileError() validation.
+        module_src = (ROOT / "include" / "dash_ap_rerequest_activation.h").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("2026-09-10", module_src)
+        self.assertIn("p.sourceBus = CAN_BUS_ANY;", module_src)
+        self.assertIn("p.stalkByte = 0;", module_src)
+        self.assertIn("p.stalkMask = 0x03;", module_src)
+        self.assertIn("p.stalkFwdValue = 1;", module_src)
+        self.assertIn("p.stalkRwdValue = 2;", module_src)
+        # qualificationWindowMs widened 1200 -> 2400 ms after the beta05 Tier 1
+        # CSVs (dual-CAN form; single-CAN inherits the calibration).
+        self.assertIn("p.qualificationWindowMs = 2400;", module_src)
+        self.assertIn("p.postQualApMask = 0x007C;", module_src)
+        self.assertIn("p.cancelEvidenceApMask = 0x0006;", module_src)
+        self.assertIn("p.cancelFaultApMask = 0x0300;", module_src)
+        # The request press waits for the available set (state 2; ~940 ms
+        # observed recovery after the cancel) instead of firing right after
+        # the cancel release.
+        self.assertIn("p.requestApMask = 0x0004;", module_src)
+        self.assertIn("p.availableWaitTimeoutMs = 3000;", module_src)
+        self.assertIn('"waitAvailable"', module_src)
+        self.assertIn('"availableWaitTimeout"', module_src)
+        self.assertIn('"apActiveDuringWait"', module_src)
+        # Rolling-counter anchor is a TIME-recency rule: anchor own last TX
+        # only when it is newer than the last native template refresh;
+        # otherwise always template+1 (a ring comparison lets a stale lastTx
+        # from the previous round hijack the anchor -> counterConflict lock).
+        # The ring must not come back.
+        self.assertIn(
+            "static_cast<uint32_t>(state_.lastTxMs - state_.templateMs) <",
+            module_src,
+        )
+        self.assertIn("state_.lastTxMs = now;", module_src)
+        self.assertIn("state_.lastTxValid = true;", module_src)
+        self.assertNotIn("ringAhead", module_src)
+        # The AP injection gate is the coordinator's arm-level precondition.
+        # Pin the wiring end to end.
+        self.assertIn("bool apGateOpen = true", module_src)  # default keeps tests unchanged
+        active_fn = re.search(r"bool active\(\) const\s*\{.*?^    \}", module_src, re.S | re.M)
+        self.assertIsNotNone(active_fn)
+        self.assertIn("state_.apGateOpen", active_fn.group(0))
+        # The single production call site passes the live gate explicitly
+        # (never relies on the default-true).
+        self.assertIn(
+            "dashApReRequestCtrl.configure(dashApReRequestEnabled,\n"
+            "                                      compiledApReRequestProfile(),\n"
+            "                                      apInjectionGate);",
+            self.dash,
+        )
+        # Gate-closed mode reason + diagnostics JSON keys.
+        self.assertIn('"apGateOff"', module_src)
+        self.assertIn('R"JSON(,"unavailableReason":"apGateOff")JSON"', self.dash)
+        self.assertIn('R"JSON(,"apGateOpen":)JSON"', self.dash)
+        self.assertIn("(rr.enabled && rr.profileReady && rr.apGateOpen)", self.dash)
+        # Diagnostics are shared by /status and /defense_config.
+        self.assertIn('"apReRequest":{"requested"', self.dash)
+        self.assertIn("unavailableReason", self.dash)
+        # UI: toggle + diagnostics in both the source and generated headers.
+        # rrPhaseMap localizes every coordinator reason for field triage.
+        for surface in (self.ui, self.ui_gen):
+            self.assertIn("ap_re_request", surface)
+            self.assertIn("apReRequest", surface)
+            self.assertIn("def-ap-rerequest-tgl", surface)
+            self.assertIn("rrPhaseMap", surface)
+            self.assertIn("等待车辆可用", surface)
+            self.assertIn("等待可用超时", surface)
+            self.assertIn("AP 自恢复", surface)
+        # Real send path: the coordinator tick must run on the CAN task.
+        self.assertIn("appApReRequestTick();", self.main)
+
+    def test_ap_re_request_requires_ap_gate_and_ui_order(self) -> None:
+        """Gate precondition, defense-page card order, and the sole-authority
+        branch ordering that keeps a closed gate on the legal legacy direct
+        path.
+
+        Adapted from the dual-CAN test: on single-CAN the AP gate toggle
+        (ap-gate-tgl) lives on the 驾驶舱 AP 注入安全 card, NOT the defense
+        page — so the defense-page ordering pin is master -> Abort Guard card
+        -> 8.3.6 coordinator card (Abort Guard is kept as the 0x399 state 8/9
+        latch safety guard the coordinator's injection path goes through).
+        """
+        # (a) Defense page order: master -> Abort Guard -> 8.3.6 coordinator,
+        # with the coordinator's diag grid directly after its toggle and
+        # before the 保护参数 (bionic) card.
+        defense_page = re.search(r'id="pg-defense".*?id="pg-ota"', self.ui, re.S)
+        self.assertIsNotNone(defense_page)
+        body = defense_page.group(0)
+        master = body.index('id="def-master-tgl"')
+        guard = body.index('id="abort-guard-card"')
+        rerequest = body.index('id="ap-rerequest-card"')
+        self.assertLess(master, guard, "defense master toggle must sit above Abort Guard")
+        self.assertLess(guard, rerequest, "Abort Guard card must sit above the 8.3.6 coordinator")
+        # Coordinator diag grid before the following 保护参数 card.
+        self.assertLess(body.index('id="ap-rr-effective"'), body.index('id="def-rate"'))
+        # (b) The precondition copy points at the cockpit gate page (single-CAN
+        # gate location) + localized gate-off reason, in both the source and
+        # generated UI.
+        for surface in (self.ui, self.ui_gen):
+            self.assertIn("需先开启「AP 注入门控」（驾驶舱 AP 注入安全页）", surface)
+            self.assertIn("AP 门控未开启", surface)
+        # (c) Sole-authority ordering: the coordinator's active() check must
+        # come BEFORE the gate-off early-true, so a closed gate falls through
+        # to the legacy direct path (legal normal mode) only when the
+        # coordinator is inert.
+        fn = re.search(
+            r"static bool dashLegacyFsdActivationAllowed\(uint32_t nowMs\)\s*\{.*?^\}",
+            self.dash,
+            re.S | re.M,
+        )
+        self.assertIsNotNone(fn)
+        fn_body = fn.group(0)
+        self.assertLess(
+            fn_body.index("dashApReRequestCtrl.active()"),
+            fn_body.index("if (!apInjectionGate)"),
+        )
+
+    def test_ap_re_request_beta06_auto_rearm_configure_preserve_and_diag(self) -> None:
+        """Vehicle-side locks auto re-arm (capped), configure() preserves an
+        ActiveInjection round, and the end-reason survives."""
+        module_src = (ROOT / "include" / "dash_ap_rerequest_activation.h").read_text(
+            encoding="utf-8"
+        )
+        # Vehicle-side re-arm set: exactly these four reasons (hardware-class
+        # reasons must keep locking — the fail-closed answer).
+        self.assertIn("static bool vehicleSideRearmReason(const char *r)", module_src)
+        for reason in ("windowExpired", "apExitedDuringWindow", "apActiveDuringWait", "apFaultState"):
+            self.assertIn(f'strcmp(r, "{reason}") == 0', module_src)
+        # Cap: 3 consecutive vehicle-side locks without a completed round
+        # between them degrade to a real FailedLocked.
+        self.assertIn("kVehicleAutoRearmMax = 3", module_src)
+        self.assertIn("state_.consecutiveVehicleLocks < kVehicleAutoRearmMax", module_src)
+        self.assertIn('"autoRearmLimit"', module_src)
+        self.assertIn("state_.consecutiveVehicleLocks = 0;", module_src)  # completeRound resets
+        # A re-arm is the Complete fence: WaitDriverIntent with exitSeen
+        # cleared, never a round while the car is still in a weird state.
+        self.assertIn("state_.exitSeen = false;", module_src)
+        # configure() preservation: ONLY an identical (enabled, gate,
+        # byte-identical valid profile) re-apply during ActiveInjection keeps
+        # the round; every real mode change takes the full reset. This is the
+        # fix for mid-injection /config POSTs killing the bit46 chain.
+        self.assertIn(
+            "state_.phase == Phase::ActiveInjection &&\n"
+            "            state_.enabled && state_.profileReady && state_.apGateOpen &&",
+            module_src,
+        )
+        self.assertIn("memcmp(&state_.profile, &profile, sizeof(profile)) == 0", module_src)
+        # Barrier B: each round starts with a FRESH cancel-evidence latch (a
+        # stale latch + a pre-evidence active state used to fire a false
+        # apActiveDuringWait lock in round 2+).
+        self.assertIn("state_.cancelEvidenceSeen = false;", module_src)
+        # lastEndedReason survives re-arms and state changes; cleared only by
+        # configure(). This is the field answer to "record the reason before
+        # touching any switch" from the beta05 Tier 1 lesson.
+        self.assertIn("state_.lastEndedReason = reason;", module_src)
+        self.assertIn('const char *lastEndedReason = "none";', module_src)
+        # Dashboard JSON + simulator mirror.
+        self.assertIn(',"lastEndedReason":"', self.dash)
+        self.assertIn(',"autoRearms":', self.dash)
+        self.assertIn('"lastEndedReason": "none"', self.simulator)
+        self.assertIn('"autoRearms": 0', self.simulator)
+        self.assertIn('"windowMs": 2400', self.simulator)
+        # UI: two new diag cells + localized new reasons (source + generated;
+        # bare id tokens because the minifier strips attribute quotes).
+        self.assertIn('id="ap-rr-lastend"', self.ui)
+        self.assertIn('id="ap-rr-rearm"', self.ui)
+        for surface in (self.ui, self.ui_gen):
+            self.assertIn("ap-rr-lastend", surface)
+            self.assertIn("ap-rr-rearm", surface)
+            self.assertIn("上次结束原因", surface)
+            self.assertIn("自动重武装", surface)
+            self.assertIn("已自动重武装", surface)
+            self.assertIn("autoRearmLimit", surface)
+            self.assertIn("2.4s", surface)
+
+    def test_status_json_auto_rearms_emission_is_valid(self) -> None:
+        """beta07 lesson (dual-CAN): beta06 shipped `","round":` after the
+        NUMERIC autoRearms append — one stray quote made /status and
+        /defense_config unparseable device-wide. Boundary pins both ways:
+        string-close form only after the string lastEndedReason, bare form
+        after the numeric autoRearms."""
+        # Correct chain: string value -> `","autoRearms":` (closes the string),
+        # numeric value -> bare `,"round":` (no leading quote).
+        self.assertIn('j += R"JSON(","autoRearms":)JSON";', self.dash)
+        self.assertIn("j += rr.autoRearms;", self.dash)
+        self.assertIn('j += R"JSON(,"round":)JSON";', self.dash)
+        # The beta06 stray-quote form must stay dead. (Substring asserts like
+        # `,"autoRearms":` pass either way — `","autoRearms":` contains them —
+        # which is exactly how this shipped green in beta06.)
+        self.assertNotIn('R"JSON(","round":)JSON"', self.dash)
+
+    def test_ap_settle_delay_chain_removed_in_v118(self) -> None:
+        """v1.18: the AP-settle delay (0-3 s 延迟注入) is gone end to end — UI
+        select, POST param, NVS key, settle timer, gate-mode variant, and the
+        settling injection state. Ported from the dual-CAN beta06 deletion
+        test; single-CAN keeps one-line tombstones (and deliberate
+        prefs.remove migrations for the stale NVS keys), so assert against
+        comment-stripped surfaces."""
+        # UI: strip BOTH comment forms — HTML <!-- --> tombstones and JS //
+        # tombstones (the dual-CAN test only needed the raw surface).
+        def strip_ui(text: str) -> str:
+            no_html = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+            return "\n".join(line.split("//", 1)[0] for line in no_html.splitlines())
+
+        for surface in (self.ui, self.ui_gen):
+            stripped = strip_ui(surface)
+            for token in ("ap-delay-select", "apDelayMs", "settling",
+                          "稳定计时中", "延迟注入"):
+                with self.subTest(ui_token=token):
+                    self.assertNotIn(token, stripped)
+            # saveApGateControls no longer posts the delay param.
+            self.assertNotIn("ap_delay_ms:", surface)
+        # The dashboard keeps tombstone comments that NAME the removed symbols
+        # plus live prefs.remove("ap_dly") migration lines (stale-key cleanup,
+        # kept on purpose) — assert on comment-stripped code for the chain
+        # tokens only.
+        dash_code = "\n".join(
+            line.split("//", 1)[0] for line in self.dash.splitlines()
+        )
+        for token in (
+            "dashClampApDelayMs",
+            "legacyFsdRequiredStableMs",
+            "legacyFsdApSettleTiming",
+            "legacyFsdApActiveSinceMs",
+            "kLegacyFsdActivationSettle",
+            'server.hasArg("ap_delay_ms")',
+        ):
+            with self.subTest(dash_token=token):
+                self.assertNotIn(token, dash_code)
+        sim_code = "\n".join(
+            line.split("#", 1)[0] for line in self.simulator.splitlines()
+        )
+        self.assertNotIn("apDelayMs", sim_code)
+        self.assertNotIn("ap_delay_ms", sim_code)
+
+    def test_beta09_vehicle_refusal_watch_and_flag_tally(self) -> None:
+        """beta09 P1/P2, both purely observational (no gate, timeout, or
+        injection semantics touched — 8.3.6 anti-jerk behavior is unchanged).
+
+        P1 roots in the 162535 Tier 1 CSV: one native RWD press the car
+        silently ignored (flag1 up in 6 ms, no state-3..6 edge for 6 s). The
+        coordinator correctly stayed idle, but the driver had no way to tell
+        a declined car from a broken box. P1 watches WaitDriverIntent RWD
+        press edges and latches "vehicle refused" when no activation edge
+        follows within kVehicleRefusalMs.
+        P2 tallies the unknown-semantics high nibble of 0x399 byte0 into a
+        16-bin histogram so future CSVs can decode it.
+        """
+        module_src = (ROOT / "include" / "dash_ap_rerequest_activation.h").read_text(
+            encoding="utf-8"
+        )
+        # P1 window constant + the tick ORDER pin: the refusal check must run
+        # BEFORE the roundActive early return, or WaitDriverIntent (not
+        # roundActive) would never reach it and the watch would never fire.
+        self.assertIn("static constexpr uint32_t kVehicleRefusalMs = 2500;", module_src)
+        tick_fn = module_src.split("void tick(uint32_t now)", 1)[1][:1400]
+        refusal_idx = tick_fn.find("state_.rwdPressPending")
+        early_return_idx = tick_fn.find("if (!roundActive(state_.phase)) return;")
+        self.assertGreater(refusal_idx, -1, "tick() must evaluate the refusal watch")
+        self.assertLess(
+            refusal_idx, early_return_idx,
+            "refusal watch must precede the roundActive early return",
+        )
+        # Press-edge detection only in WaitDriverIntent, only for RWD, only on
+        # a value change (held 10Hz rollover frames are one press).
+        self.assertIn(
+            "state_.phase == Phase::WaitDriverIntent &&\n"
+            "                stalk == state_.profile.stalkRwdValue &&\n"
+            "                state_.prevNativeStalk != stalk",
+            module_src,
+        )
+        # The activation edge clears both pending and refusal, BEFORE
+        # startRound — an accepted press must never read as refused even when
+        # device-side gating (exitSeen/intent/permit) stops the round.
+        edge_block = module_src.split("if (active && !state_.prevApActive)", 1)[1][:600]
+        self.assertIn("state_.rwdPressPending = false;", edge_block)
+        self.assertIn("state_.vehicleRefusal = false;", edge_block)
+        self.assertLess(
+            edge_block.find("state_.rwdPressPending = false;"),
+            edge_block.find("startRound(now)"),
+        )
+        # P2: default param keeps legacy 3-arg test calls compiling; the
+        # tally runs after the bus filter for every phase (Disabled included).
+        self.assertIn(
+            "void observeDasStatus(uint8_t apState, uint8_t bus, uint32_t now,\n"
+            "                          uint8_t dasFlags = 0)",
+            module_src,
+        )
+        obs = module_src.split("++state_.otherBusObs;\n            return;\n        }", 1)[
+            1
+        ][:700]
+        self.assertIn("++state_.apFlagCounts[dasFlags & 0x0F];", obs)
+        # diag() exports the new fields.
+        for token in (
+            "d.vehicleRefusal = state_.vehicleRefusal;",
+            "d.rwdPressMs = state_.rwdPressMs;",
+            "d.lastApFlag = state_.lastApFlag;",
+            "memcpy(d.apFlagCounts, state_.apFlagCounts, sizeof(d.apFlagCounts));",
+        ):
+            self.assertIn(token, module_src)
+
+        # Dashboard call site forwards the nibble the old code masked away.
+        self.assertIn(
+            "const uint8_t dasFlags = static_cast<uint8_t>(f.data[0] >> 4);", self.dash
+        )
+        self.assertIn(
+            "static_cast<uint32_t>(now), dasFlags);", self.dash
+        )
+
+        # JSON chain: every new field is bool/numeric (or an array), so all
+        # literals must be the BARE `,"key":` form — a `","key":` after any of
+        # them is the beta06 stray-quote class of bug. Pin both ways.
+        for token in (
+            ',"vehicleRefusal":', ',"rwdPressPending":', ',"vehicleRefusals":',
+            ',"rwdPressMs":', ',"lastApFlag":', ',"lastApFlagMs":',
+            ',"apFlagCounts":[', 'R"JSON(]})JSON"',
+            "for (uint8_t i = 0; i < 16; ++i)",
+        ):
+            self.assertIn(token, self.dash)
+        for stray in (
+            '","vehicleRefusal":', '","rwdPressPending":', '","vehicleRefusals":',
+            '","rwdPressMs":', '","lastApFlag":', '","lastApFlagMs":',
+            '","apFlagCounts":',
+        ):
+            self.assertNotIn(stray, self.dash)
+
+        # UI: the new cell exists in source and generated surfaces (ids are
+        # unquoted in the generated file — bare-token asserts per convention).
+        self.assertIn('id="ap-rr-vehicle"', self.ui)
+        for surface in (self.ui, self.ui_gen):
+            self.assertIn("ap-rr-vehicle", surface)
+            self.assertIn("车辆响应", surface)
+            self.assertIn("未接受激活 · 车侧拒绝", surface)
+            self.assertIn("等待车辆响应", surface)
+
+        # Simulator mirrors the firmware /status shape (beta07 lesson: a
+        # missing simulator field makes poll() flip real UI state).
+        for token in (
+            '"vehicleRefusal": False',
+            '"rwdPressPending": False',
+            '"vehicleRefusals": 0',
+            '"rwdPressMs": 0',
+            '"lastApFlag": 0',
+            '"lastApFlagMs": 0',
+            '"apFlagCounts": [0] * 16',
+        ):
+            self.assertIn(token, self.simulator)
+
     def test_release_metadata_and_waveshare_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the waveshare single CAN standalone artifact."""
         version = self.version.strip()
+        # Hard version pin (dual-CAN contract convention): an accidental
+        # VERSION bump without the full release pass must fail loudly here.
+        self.assertEqual("1.18", version)
         # VERSION accepts the project's two-part release form (1.10) and the
         # existing three-part form used by older releases.
         self.assertRegex(version, r"^\d+\.\d+(?:\.\d+)?$", f"VERSION file malformed: {version!r}")
