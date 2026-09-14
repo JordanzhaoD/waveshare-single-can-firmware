@@ -201,7 +201,7 @@ void test_arming_timeout_full_reset()
     reachArming(p, 1000); // deadline = 1010 + 5000 = 6010
     uint8_t out[8];
     TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6009, out));
-    TEST_ASSERT_EQUAL(JitterPhase::Arming, p.diag().phase); // 1 ms early: alive
+    TEST_ASSERT_EQUAL(JitterPhase::Arming, p.diag().phase);   // 1 ms early: alive
     TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6010, out)); // boundary: expired
     DashJitterDiag d = p.diag();
     TEST_ASSERT_EQUAL(JitterPhase::Idle, d.phase);
@@ -246,7 +246,7 @@ void test_one_shot_patches_native_template()
     reachArming(p, 1000);
     uint8_t out[8];
     TEST_ASSERT_EQUAL(JitterAction::Bit46Shot, p.tick(1010, out));
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(tmpl, out, 5);  // bytes 0..4 ride the clone
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(tmpl, out, 5); // bytes 0..4 ride the clone
     TEST_ASSERT_EQUAL_UINT8(tmpl[6], out[6]);
     TEST_ASSERT_EQUAL_UINT8(tmpl[7], out[7]);
     TEST_ASSERT_EQUAL_UINT8(0x43, out[5]); // byte5 |= 0x43, template bit5 was 0
@@ -359,7 +359,7 @@ void test_pump_first_counter_is_template_plus_one_then_increments()
     TEST_ASSERT_EQUAL_UINT8(5, jitter_045::counterOf(out));
     TEST_ASSERT_EQUAL_UINT8(kNative045[6] & 0x0F, out[6] & 0x0F); // low nibble rides
     TEST_ASSERT_EQUAL_UINT8(jitter_045::crc8J1850(out, 7), out[7]);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(kNative045 + 1, out + 1, 5);   // bytes1..5 clone
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kNative045 + 1, out + 1, 5); // bytes1..5 clone
     p.observeNative045(kNative045, 1030);
     TEST_ASSERT_EQUAL(JitterAction::Stalk045, p.tick(1032, out));
     TEST_ASSERT_EQUAL_UINT8(6, jitter_045::counterOf(out));
@@ -498,7 +498,7 @@ void test_full_reset_clears_cycle_state_keeps_diag_counters()
     p.observeDasStatus(9, 1100); // apError reset
     DashJitterDiag d = p.diag();
     TEST_ASSERT_EQUAL_UINT8(0, d.cycles);
-    TEST_ASSERT_EQUAL_UINT32(1, d.cancels);   // lifetime counters survive
+    TEST_ASSERT_EQUAL_UINT32(1, d.cancels); // lifetime counters survive
     TEST_ASSERT_EQUAL_UINT32(1, d.apErrorResets);
     // Re-arm works: state0 -> state1 -> state3 -> state6 runs again.
     p.observeDasStatus(1, 2000);

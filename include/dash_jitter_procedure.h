@@ -69,11 +69,11 @@ inline uint8_t counterOf(const uint8_t data[8])
 // instead of tripping the abort on garbage values.
 enum class JitterPhase : uint8_t
 {
-    Inert,        // switch off / AP gate closed / permit lost
-    Idle,         // state0 equivalent: waiting for the first 0x399 event
-    Normal,       // state1: monitoring for the AP engage edge
-    Arming,       // state2: one-shot sent, waiting for lane capture
-    Disengaging,  // state4: cancel burst / wait available / re-request burst
+    Inert,       // switch off / AP gate closed / permit lost
+    Idle,        // state0 equivalent: waiting for the first 0x399 event
+    Normal,      // state1: monitoring for the AP engage edge
+    Arming,      // state2: one-shot sent, waiting for lane capture
+    Disengaging, // state4: cancel burst / wait available / re-request burst
 };
 
 enum class JitterAction : uint8_t
@@ -85,35 +85,35 @@ enum class JitterAction : uint8_t
 
 struct DashJitterDiag
 {
-    bool requested = false;      // persisted switch
-    bool effective = false;      // switch AND gate AND permit
+    bool requested = false; // persisted switch
+    bool effective = false; // switch AND gate AND permit
     bool apGateOpen = false;
     bool permit = false;
     JitterPhase phase = JitterPhase::Inert;
     const char *reason = "off";
-    uint8_t apState = 0;         // last observed 0x399 low nibble
-    uint8_t cycles = 0;          // cancel/re-request cycles this period
-    uint32_t cancels = 0;        // cancel bursts started
-    uint32_t requests = 0;       // re-request bursts started
-    uint32_t bit46Shots = 0;     // one-shot 0x3EE frames emitted
-    uint32_t pumpFrames = 0;     // synthetic 0x045 frames emitted
+    uint8_t apState = 0;     // last observed 0x399 low nibble
+    uint8_t cycles = 0;      // cancel/re-request cycles this period
+    uint32_t cancels = 0;    // cancel bursts started
+    uint32_t requests = 0;   // re-request bursts started
+    uint32_t bit46Shots = 0; // one-shot 0x3EE frames emitted
+    uint32_t pumpFrames = 0; // synthetic 0x045 frames emitted
     uint32_t txOk = 0;
     uint32_t txFail = 0;
-    uint32_t steerAborts = 0;    // >45° burst aborts
-    uint32_t steerResets = 0;    // >90° full resets
-    uint32_t apErrorResets = 0;  // events 8/9/10 resets
-    uint32_t timeoutResets = 0;  // deadline expiries
+    uint32_t steerAborts = 0;   // >45° burst aborts
+    uint32_t steerResets = 0;   // >90° full resets
+    uint32_t apErrorResets = 0; // events 8/9/10 resets
+    uint32_t timeoutResets = 0; // deadline expiries
 };
 
 struct DashJitterProcedure
 {
     // ── LittleGong field constants (disassembly-proven) ─────────────────
-    static constexpr uint32_t kDeadlineMs = 5000;     // arming / refresh window
-    static constexpr uint32_t kCarrierLockMs = 47;    // native 0x045 freshness gate
-    static constexpr uint32_t kPumpGapMs = 3;         // inter-frame spacing
-    static constexpr uint8_t kPumpMaxFrames = 16;     // burst cap
-    static constexpr float kSteerAbortDeg = 45.0f;    // stop the burst
-    static constexpr float kSteerResetDeg = 90.0f;    // full reset
+    static constexpr uint32_t kDeadlineMs = 5000;  // arming / refresh window
+    static constexpr uint32_t kCarrierLockMs = 47; // native 0x045 freshness gate
+    static constexpr uint32_t kPumpGapMs = 3;      // inter-frame spacing
+    static constexpr uint8_t kPumpMaxFrames = 16;  // burst cap
+    static constexpr float kSteerAbortDeg = 45.0f; // stop the burst
+    static constexpr float kSteerResetDeg = 90.0f; // full reset
     // 0x3EE one-shot template freshness (fail-closed: no fresh template ->
     // skip the shot; 1 Hz mux0 carrier makes ~1 s the normal age).
     static constexpr uint32_t kNative3eeMaxAgeMs = 5000;
