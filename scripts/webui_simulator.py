@@ -191,6 +191,7 @@ class SimState:
             "steerResets": 0,
             "apErrorResets": 0,
             "timeoutResets": 0,
+            "failedCycles": 0,
         }
 
     def status(self) -> dict[str, Any]:

@@ -49,6 +49,8 @@ void test_constants_pin_littlegong_values()
     TEST_ASSERT_EQUAL_FLOAT(45.0f, DashJitterProcedure::kSteerAbortDeg);
     TEST_ASSERT_EQUAL_FLOAT(90.0f, DashJitterProcedure::kSteerResetDeg);
     TEST_ASSERT_EQUAL_UINT32(5000, DashJitterProcedure::kNative3eeMaxAgeMs);
+    // v1.19.1 session give-up cap (ours, not LittleGong's).
+    TEST_ASSERT_EQUAL_UINT8(1, DashJitterProcedure::kSessionFailCap);
 }
 
 void test_crc8_j1850_golden()
@@ -219,7 +221,10 @@ void test_permit_required_for_arming_entry()
     p.observeDasStatus(3, 200); // no permit -> stays Normal
     TEST_ASSERT_EQUAL(JitterPhase::Normal, p.diag().phase);
     p.setPermit(true);
-    p.observeDasStatus(3, 300); // wait: phase Normal sees event 3 again
+    // v1.19.1 edge semantics: a repeated SAME state does not re-fire the
+    // machine — leave state 3 first, then bring a fresh event-3 edge.
+    p.observeDasStatus(2, 250);
+    p.observeDasStatus(3, 300);
     TEST_ASSERT_EQUAL(JitterPhase::Arming, p.diag().phase);
 }
 
@@ -500,6 +505,14 @@ void test_full_reset_clears_cycle_state_keeps_diag_counters()
     TEST_ASSERT_EQUAL_UINT8(0, d.cycles);
     TEST_ASSERT_EQUAL_UINT32(1, d.cancels); // lifetime counters survive
     TEST_ASSERT_EQUAL_UINT32(1, d.apErrorResets);
+    // v1.19.1: the interrupted cycle had no re-engagement evidence, so it
+    // billed the session budget (failedCycles 1) — re-entry would be
+    // session-capped. Park is the physical session boundary: it re-opens
+    // the budget (this is the exit path used in the field incident).
+    TEST_ASSERT_EQUAL_UINT8(1, p.diag().failedCycles);
+    p.setVehicleParked(true);
+    p.setVehicleParked(false);
+    TEST_ASSERT_EQUAL_UINT8(0, p.diag().failedCycles);
     // Re-arm works: state0 -> state1 -> state3 -> state6 runs again.
     p.observeDasStatus(1, 2000);
     p.observeDasStatus(3, 2010);
@@ -509,6 +522,135 @@ void test_full_reset_clears_cycle_state_keeps_diag_counters()
     p.observeDasStatus(6, 2040);
     TEST_ASSERT_EQUAL(JitterPhase::Disengaging, p.diag().phase);
     TEST_ASSERT_EQUAL_UINT32(2, p.diag().cancels);
+}
+
+// ─── v1.19.1 field-incident regressions ───────────────────────────────
+
+void test_v1191_incident_replay_level_feed_terminates()
+{
+    // The v1.19 field incident: FSD refused -> the car settles in state 2
+    // and 0x399 keeps broadcasting it. v1.19 fired the event-2 branch per
+    // frame (startPump reset the 16-frame cap, the branch refreshed the
+    // deadline -> unbounded 0x42 bursts -> the EAP loop). v1.19.1 must
+    // send exactly ONE re-request, let the deadline expire, and stand
+    // down for the rest of the session.
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010); // events 1,3,6; cancel burst started
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050); // the ONE re-request (deadline 6050)
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().requests);
+    // Level feed: 50 consecutive state-2 frames, each with a fresh native
+    // carrier — the worst case, since v1.19 restarted the pump per frame.
+    uint8_t out[8];
+    uint32_t t = 1060;
+    for (int i = 0; i < 50; ++i)
+    {
+        p.observeNative045(kNative045, t);
+        p.observeDasStatus(2, t); // same state: ignored (edge semantics)
+        p.tick(t + 1, out);
+        t += 20;
+    }
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().requests);    // never re-fired
+    TEST_ASSERT_EQUAL_UINT32(16, p.diag().pumpFrames); // one capped burst
+    // Deadline set once at 1050+5000, never refreshed: it expires.
+    p.observeNative045(kNative045, 6100);
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6101, out));
+    TEST_ASSERT_EQUAL(JitterPhase::Idle, p.diag().phase);
+    TEST_ASSERT_EQUAL_STRING("timeout", p.diag().reason);
+    TEST_ASSERT_EQUAL_UINT8(1, p.diag().failedCycles); // refused = failed
+    // Session stand-down: the next FSD engage attempt is fully passive.
+    p.observeDasStatus(1, 6500); // Idle -> Normal
+    p.observeNative3eeMux0(kNative045, 6600);
+    p.observeDasStatus(3, 6700);
+    TEST_ASSERT_EQUAL(JitterPhase::Normal, p.diag().phase);
+    TEST_ASSERT_EQUAL_STRING("sessionCap", p.diag().reason);
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6710, out)); // no one-shot
+    // Park re-opens the budget (the field exit), a fresh engage re-arms.
+    p.setVehicleParked(true);
+    p.setVehicleParked(false);
+    p.observeDasStatus(1, 6800);
+    p.observeDasStatus(3, 6900);
+    TEST_ASSERT_EQUAL(JitterPhase::Arming, p.diag().phase);
+}
+
+void test_v1191_reengage_success_keeps_protection_alive()
+{
+    // The EAP-landing variant: the 0x42 re-request DOES engage (the car
+    // lands in EAP, states 3/6). The cycle counts as success — no session
+    // cap — and after the user stalk-cancels EAP the machine does NOT
+    // react to state 2 (the v1.19 loop is dead) while staying ready for
+    // every subsequent legitimate engagement.
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050); // one 0x42 re-request
+    p.observeDasStatus(3, 1200); // vehicle re-engaged (EAP)
+    TEST_ASSERT_EQUAL_STRING("reEngaged", p.diag().reason);
+    p.observeDasStatus(6, 1300);
+    // Deadline from the event-2 refresh (6050) expires -> success billing.
+    uint8_t out[8];
+    p.observeNative045(kNative045, 6100);
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6101, out));
+    TEST_ASSERT_EQUAL(JitterPhase::Idle, p.diag().phase);
+    TEST_ASSERT_EQUAL_UINT8(0, p.diag().failedCycles);
+    // User cancels EAP: 1 -> 2. Idle -> Normal on the 1; the 2 is inert
+    // (Normal only reacts to event 3) — no further 0x42, ever.
+    p.observeDasStatus(1, 6200);
+    p.observeDasStatus(2, 6300);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().requests); // unchanged
+    // A fresh legitimate FSD engagement re-arms normally: the protection
+    // is per-engagement, not once-per-drive.
+    p.observeDasStatus(3, 6400);
+    TEST_ASSERT_EQUAL(JitterPhase::Arming, p.diag().phase);
+}
+
+void test_v1191_bounce_12_fires_one_request()
+{
+    // 1<->2 bounce: every edge here IS a state change (the edge trigger
+    // alone would re-fire), so the cycles_ gate is what keeps it to one
+    // 0x42 per period — and the blocked edges must not refresh the
+    // deadline either.
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    for (int i = 0; i < 5; ++i)
+    {
+        p.observeDasStatus(1, 1100 + i * 10);
+        p.observeDasStatus(2, 1105 + i * 10);
+    }
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().requests);
+    TEST_ASSERT_EQUAL_UINT8(1, p.diag().cycles);
+    // Deadline stands at the single re-request (1105+5000=6105): the
+    // blocked bounce edges at 1115..1145 did not push it out.
+    uint8_t out[8];
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6110, out));
+    TEST_ASSERT_EQUAL(JitterPhase::Idle, p.diag().phase);
+    TEST_ASSERT_EQUAL_STRING("timeout", p.diag().reason);
+}
+
+void test_v1191_park_midcycle_does_not_poison_next_session()
+{
+    // The field exit was Park while Disengaging. Parking must END the
+    // cycle without billing it to the next drive session (accounting
+    // runs, then the budget re-opens — order matters).
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010); // cycle running, no re-engagement yet
+    p.setVehicleParked(true);
+    DashJitterDiag d = p.diag();
+    TEST_ASSERT_EQUAL(JitterPhase::Idle, d.phase);
+    TEST_ASSERT_EQUAL_STRING("parked", d.reason);
+    TEST_ASSERT_EQUAL_UINT8(0, d.failedCycles); // billed, then re-opened
+    p.setVehicleParked(false);
+    p.observeDasStatus(1, 2000);
+    p.observeDasStatus(3, 2010);
+    TEST_ASSERT_EQUAL(JitterPhase::Arming, p.diag().phase);
 }
 
 // ─── diag snapshot ────────────────────────────────────────────────────
@@ -578,6 +720,12 @@ int main()
 
     // Reset semantics
     RUN_TEST(test_full_reset_clears_cycle_state_keeps_diag_counters);
+
+    // v1.19.1 field-incident regressions
+    RUN_TEST(test_v1191_incident_replay_level_feed_terminates);
+    RUN_TEST(test_v1191_reengage_success_keeps_protection_alive);
+    RUN_TEST(test_v1191_bounce_12_fires_one_request);
+    RUN_TEST(test_v1191_park_midcycle_does_not_poison_next_session);
 
     // Diag
     RUN_TEST(test_diag_reflects_armed_state);

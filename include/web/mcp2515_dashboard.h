@@ -2607,6 +2607,8 @@ static void appendJitterDiagJson(String &j)
     j += jt.apErrorResets;
     j += R"JSON(,"timeoutResets":)JSON";
     j += jt.timeoutResets;
+    j += R"JSON(,"failedCycles":)JSON";
+    j += jt.failedCycles;
     j += R"JSON(})JSON";
 }
 

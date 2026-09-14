@@ -736,6 +736,9 @@ static void appJitterTick()
     const bool permit = canActive && dashLegacyHandlerActive() && appDriver &&
                         !vehicleOtaActive &&
                         (!dashHandler || dashHandler->abortGuard.allowsInjection());
+    // v1.19.1: the gear signal (P) is the drive-session boundary for the
+    // JITTER failed-cycle budget — a rising Park edge re-opens it.
+    dashJitterCtrl.setVehicleParked(dashHandler && (bool)dashHandler->Parked);
     dashJitterCtrl.setPermit(permit);
     uint8_t data[8];
     const JitterAction action = dashJitterCtrl.tick(now, data);

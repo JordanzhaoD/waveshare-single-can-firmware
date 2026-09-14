@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-09-14
+
+### Fixed
+- **v1.19 field defect: the JITTER event machine was fed per 0x399 frame but is transition-driven** (`include/dash_jitter_procedure.h`). Symptom (real vehicle): with FSD activation refused, the device repeatedly self-engaged EAP; the driver's stalk cancel was overridden (each fresh native 0x045 gesture re-armed the next synthetic burst); only shifting to Park ended it. Root cause: the Disengaging event-2 branch was level-triggered — every periodic state-2 frame re-ran `startPump(2)` (resetting the 16-frame burst cap) and refreshed the 5 s deadline, so a car parked in state 2 was fed an unbounded synthetic 0x42 re-request loop. The native tests fed discrete state CHANGES (the intended semantics) and so never saw the production wiring's per-frame level feed. Three amendments, all in the machine:
+  1. **Edge-triggered events** — `observeDasStatus` only runs the machine on a state CHANGE (`lastEventState_`), which is what LittleGong's `g_count` gate presupposes; same-state frames now only update the diag value. `lastEventState_` tracks the bus regardless of arming and survives every reset.
+  2. **One re-request per period** — the event-2 0x42 burst now passes the same `cycles_ < 1` gate as event 6, so a 1↔2 bounce (real transitions the edge trigger alone would honor) still cannot re-fire it, and a blocked edge does not refresh the deadline.
+  3. **Drive-session give-up** (`kSessionFailCap = 1`, ours — not LittleGong's): a disengage cycle that ends without the vehicle re-engaging (states 3/6 after our 0x42) counts as one failed cycle; after one consecutive failure the machine stands down for the rest of the drive session (reason `sessionCap`) instead of keeping pushing a car that refused FSD. A rising Park edge (`setVehicleParked`, fed from the gear handler's `Parked` on the CAN task) or a switch/gate toggle re-opens the budget; a successful cycle (reason `reEngaged`) clears the failure streak, so per-engagement protection is preserved for every subsequent legitimate FSD engagement. Parking mid-cycle ends the cycle without billing the next session (accounting runs, then the budget re-opens).
+
+### Added
+- `failedCycles` diag field on the `/status` and `/defense_config` `jitter` object (and the simulator mirror); `env:native_jitter` +4 regression tests (full incident replay under a 50-frame level feed, the EAP-landing success variant, the 1↔2 bounce, Park mid-cycle) and the two v1.19 tests that encoded the level semantics are updated to edge semantics.
+
 ## [1.19] - 2026-09-14
 
 ### Removed

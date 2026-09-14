@@ -2763,6 +2763,8 @@ class DashboardApiContractTests(unittest.TestCase):
             "static constexpr uint8_t kPumpMaxFrames = 16;",
             "static constexpr float kSteerAbortDeg = 45.0f;",
             "static constexpr float kSteerResetDeg = 90.0f;",
+            # v1.19.1 session give-up cap (the EAP-loop field fix).
+            "static constexpr uint8_t kSessionFailCap = 1;",
         ):
             with self.subTest(constant=token):
                 self.assertIn(token, module_src)
@@ -2812,8 +2814,11 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("appJitterTick();", self.main)
         self.assertIn("f.id = action == JitterAction::Stalk045 ? 0x045 : 0x3EE;", self.main)
         self.assertIn("dashJitterCtrl.recordTxResult(ok);", self.main)
-        # Permit cascade (abort guard still in it; OTA guard still in it).
+        # Permit cascade (abort guard still in it; OTA guard still in it)
+        # plus the v1.19.1 drive-session boundary feed (Park re-opens the
+        # failed-cycle budget).
         self.assertIn("dashJitterCtrl.setPermit(permit);", self.main)
+        self.assertIn("dashJitterCtrl.setVehicleParked(", self.main)
         # Diag JSON follows the chain rule: string values close with `","key":`,
         # numeric/bool with bare `,"key":`. Both ways pinned.
         self.assertIn('"jitter":{"requested"', self.dash)
@@ -2822,6 +2827,7 @@ class DashboardApiContractTests(unittest.TestCase):
             ',"cycles":', ',"cancels":', ',"requests":', ',"bit46Shots":',
             ',"pumpFrames":', ',"txOk":', ',"txFail":', ',"steerAborts":',
             ',"steerResets":', ',"apErrorResets":', ',"timeoutResets":',
+            ',"failedCycles":',
             'R"JSON(})JSON"',
         ):
             with self.subTest(chain_bare=bare):
@@ -2850,6 +2856,7 @@ class DashboardApiContractTests(unittest.TestCase):
             '"requested": self.jitter,',
             '"phase": "inert",',
             '"reason": "apGateOff" if self.jitter else "off",',
+            '"failedCycles": 0,',
             '"jitter": STATE.jitter,',
             'STATE.jitter = self.form_bool(form["jitter"])',
         ):
@@ -2905,7 +2912,7 @@ class DashboardApiContractTests(unittest.TestCase):
         version = self.version.strip()
         # Hard version pin (dual-CAN contract convention): an accidental
         # VERSION bump without the full release pass must fail loudly here.
-        self.assertEqual("1.19", version)
+        self.assertEqual("1.19.1", version)
         # VERSION accepts the project's two-part release form (1.10) and the
         # existing three-part form used by older releases.
         self.assertRegex(version, r"^\d+\.\d+(?:\.\d+)?$", f"VERSION file malformed: {version!r}")

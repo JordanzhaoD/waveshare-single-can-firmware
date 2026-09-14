@@ -8,10 +8,10 @@
 #include <stdint.h>
 
 #ifndef DASH_UI_BUILD_ID
-#define DASH_UI_BUILD_ID "1.19-waveshare_single_can_standalone-14f87c6d67db-2026-09-14T03:32:26Z"
+#define DASH_UI_BUILD_ID "1.19.1-waveshare_single_can_standalone-17a08fb3979d-2026-09-14T12:59:32Z"
 #endif
 #ifndef DASH_UI_BUILD_UTC
-#define DASH_UI_BUILD_UTC "2026-09-14T03:32:26Z"
+#define DASH_UI_BUILD_UTC "2026-09-14T12:59:32Z"
 #endif
 
 #ifndef ESP_PLATFORM

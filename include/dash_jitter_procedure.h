@@ -61,6 +61,26 @@ inline uint8_t counterOf(const uint8_t data[8])
 // guessed speed source could silently dead-switch the procedure (event 6
 // itself only occurs while driving, which is when the jerk risk exists).
 //
+// v1.19.1 field-defect amendments (2026-09-14 real-vehicle incident: with
+// FSD refused the car sat in 0x399 state 2 and the device kept re-engaging
+// EAP; a stalk cancel was overridden; only Park ended it):
+//   1. EDGE-triggered events. The production wiring feeds this machine one
+//      call per 0x399 frame (tens of Hz), but the LittleGong machine is
+//      transition-driven (its g_count gate only functions under edge
+//      semantics — proof the original consumed state CHANGES). v1.19 ran
+//      every frame through the switch, so each state-2 frame re-fired the
+//      event-2 branch: startPump() reset the 16-frame cap and the branch
+//      refreshed the 5 s deadline — an unbounded synthetic 0x42 loop. Only
+//      a state CHANGE runs the machine now.
+//   2. The event-2 re-request passes the same `cycles_ < 1` gate as event
+//      6 — one re-request per period, so a 1<->2 bounce cannot re-fire it.
+//   3. Session give-up (ours, not LittleGong's): a disengage cycle that
+//      ends WITHOUT the vehicle re-engaging (states 3/6 after our 0x42)
+//      counts as one failed cycle. After kSessionFailCap consecutive
+//      failed cycles the machine stands down for the rest of the drive
+//      session — it will not keep pushing a car that refused FSD. Park
+//      (gear signal) or a switch/gate toggle re-opens the budget.
+//
 // 0x488 abort (same lineage as our AbortGuard): while the procedure runs,
 // DAS_trackAngle = ((b0<<8|b1)&0x7FFF − 16384) × 0.1° is parsed; >45° aborts
 // the current burst, >90° resets the procedure. Our beta08 field data adds
@@ -103,6 +123,7 @@ struct DashJitterDiag
     uint32_t steerResets = 0;   // >90° full resets
     uint32_t apErrorResets = 0; // events 8/9/10 resets
     uint32_t timeoutResets = 0; // deadline expiries
+    uint8_t failedCycles = 0;   // consecutive failed cycles this drive session
 };
 
 struct DashJitterProcedure
@@ -117,6 +138,10 @@ struct DashJitterProcedure
     // 0x3EE one-shot template freshness (fail-closed: no fresh template ->
     // skip the shot; 1 Hz mux0 carrier makes ~1 s the normal age).
     static constexpr uint32_t kNative3eeMaxAgeMs = 5000;
+    // v1.19.1 session give-up: consecutive failed disengage cycles before
+    // the machine stands down for the rest of the drive session (Park or
+    // a switch/gate toggle re-opens the budget).
+    static constexpr uint8_t kSessionFailCap = 1;
 
     // ── configuration ───────────────────────────────────────────────────
     bool enabled_ = false;
@@ -127,8 +152,12 @@ struct DashJitterProcedure
     JitterPhase phase_ = JitterPhase::Inert;
     const char *reason_ = "off";
     uint8_t apState_ = 0;
+    uint8_t lastEventState_ = 0; // edge detector: last 0x399 state CHANGE seen
     uint8_t cycles_ = 0;
     uint32_t deadlineMs_ = 0;
+    bool engagedAfterRequest_ = false; // vehicle re-engaged (3/6) after our 0x42
+    uint8_t failedCycles_ = 0;         // consecutive failed cycles this session
+    bool parked_ = false;              // rising Park edge = new drive session
 
     // ── native caches ───────────────────────────────────────────────────
     uint8_t native045_[8] = {};
@@ -175,9 +204,15 @@ struct DashJitterProcedure
         // closed too; gate closed alone reports "apGateOff". Both land in
         // Inert (armed() is false either way).
         if (!enabled_)
+        {
             fullReset("off");
+            failedCycles_ = 0; // a switch toggle re-opens the session budget
+        }
         else if (!gateOpen_)
+        {
             fullReset("apGateOff");
+            failedCycles_ = 0;
+        }
         else if (phase_ == JitterPhase::Inert)
         {
             phase_ = JitterPhase::Idle;
@@ -201,8 +236,38 @@ struct DashJitterProcedure
             fullReset("permitLost");
     }
 
+    // Drive-session boundary (v1.19.1): the gear signal (P) is the physical
+    // end of a session. A rising Park edge ends any running cycle WITHOUT
+    // letting it count against the next session and re-opens the budget —
+    // order matters, the reset's accounting runs first (this is the exit
+    // path drivers actually used in the field incident).
+    void setVehicleParked(bool parked)
+    {
+        if (parked == parked_)
+            return;
+        parked_ = parked;
+        if (parked)
+        {
+            if (procedureActive())
+                fullReset("parked");
+            failedCycles_ = 0;
+        }
+    }
+
     void fullReset(const char *reason)
     {
+        // v1.19.1 session accounting: a disengage cycle that never saw the
+        // vehicle re-engage (states 3/6) after our request is one failed
+        // cycle; one that did re-engage clears the failure streak. Arming
+        // resets are neutral (no cancel was ever sent). failedCycles_
+        // itself survives every reset — only Park or a toggle clears it.
+        if (phase_ == JitterPhase::Disengaging)
+        {
+            if (engagedAfterRequest_)
+                failedCycles_ = 0;
+            else
+                ++failedCycles_;
+        }
         // Back to state0-equivalent (Idle re-enters Normal on the next
         // nonzero 0x399 event); the triggering reason always wins for diag.
         phase_ = armed() ? JitterPhase::Idle : JitterPhase::Inert;
@@ -211,6 +276,7 @@ struct DashJitterProcedure
         pumpActive_ = false;
         bit46Queued_ = false;
         deadlineMs_ = 0;
+        engagedAfterRequest_ = false;
     }
 
     // ── observations (all timestamps caller-supplied; pure module) ──────
@@ -251,6 +317,14 @@ struct DashJitterProcedure
     void observeDasStatus(uint8_t apState, uint32_t nowMs)
     {
         apState_ = apState;
+        // v1.19.1 edge semantics: the production wiring calls this once per
+        // 0x399 frame, but the machine is transition-driven. Same-state
+        // frames only update the diag value above; lastEventState_ tracks
+        // the bus regardless of arming and survives every reset — state
+        // transitions are physical facts, not machine state.
+        if (apState == lastEventState_)
+            return;
+        lastEventState_ = apState;
         if (!armed() || phase_ == JitterPhase::Inert)
             return;
         switch (phase_)
@@ -266,10 +340,21 @@ struct DashJitterProcedure
         case JitterPhase::Normal:
             if (apState == 3 && permit_)
             {
-                phase_ = JitterPhase::Arming;
-                deadlineMs_ = nowMs + kDeadlineMs;
-                bit46Queued_ = true;
-                reason_ = "arming";
+                // v1.19.1 session cap: after kSessionFailCap consecutive
+                // failed cycles the machine stands down for the rest of the
+                // drive session. Staying in Normal is fully passive — no
+                // one-shot, no cancel, no re-request.
+                if (failedCycles_ >= kSessionFailCap)
+                {
+                    reason_ = "sessionCap";
+                }
+                else
+                {
+                    phase_ = JitterPhase::Arming;
+                    deadlineMs_ = nowMs + kDeadlineMs;
+                    bit46Queued_ = true;
+                    reason_ = "arming";
+                }
             }
             break;
         case JitterPhase::Arming:
@@ -298,11 +383,25 @@ struct DashJitterProcedure
             }
             else if (apState == 2 && permit_)
             {
-                ++cycles_;
-                startPump(2, nowMs);
-                deadlineMs_ = nowMs + kDeadlineMs;
-                ++requests_;
-                reason_ = "reRequest";
+                // v1.19.1: the re-request passes the same once-per-period
+                // gate as event 6 — a 1<->2 bounce cannot re-fire the 0x42
+                // burst (v1.19 fed every state-2 frame through here).
+                if (cycles_ < 1)
+                {
+                    ++cycles_;
+                    startPump(2, nowMs);
+                    deadlineMs_ = nowMs + kDeadlineMs;
+                    ++requests_;
+                    reason_ = "reRequest";
+                }
+            }
+            else if (apState == 3 || apState == 6)
+            {
+                // v1.19.1 success evidence: AP engaged again after our
+                // re-request — the cycle did its job and does not count
+                // against the session budget.
+                engagedAfterRequest_ = true;
+                reason_ = "reEngaged";
             }
             else if (apState >= 8 && apState <= 10)
             {
@@ -422,6 +521,7 @@ struct DashJitterProcedure
         d.steerResets = steerResets_;
         d.apErrorResets = apErrorResets_;
         d.timeoutResets = timeoutResets_;
+        d.failedCycles = failedCycles_;
         return d;
     }
 };
