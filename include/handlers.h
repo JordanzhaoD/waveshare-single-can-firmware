@@ -255,13 +255,13 @@ struct CarManagerBase
     bool (*checkEvd)() = nullptr;
     FsdGateBlockReason (*gateBlockReason)() = nullptr;
     bool (*legacyFsdActivationAllowed)(uint32_t nowMs) = nullptr;
-    // v1.18 re-request mode hooks (see dash_ap_rerequest_activation.h). The
-    // observe wrapper is fed from the Legacy mux0 branch with the driver
-    // intent BEFORE any gate decision (a frame the gates swallow must still
-    // count for qualification); the inhibit wrapper is barrier A for every
-    // device 0x3EE write.
-    void (*reRequestObserve3ee)(bool intentPresent, uint8_t bus, uint32_t nowMs) = nullptr;
-    bool (*reRequestInhibit3ee)() = nullptr;
+    // v1.19 JITTER hooks (see dash_jitter_procedure.h). The observe wrapper
+    // is fed from the Legacy mux0 branch with the full native frame BEFORE
+    // any gate decision — the procedure caches its own one-shot template
+    // (byte5 |= 0x43 clone) from it; the inhibit wrapper pauses every device
+    // 0x3EE write while the procedure runs.
+    void (*jitterObserve3ee)(const uint8_t data[8], uint8_t bus, uint32_t nowMs) = nullptr;
+    bool (*jitterInhibit3ee)() = nullptr;
     // When set and returns true, an installed plugin owns the FSD activation
     // frames (1006/1021/2047) and the built-in handler must suppress its own
     // injection to avoid duplicate frames. Defaults to nullptr so the built-in
@@ -671,10 +671,13 @@ struct LegacyHandler : public CarManagerBase
         // 1080 added for UI_driverAssistAnonDebugParams visionSpeedSlider override.
         // 920 added for auto hardware detection (GTW_carConfig).
         // 880 (0x370 EPAS3P_sysStatus) added for EPAS-faithful nag engine.
-        static constexpr uint32_t ids[] = {69, 280, 297, 390, 760, 880, 920, 921, 1006, 1080, CAN_ID_OTA_STATUS};
+        // 962 (0x3C2 VCLEFT_switchStatus) + 1160 (0x488 DAS_steeringControl)
+        // admitted in v1.19: wheel-DND native-frame visibility and the
+        // JITTER 45°/90° steering abort both ride on handler admission.
+        static constexpr uint32_t ids[] = {69, 280, 297, 390, 760, 880, 920, 921, 962, 1006, 1080, 1160, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 11; }
+    uint8_t filterIdCount() const override { return 13; }
 
     void tick(uint32_t nowMs, CanDriver &driver) override
     {
@@ -940,11 +943,11 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.forceRuntime = forced;
                 legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
 
-                // v1.18 re-request mode: observe every native mux0 frame BEFORE
-                // any gate below can return, so qualification detection sees
-                // frames the gates would otherwise swallow.
-                if (reRequestObserve3ee)
-                    reRequestObserve3ee((bool)fsdTriggered, frame.bus, nowMs);
+                // v1.19 JITTER: cache every native mux0 frame BEFORE any gate
+                // below can return — the one-shot template must stay fresh
+                // even when the gates swallow the frame.
+                if (jitterObserve3ee)
+                    jitterObserve3ee(frame.data, frame.bus, nowMs);
 
                 const bool speedOffsetRequested = legacySpeedOffsetRequested();
                 if (!(bool)fsdTriggered && !speedOffsetRequested)
@@ -965,16 +968,16 @@ struct LegacyHandler : public CarManagerBase
                                                : DashAbortGuardBlockPath::LegacyFsdMux0);
                     return;
                 }
-                // Barrier A: while a re-request handshake round runs, ALL device
-                // 0x3EE mux0 writes stop — activation bit46 AND the shared
-                // speed-offset frame. The vehicle's own frame passes untouched.
-                if (reRequestInhibit3ee && reRequestInhibit3ee())
+                // v1.19 JITTER pause (replaces the v1.18 barrier A): while the
+                // procedure runs, ALL device 0x3EE mux0 writes stop — the
+                // one-shot owns bit46. The vehicle's own frame passes untouched.
+                if (jitterInhibit3ee && jitterInhibit3ee())
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
-                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ReRequestHandshake;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::LegacyFsdSettle;
                     if (speedOffsetRequested)
-                        legacySpeedDiag.blockedReason = "apReRequestHandshake";
+                        legacySpeedDiag.blockedReason = "jitterProcedure";
                     return;
                 }
                 bool activationAllowed = false;
@@ -1102,12 +1105,12 @@ struct LegacyHandler : public CarManagerBase
                     abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux1);
                     return;
                 }
-                // Barrier A covers mux1 device writes too (see the mux0 branch).
-                if (reRequestInhibit3ee && reRequestInhibit3ee())
+                // The JITTER pause covers mux1 device writes too (see the mux0 branch).
+                if (jitterInhibit3ee && jitterInhibit3ee())
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
-                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ReRequestHandshake;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::LegacyFsdSettle;
                     return;
                 }
                 if (!injectionAllowed())
@@ -1164,10 +1167,11 @@ struct HW3Handler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
-        static constexpr uint32_t ids[] = {280, 297, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
+        // 962/1160 admitted in v1.19 (see the Legacy handler note).
+        static constexpr uint32_t ids[] = {280, 297, 390, 880, 920, 921, 923, 962, 1016, 1021, 1160, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 11; }
+    uint8_t filterIdCount() const override { return 13; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -1824,10 +1828,11 @@ struct HW4Handler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
-        static constexpr uint32_t ids[] = {280, 297, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
+        // 962/1160 admitted in v1.19 (see the Legacy handler note).
+        static constexpr uint32_t ids[] = {280, 297, 390, 880, 920, 921, 923, 962, 1016, 1021, 1160, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 11; }
+    uint8_t filterIdCount() const override { return 13; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {

@@ -770,7 +770,8 @@ void test_legacy_ignores_unrelated_can_id()
 
 void test_legacy_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(11, handler.filterIdCount());
+    // 13 since v1.19: 962 (0x3C2 VCLEFT wheel) + 1160 (0x488 DAS steering) admitted.
+    TEST_ASSERT_EQUAL_UINT8(13, handler.filterIdCount());
 }
 
 void test_legacy_filter_ids_values()
@@ -784,9 +785,11 @@ void test_legacy_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(880, ids[5]);
     TEST_ASSERT_EQUAL_UINT32(920, ids[6]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[7]);
-    TEST_ASSERT_EQUAL_UINT32(1006, ids[8]);
-    TEST_ASSERT_EQUAL_UINT32(1080, ids[9]);
-    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[10]);
+    TEST_ASSERT_EQUAL_UINT32(962, ids[8]); // 0x3C2 wheel DND visibility (v1.19)
+    TEST_ASSERT_EQUAL_UINT32(1006, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(1080, ids[10]);
+    TEST_ASSERT_EQUAL_UINT32(1160, ids[11]); // 0x488 JITTER steer abort (v1.19)
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[12]);
 }
 
 void test_legacy_health_no_source_when_mux0_stale()

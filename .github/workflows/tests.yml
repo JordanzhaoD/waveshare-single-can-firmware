@@ -73,6 +73,7 @@ jobs:
           - native_reactive_nag
           - native_epas_late_echo
           - native_wheel_dnd
+          - native_jitter
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6

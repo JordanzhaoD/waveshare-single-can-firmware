@@ -307,7 +307,8 @@ void test_hw3_fsdTriggered_set_on_mux0()
 
 void test_hw3_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(11, handler.filterIdCount());
+    // 13 since v1.19: 962 (0x3C2 VCLEFT wheel) + 1160 (0x488 DAS steering) admitted.
+    TEST_ASSERT_EQUAL_UINT8(13, handler.filterIdCount());
 }
 
 void test_hw3_filter_ids_values()
@@ -320,10 +321,12 @@ void test_hw3_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(920, ids[4]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[5]);
     TEST_ASSERT_EQUAL_UINT32(923, ids[6]);
-    TEST_ASSERT_EQUAL_UINT32(1016, ids[7]);
-    TEST_ASSERT_EQUAL_UINT32(1021, ids[8]);
-    TEST_ASSERT_EQUAL_UINT32(2047, ids[9]);
-    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[10]);
+    TEST_ASSERT_EQUAL_UINT32(962, ids[7]); // 0x3C2 wheel DND visibility (v1.19)
+    TEST_ASSERT_EQUAL_UINT32(1016, ids[8]);
+    TEST_ASSERT_EQUAL_UINT32(1021, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(1160, ids[10]); // 0x488 JITTER steer abort (v1.19)
+    TEST_ASSERT_EQUAL_UINT32(2047, ids[11]);
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[12]);
 }
 
 // --- Ban Shield ---

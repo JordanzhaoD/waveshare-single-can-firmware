@@ -66,8 +66,8 @@ class SimState:
         self.dnd_volume = True
         self.dnd_speed = True
         self.ap_eap_compatible = False
-        # 8.3.6 anti-jerk coordinator switch (v1.18; default off like NVS).
-        self.ap_re_request = False
+        # 8.3.6 JITTER procedure switch (v1.19; default off like NVS jtr_on).
+        self.jitter = False
         self.legacy_fsd_policy = "legacy_stable"
         self.legacy_fsd_mux1 = False
         self.legacy_fsd_profile = False
@@ -165,52 +165,32 @@ class SimState:
             "reason": "simulator",
         }
 
-    def ap_re_request_status(self) -> dict[str, Any]:
-        """Mirrors the firmware's top-level /status apReRequest object (v1.18).
+    def jitter_status(self) -> dict[str, Any]:
+        """Mirrors the firmware's top-level /status jitter object (v1.19).
 
-        Static standby shape: switch as persisted, coordinator inert in
-        WaitDriverIntent. windowMs mirrors the compiled profile (2400 ms).
+        Static standby shape: switch as persisted, procedure inert (gate
+        closed in the simulator default). Field set matches
+        appendJitterDiagJson in mcp2515_dashboard.h.
         """
         return {
-            "requested": self.ap_re_request,
+            "requested": self.jitter,
             "effective": False,
-            "profileReady": True,
             "apGateOpen": False,
-            "unavailableReason": "apGateOff",
             "permit": True,
-            "phase": "waitDriverIntent",
-            "step": "idle",
-            "reason": "waitIntent",
-            "lastAction": "none",
-            "lastEndedReason": "none",
-            "autoRearms": 0,
-            "round": 0,
-            "epoch": 1,
-            "apState": 1,
-            "exitSeen": False,
-            "intentPresent": False,
-            "roundStartMs": 0,
-            "evidenceMs": 0,
-            "requestMs": 0,
-            "windowMs": 2400,
-            "cancelAttempts": 0,
-            "cancelAccepted": 0,
-            "requestAttempts": 0,
-            "requestAccepted": 0,
-            "templateSeen": False,
-            "lastTxCounter": 0,
-            "ownEchoRx": 0,
-            "otherBusObs": 0,
-            "physicalInputRx": 0,
-            "counterConflicts": 0,
-            "native3eeRx": 0,
-            "vehicleRefusal": False,
-            "rwdPressPending": False,
-            "vehicleRefusals": 0,
-            "rwdPressMs": 0,
-            "lastApFlag": 0,
-            "lastApFlagMs": 0,
-            "apFlagCounts": [0] * 16,
+            "phase": "inert",
+            "reason": "apGateOff" if self.jitter else "off",
+            "apState": 0,
+            "cycles": 0,
+            "cancels": 0,
+            "requests": 0,
+            "bit46Shots": 0,
+            "pumpFrames": 0,
+            "txOk": 0,
+            "txFail": 0,
+            "steerAborts": 0,
+            "steerResets": 0,
+            "apErrorResets": 0,
+            "timeoutResets": 0,
         }
 
     def status(self) -> dict[str, Any]:
@@ -244,7 +224,7 @@ class SimState:
             "hw3SlewCount": self.hw3_slew_count,
             "ledB": self.led_brightness,
             "can": self.can,
-            "apReRequest": self.ap_re_request_status(),
+            "jitter": self.jitter_status(),
             "ci": self.injection,
             "rx": self.rx,
             "tx": self.tx,
@@ -520,7 +500,7 @@ class Handler(BaseHTTPRequestHandler):
                     "dnd_volume": STATE.dnd_volume,
                     "dnd_speed": STATE.dnd_speed,
                     "ap_eap_compatible": STATE.ap_eap_compatible,
-                    "ap_re_request": STATE.ap_re_request,
+                    "jitter": STATE.jitter,
                 }
             )
         elif path == "/fog_light":
@@ -841,8 +821,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.dnd_speed = self.form_bool(form["dnd_speed"])
             if "ap_eap_compatible" in form:
                 STATE.ap_eap_compatible = self.form_bool(form["ap_eap_compatible"])
-            if "ap_re_request" in form:
-                STATE.ap_re_request = self.form_bool(form["ap_re_request"])
+            if "jitter" in form:
+                STATE.jitter = self.form_bool(form["jitter"])
             self.send_obj({"ok": True})
         elif path == "/fog_light":
             if "fogStrategy" in form:

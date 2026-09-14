@@ -22,6 +22,7 @@ SIMULATOR = ROOT / "scripts" / "webui_simulator.py"
 DASH_CONFIG_UPDATE = ROOT / "include" / "dash_config_update.h"
 ESPIDF_RUNTIME_H = ROOT / "include" / "platform" / "espidf_runtime.h"
 ESPIDF_RUNTIME_CPP = ROOT / "src" / "espidf_runtime.cpp"
+FSD_DIAG = ROOT / "include" / "dash_fsd_diag.h"
 
 
 class DashboardApiContractTests(unittest.TestCase):
@@ -1728,7 +1729,8 @@ class DashboardApiContractTests(unittest.TestCase):
             "syncLegacyOffsetInputs('legacy-offset-inp')",
             "legacyOffset:clampNum('legacy-offset-inp',0,0,33)",
             # v1.18: minimal_inject left the strip; ap_re_request joined it.
-            "d.abort_guard||d.ap_re_request||d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed",
+            # v1.19: ap_re_request renamed jitter with the coordinator→JITTER swap.
+            "d.abort_guard||d.jitter||d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
@@ -2666,132 +2668,120 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('"/gear_assist_status"', self.simulator)
         self.assertIn('gear_assist_status', self.simulator)
 
-    def test_ap_re_request_switch_is_wired_fail_closed(self) -> None:
-        """The v1.18 8.3.6 coordinator toggle must persist, apply, and diagnose end to end.
+    def test_ap_rerequest_family_removed_in_v119(self) -> None:
+        """v1.19 deletes the v1.18 8.3.6 coordinator family end to end (Route B:
+        replaced by the LittleGong-aligned dash_jitter_procedure.h).
 
-        Ported from the dual-CAN 4.5.0-beta09 contract; the only adaptation is
-        the single-CAN bus binding (sourceBus = CAN_BUS_ANY — the one TWAI bus;
-        the dual-CAN pin was CAN_BUS_VEH) and the tick call site name
-        (appApReRequestTick; dual was t2canApReRequestTick).
+        Removed with it: dash_ap_rerequest_activation.h (1079 lines), its 60
+        native tests, the AP-REREQUEST validation doc, the barrier-A gates,
+        the coordinator's sole-authority branch, the auto-rearm taxonomy, the
+        vehicle-refusal watch, the flag histogram, and every wiring point
+        (NVS apr_on, /defense_config ap_re_request, backup/restore apReRequest,
+        rrPhaseMap, appApReRequestTick). Abort Guard SURVIVES on purpose —
+        the JITTER procedure's permit cascade still runs through it.
+
+        Tombstone comments NAME the removed symbols in several files, so
+        assert against comment-stripped code surfaces (v1.18 precedent).
         """
-        # NVS persistence: short key, default off, saved and loaded.
-        self.assertIn('prefs.putBool("apr_on", dashApReRequestEnabled)', self.dash)
-        self.assertIn('prefs.getBool("apr_on", false)', self.dash)
-        # /defense_config GET flat key + POST parsing + runtime reconfigure.
-        self.assertIn('j += ",\\"ap_re_request\\":"', self.dash)
-        self.assertIn('server.hasArg("ap_re_request")', self.dash)
-        self.assertIn(
-            "dashApReRequestCtrl.configure(dashApReRequestEnabled,", self.dash
+        dash_code = "\n".join(
+            line.split("//", 1)[0] for line in self.dash.splitlines()
         )
-        # The compiled profile is the activation authority and carries the
-        # 2026-09-10/11/12 dual-CAN real-vehicle 0x045 calibration. Pin the
-        # calibrated constants: an accidental revert to the empty profile would
-        # silently break the switch again, and an inconsistent edit would fail
-        # apReRequestProfileError() validation.
-        module_src = (ROOT / "include" / "dash_ap_rerequest_activation.h").read_text(
+        handlers_code = "\n".join(
+            line.split("//", 1)[0] for line in self.handlers.splitlines()
+        )
+        # The module header and its native suite are gone from the tree.
+        self.assertFalse((ROOT / "include" / "dash_ap_rerequest_activation.h").exists())
+        self.assertFalse((ROOT / "test" / "test_native_ap_rerequest").exists())
+        self.assertFalse(
+            (ROOT / "docs" / "AP-REREQUEST-VEHICLE-VALIDATION-PROCEDURE.md").exists()
+        )
+        # Live-code symbols must be gone (dash, handlers, main). main.cpp keeps
+        # a tombstone comment naming appApReRequestTick above its JITTER
+        # replacement, so assert against the comment-stripped surface there
+        # too (same convention as dash/handlers).
+        main_code = "\n".join(
+            line.split("//", 1)[0] for line in self.main.splitlines()
+        )
+        for token in ("dashApReRequestCtrl", "dashApReRequestEnabled",
+                      "apReRequestProfileError", "appendApReRequestDiagJson",
+                      "reRequestObserve3ee", "reRequestInhibit3ee",
+                      "apReRequestHandshake", "appApReRequestTick"):
+            with self.subTest(removed_symbol=token):
+                self.assertNotIn(token, dash_code)
+                self.assertNotIn(token, handlers_code)
+                self.assertNotIn(token, main_code)
+        # POST param / NVS key / JSON keys must stay dead (comment-stripped).
+        for key in ("ap_re_request",):
+            with self.subTest(removed_post_param=key):
+                self.assertNotIn(f'server.hasArg("{key}")', dash_code)
+        for key in ("apReRequest", "apr_on", "ap_re_request"):
+            with self.subTest(removed_json_key=key):
+                self.assertNotIn(f'\\"{key}\\"', dash_code)
+        self.assertNotIn('prefs.putBool("apr_on"', dash_code)
+        self.assertNotIn('p.getBool("apr_on"', dash_code)
+        # The stale-key migration line SURVIVES on purpose (like ap_dly).
+        self.assertIn('prefs.remove("apr_on")', dash_code)
+        # Enum tombstone keeps value 9 named but the case switch is gone.
+        fsd_diag = FSD_DIAG.read_text(encoding="utf-8")
+        self.assertNotIn("case FsdGateBlockReason::ReRequestHandshake:", fsd_diag)
+        # UI: coordinator card, map, and save param gone (strip both comment
+        # forms — HTML and JS tombstones).
+        ui_stripped = re.sub(r"<!--.*?-->", "", self.ui, flags=re.S)
+        ui_stripped = "\n".join(
+            line.split("//", 1)[0] for line in ui_stripped.splitlines()
+        )
+        for token in ("ap-rerequest-card", "def-ap-rerequest-tgl", "rrPhaseMap",
+                      "ap-rr-effective", "ap_re_request:"):
+            with self.subTest(removed_ui_control=token):
+                self.assertNotIn(token, ui_stripped)
+        # Simulator mirrors the swap.
+        sim_code = "\n".join(
+            line.split("#", 1)[0] for line in self.simulator.splitlines()
+        )
+        for token in ("ap_re_request", "apReRequest"):
+            with self.subTest(removed_simulator_token=token):
+                self.assertNotIn(token, sim_code)
+        # Abort Guard survives the family deletion on purpose.
+        self.assertIn('server.hasArg("abort_guard")', dash_code)
+        self.assertIn('#include "dash_abort_guard.h"', self.handlers)
+
+    def test_jitter_procedure_is_wired_fail_closed(self) -> None:
+        """The v1.19 JITTER 8.3.6 procedure (LittleGong-aligned) is wired end
+        to end: switch persists and applies fail-closed, the pump/one-shot
+        emit from the CAN task, the base bit46 path pauses only while a
+        procedure runs, 0x488 steering abort is admitted, and the diag JSON
+        follows the chain rule (source + generated UI + simulator surfaces).
+        """
+        module_src = (ROOT / "include" / "dash_jitter_procedure.h").read_text(
             encoding="utf-8"
         )
-        self.assertIn("2026-09-10", module_src)
-        self.assertIn("p.sourceBus = CAN_BUS_ANY;", module_src)
-        self.assertIn("p.stalkByte = 0;", module_src)
-        self.assertIn("p.stalkMask = 0x03;", module_src)
-        self.assertIn("p.stalkFwdValue = 1;", module_src)
-        self.assertIn("p.stalkRwdValue = 2;", module_src)
-        # qualificationWindowMs widened 1200 -> 2400 ms after the beta05 Tier 1
-        # CSVs (dual-CAN form; single-CAN inherits the calibration).
-        self.assertIn("p.qualificationWindowMs = 2400;", module_src)
-        self.assertIn("p.postQualApMask = 0x007C;", module_src)
-        self.assertIn("p.cancelEvidenceApMask = 0x0006;", module_src)
-        self.assertIn("p.cancelFaultApMask = 0x0300;", module_src)
-        # The request press waits for the available set (state 2; ~940 ms
-        # observed recovery after the cancel) instead of firing right after
-        # the cancel release.
-        self.assertIn("p.requestApMask = 0x0004;", module_src)
-        self.assertIn("p.availableWaitTimeoutMs = 3000;", module_src)
-        self.assertIn('"waitAvailable"', module_src)
-        self.assertIn('"availableWaitTimeout"', module_src)
-        self.assertIn('"apActiveDuringWait"', module_src)
-        # Rolling-counter anchor is a TIME-recency rule: anchor own last TX
-        # only when it is newer than the last native template refresh;
-        # otherwise always template+1 (a ring comparison lets a stale lastTx
-        # from the previous round hijack the anchor -> counterConflict lock).
-        # The ring must not come back.
+        # LittleGong disassembly constants (do not drift).
+        for token in (
+            "static constexpr uint32_t kDeadlineMs = 5000;",
+            "static constexpr uint32_t kCarrierLockMs = 47;",
+            "static constexpr uint32_t kPumpGapMs = 3;",
+            "static constexpr uint8_t kPumpMaxFrames = 16;",
+            "static constexpr float kSteerAbortDeg = 45.0f;",
+            "static constexpr float kSteerResetDeg = 90.0f;",
+        ):
+            with self.subTest(constant=token):
+                self.assertIn(token, module_src)
+        # NVS persistence: short key, default off, saved and loaded, plus the
+        # v1.18 key cleanup.
+        self.assertIn('prefs.putBool("jtr_on", dashJitterEnabled)', self.dash)
+        self.assertIn('prefs.getBool("jtr_on", false)', self.dash)
+        self.assertIn('prefs.remove("apr_on")', self.dash)
+        # /defense_config GET flat key + POST parsing + runtime reconfigure.
+        self.assertIn('j += ",\\"jitter\\":"', self.dash)
+        self.assertIn('server.hasArg("jitter")', self.dash)
         self.assertIn(
-            "static_cast<uint32_t>(state_.lastTxMs - state_.templateMs) <",
-            module_src,
+            "dashJitterCtrl.configure(dashJitterEnabled,", self.dash
         )
-        self.assertIn("state_.lastTxMs = now;", module_src)
-        self.assertIn("state_.lastTxValid = true;", module_src)
-        self.assertNotIn("ringAhead", module_src)
-        # The AP injection gate is the coordinator's arm-level precondition.
-        # Pin the wiring end to end.
-        self.assertIn("bool apGateOpen = true", module_src)  # default keeps tests unchanged
-        active_fn = re.search(r"bool active\(\) const\s*\{.*?^    \}", module_src, re.S | re.M)
-        self.assertIsNotNone(active_fn)
-        self.assertIn("state_.apGateOpen", active_fn.group(0))
-        # The single production call site passes the live gate explicitly
-        # (never relies on the default-true).
-        self.assertIn(
-            "dashApReRequestCtrl.configure(dashApReRequestEnabled,\n"
-            "                                      compiledApReRequestProfile(),\n"
-            "                                      apInjectionGate);",
-            self.dash,
-        )
-        # Gate-closed mode reason + diagnostics JSON keys.
-        self.assertIn('"apGateOff"', module_src)
-        self.assertIn('R"JSON(,"unavailableReason":"apGateOff")JSON"', self.dash)
-        self.assertIn('R"JSON(,"apGateOpen":)JSON"', self.dash)
-        self.assertIn("(rr.enabled && rr.profileReady && rr.apGateOpen)", self.dash)
-        # Diagnostics are shared by /status and /defense_config.
-        self.assertIn('"apReRequest":{"requested"', self.dash)
-        self.assertIn("unavailableReason", self.dash)
-        # UI: toggle + diagnostics in both the source and generated headers.
-        # rrPhaseMap localizes every coordinator reason for field triage.
-        for surface in (self.ui, self.ui_gen):
-            self.assertIn("ap_re_request", surface)
-            self.assertIn("apReRequest", surface)
-            self.assertIn("def-ap-rerequest-tgl", surface)
-            self.assertIn("rrPhaseMap", surface)
-            self.assertIn("等待车辆可用", surface)
-            self.assertIn("等待可用超时", surface)
-            self.assertIn("AP 自恢复", surface)
-        # Real send path: the coordinator tick must run on the CAN task.
-        self.assertIn("appApReRequestTick();", self.main)
-
-    def test_ap_re_request_requires_ap_gate_and_ui_order(self) -> None:
-        """Gate precondition, defense-page card order, and the sole-authority
-        branch ordering that keeps a closed gate on the legal legacy direct
-        path.
-
-        Adapted from the dual-CAN test: on single-CAN the AP gate toggle
-        (ap-gate-tgl) lives on the 驾驶舱 AP 注入安全 card, NOT the defense
-        page — so the defense-page ordering pin is master -> Abort Guard card
-        -> 8.3.6 coordinator card (Abort Guard is kept as the 0x399 state 8/9
-        latch safety guard the coordinator's injection path goes through).
-        """
-        # (a) Defense page order: master -> Abort Guard -> 8.3.6 coordinator,
-        # with the coordinator's diag grid directly after its toggle and
-        # before the 保护参数 (bionic) card.
-        defense_page = re.search(r'id="pg-defense".*?id="pg-ota"', self.ui, re.S)
-        self.assertIsNotNone(defense_page)
-        body = defense_page.group(0)
-        master = body.index('id="def-master-tgl"')
-        guard = body.index('id="abort-guard-card"')
-        rerequest = body.index('id="ap-rerequest-card"')
-        self.assertLess(master, guard, "defense master toggle must sit above Abort Guard")
-        self.assertLess(guard, rerequest, "Abort Guard card must sit above the 8.3.6 coordinator")
-        # Coordinator diag grid before the following 保护参数 card.
-        self.assertLess(body.index('id="ap-rr-effective"'), body.index('id="def-rate"'))
-        # (b) The precondition copy points at the cockpit gate page (single-CAN
-        # gate location) + localized gate-off reason, in both the source and
-        # generated UI.
-        for surface in (self.ui, self.ui_gen):
-            self.assertIn("需先开启「AP 注入门控」（驾驶舱 AP 注入安全页）", surface)
-            self.assertIn("AP 门控未开启", surface)
-        # (c) Sole-authority ordering: the coordinator's active() check must
-        # come BEFORE the gate-off early-true, so a closed gate falls through
-        # to the legacy direct path (legal normal mode) only when the
-        # coordinator is inert.
+        # The single production configure() call passes the live gate.
+        self.assertIn("apInjectionGate);", self.dash)
+        # Base-path pause ordering: the JITTER head check sits BEFORE the
+        # gate-off early-true, so a closed gate with a running procedure
+        # still pauses (fail-closed ordering, v1.18 sole-authority lineage).
         fn = re.search(
             r"static bool dashLegacyFsdActivationAllowed\(uint32_t nowMs\)\s*\{.*?^\}",
             self.dash,
@@ -2800,83 +2790,71 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(fn)
         fn_body = fn.group(0)
         self.assertLess(
-            fn_body.index("dashApReRequestCtrl.active()"),
+            fn_body.index("dashJitterCtrl.procedureActive()"),
             fn_body.index("if (!apInjectionGate)"),
         )
-
-    def test_ap_re_request_beta06_auto_rearm_configure_preserve_and_diag(self) -> None:
-        """Vehicle-side locks auto re-arm (capped), configure() preserves an
-        ActiveInjection round, and the end-reason survives."""
-        module_src = (ROOT / "include" / "dash_ap_rerequest_activation.h").read_text(
-            encoding="utf-8"
-        )
-        # Vehicle-side re-arm set: exactly these four reasons (hardware-class
-        # reasons must keep locking — the fail-closed answer).
-        self.assertIn("static bool vehicleSideRearmReason(const char *r)", module_src)
-        for reason in ("windowExpired", "apExitedDuringWindow", "apActiveDuringWait", "apFaultState"):
-            self.assertIn(f'strcmp(r, "{reason}") == 0', module_src)
-        # Cap: 3 consecutive vehicle-side locks without a completed round
-        # between them degrade to a real FailedLocked.
-        self.assertIn("kVehicleAutoRearmMax = 3", module_src)
-        self.assertIn("state_.consecutiveVehicleLocks < kVehicleAutoRearmMax", module_src)
-        self.assertIn('"autoRearmLimit"', module_src)
-        self.assertIn("state_.consecutiveVehicleLocks = 0;", module_src)  # completeRound resets
-        # A re-arm is the Complete fence: WaitDriverIntent with exitSeen
-        # cleared, never a round while the car is still in a weird state.
-        self.assertIn("state_.exitSeen = false;", module_src)
-        # configure() preservation: ONLY an identical (enabled, gate,
-        # byte-identical valid profile) re-apply during ActiveInjection keeps
-        # the round; every real mode change takes the full reset. This is the
-        # fix for mid-injection /config POSTs killing the bit46 chain.
+        # Handler hooks: fresh-template observe before any gate + the mux0/mux1
+        # pause via the renamed inhibit callback.
         self.assertIn(
-            "state_.phase == Phase::ActiveInjection &&\n"
-            "            state_.enabled && state_.profileReady && state_.apGateOpen &&",
-            module_src,
+            "void (*jitterObserve3ee)(const uint8_t data[8], uint8_t bus, uint32_t nowMs)",
+            self.handlers,
         )
-        self.assertIn("memcmp(&state_.profile, &profile, sizeof(profile)) == 0", module_src)
-        # Barrier B: each round starts with a FRESH cancel-evidence latch (a
-        # stale latch + a pre-evidence active state used to fire a false
-        # apActiveDuringWait lock in round 2+).
-        self.assertIn("state_.cancelEvidenceSeen = false;", module_src)
-        # lastEndedReason survives re-arms and state changes; cleared only by
-        # configure(). This is the field answer to "record the reason before
-        # touching any switch" from the beta05 Tier 1 lesson.
-        self.assertIn("state_.lastEndedReason = reason;", module_src)
-        self.assertIn('const char *lastEndedReason = "none";', module_src)
-        # Dashboard JSON + simulator mirror.
-        self.assertIn(',"lastEndedReason":"', self.dash)
-        self.assertIn(',"autoRearms":', self.dash)
-        self.assertIn('"lastEndedReason": "none"', self.simulator)
-        self.assertIn('"autoRearms": 0', self.simulator)
-        self.assertIn('"windowMs": 2400', self.simulator)
-        # UI: two new diag cells + localized new reasons (source + generated;
-        # bare id tokens because the minifier strips attribute quotes).
-        self.assertIn('id="ap-rr-lastend"', self.ui)
-        self.assertIn('id="ap-rr-rearm"', self.ui)
+        self.assertIn("jitterObserve3ee(frame.data, frame.bus, nowMs);", self.handlers)
+        self.assertIn("bool (*jitterInhibit3ee)() = nullptr;", self.handlers)
+        self.assertIn("if (jitterInhibit3ee && jitterInhibit3ee())", self.handlers)
+        # 0x488 + 0x3C2 admission in all three handler filter tables (13 ids).
+        for count_pin in ("return 13;",):
+            self.assertEqual(self.handlers.count(count_pin), 3)
+        self.assertIn("962, 1006, 1080, 1160", self.handlers)
+        self.assertIn("923, 962, 1016, 1021, 1160", self.handlers)
+        # TX path: tick on the CAN task emits 0x045 / 0x3EE frames with
+        # recorder evidence and result accounting.
+        self.assertIn("appJitterTick();", self.main)
+        self.assertIn("f.id = action == JitterAction::Stalk045 ? 0x045 : 0x3EE;", self.main)
+        self.assertIn("dashJitterCtrl.recordTxResult(ok);", self.main)
+        # Permit cascade (abort guard still in it; OTA guard still in it).
+        self.assertIn("dashJitterCtrl.setPermit(permit);", self.main)
+        # Diag JSON follows the chain rule: string values close with `","key":`,
+        # numeric/bool with bare `,"key":`. Both ways pinned.
+        self.assertIn('"jitter":{"requested"', self.dash)
+        for bare in (
+            ',"effective":', ',"apGateOpen":', ',"permit":', ',"apState":',
+            ',"cycles":', ',"cancels":', ',"requests":', ',"bit46Shots":',
+            ',"pumpFrames":', ',"txOk":', ',"txFail":', ',"steerAborts":',
+            ',"steerResets":', ',"apErrorResets":', ',"timeoutResets":',
+            'R"JSON(})JSON"',
+        ):
+            with self.subTest(chain_bare=bare):
+                self.assertIn(bare, self.dash)
+        for stray in (
+            '","effective":', '","apGateOpen":', '","permit":', '","cycles":',
+            '","cancels":', '","requests":', '","pumpFrames":', '","txOk":',
+            '","txFail":', '","steerAborts":', '","timeoutResets":',
+        ):
+            with self.subTest(chain_stray=stray):
+                self.assertNotIn(stray, self.dash)
+        # UI: minimal card + render + save in both the source and generated
+        # headers (bare id tokens — the minifier strips attribute quotes).
         for surface in (self.ui, self.ui_gen):
-            self.assertIn("ap-rr-lastend", surface)
-            self.assertIn("ap-rr-rearm", surface)
-            self.assertIn("上次结束原因", surface)
-            self.assertIn("自动重武装", surface)
-            self.assertIn("已自动重武装", surface)
-            self.assertIn("autoRearmLimit", surface)
-            self.assertIn("2.4s", surface)
-
-    def test_status_json_auto_rearms_emission_is_valid(self) -> None:
-        """beta07 lesson (dual-CAN): beta06 shipped `","round":` after the
-        NUMERIC autoRearms append — one stray quote made /status and
-        /defense_config unparseable device-wide. Boundary pins both ways:
-        string-close form only after the string lastEndedReason, bare form
-        after the numeric autoRearms."""
-        # Correct chain: string value -> `","autoRearms":` (closes the string),
-        # numeric value -> bare `,"round":` (no leading quote).
-        self.assertIn('j += R"JSON(","autoRearms":)JSON";', self.dash)
-        self.assertIn("j += rr.autoRearms;", self.dash)
-        self.assertIn('j += R"JSON(,"round":)JSON";', self.dash)
-        # The beta06 stray-quote form must stay dead. (Substring asserts like
-        # `,"autoRearms":` pass either way — `","autoRearms":` contains them —
-        # which is exactly how this shipped green in beta06.)
-        self.assertNotIn('R"JSON(","round":)JSON"', self.dash)
+            self.assertIn("jitter-card", surface)
+            self.assertIn("def-jitter-tgl", surface)
+            self.assertIn("jitter-effective", surface)
+            self.assertIn("jitter-phase", surface)
+            self.assertIn("jtReasonMap", surface)
+            self.assertIn("AP 门控未开启", surface)
+            self.assertIn("jitter:jtTgl&&jtTgl.checked?'1':'0'", surface)
+        self.assertIn('id="def-jitter-tgl"', self.ui)
+        # Simulator mirrors the firmware /status shape (beta07 lesson).
+        for token in (
+            '"jitter": self.jitter_status(),',
+            '"requested": self.jitter,',
+            '"phase": "inert",',
+            '"reason": "apGateOff" if self.jitter else "off",',
+            '"jitter": STATE.jitter,',
+            'STATE.jitter = self.form_bool(form["jitter"])',
+        ):
+            with self.subTest(simulator=token):
+                self.assertIn(token, self.simulator)
 
     def test_ap_settle_delay_chain_removed_in_v118(self) -> None:
         """v1.18: the AP-settle delay (0-3 s 延迟注入) is gone end to end — UI
@@ -2922,125 +2900,12 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn("apDelayMs", sim_code)
         self.assertNotIn("ap_delay_ms", sim_code)
 
-    def test_beta09_vehicle_refusal_watch_and_flag_tally(self) -> None:
-        """beta09 P1/P2, both purely observational (no gate, timeout, or
-        injection semantics touched — 8.3.6 anti-jerk behavior is unchanged).
-
-        P1 roots in the 162535 Tier 1 CSV: one native RWD press the car
-        silently ignored (flag1 up in 6 ms, no state-3..6 edge for 6 s). The
-        coordinator correctly stayed idle, but the driver had no way to tell
-        a declined car from a broken box. P1 watches WaitDriverIntent RWD
-        press edges and latches "vehicle refused" when no activation edge
-        follows within kVehicleRefusalMs.
-        P2 tallies the unknown-semantics high nibble of 0x399 byte0 into a
-        16-bin histogram so future CSVs can decode it.
-        """
-        module_src = (ROOT / "include" / "dash_ap_rerequest_activation.h").read_text(
-            encoding="utf-8"
-        )
-        # P1 window constant + the tick ORDER pin: the refusal check must run
-        # BEFORE the roundActive early return, or WaitDriverIntent (not
-        # roundActive) would never reach it and the watch would never fire.
-        self.assertIn("static constexpr uint32_t kVehicleRefusalMs = 2500;", module_src)
-        tick_fn = module_src.split("void tick(uint32_t now)", 1)[1][:1400]
-        refusal_idx = tick_fn.find("state_.rwdPressPending")
-        early_return_idx = tick_fn.find("if (!roundActive(state_.phase)) return;")
-        self.assertGreater(refusal_idx, -1, "tick() must evaluate the refusal watch")
-        self.assertLess(
-            refusal_idx, early_return_idx,
-            "refusal watch must precede the roundActive early return",
-        )
-        # Press-edge detection only in WaitDriverIntent, only for RWD, only on
-        # a value change (held 10Hz rollover frames are one press).
-        self.assertIn(
-            "state_.phase == Phase::WaitDriverIntent &&\n"
-            "                stalk == state_.profile.stalkRwdValue &&\n"
-            "                state_.prevNativeStalk != stalk",
-            module_src,
-        )
-        # The activation edge clears both pending and refusal, BEFORE
-        # startRound — an accepted press must never read as refused even when
-        # device-side gating (exitSeen/intent/permit) stops the round.
-        edge_block = module_src.split("if (active && !state_.prevApActive)", 1)[1][:600]
-        self.assertIn("state_.rwdPressPending = false;", edge_block)
-        self.assertIn("state_.vehicleRefusal = false;", edge_block)
-        self.assertLess(
-            edge_block.find("state_.rwdPressPending = false;"),
-            edge_block.find("startRound(now)"),
-        )
-        # P2: default param keeps legacy 3-arg test calls compiling; the
-        # tally runs after the bus filter for every phase (Disabled included).
-        self.assertIn(
-            "void observeDasStatus(uint8_t apState, uint8_t bus, uint32_t now,\n"
-            "                          uint8_t dasFlags = 0)",
-            module_src,
-        )
-        obs = module_src.split("++state_.otherBusObs;\n            return;\n        }", 1)[
-            1
-        ][:700]
-        self.assertIn("++state_.apFlagCounts[dasFlags & 0x0F];", obs)
-        # diag() exports the new fields.
-        for token in (
-            "d.vehicleRefusal = state_.vehicleRefusal;",
-            "d.rwdPressMs = state_.rwdPressMs;",
-            "d.lastApFlag = state_.lastApFlag;",
-            "memcpy(d.apFlagCounts, state_.apFlagCounts, sizeof(d.apFlagCounts));",
-        ):
-            self.assertIn(token, module_src)
-
-        # Dashboard call site forwards the nibble the old code masked away.
-        self.assertIn(
-            "const uint8_t dasFlags = static_cast<uint8_t>(f.data[0] >> 4);", self.dash
-        )
-        self.assertIn(
-            "static_cast<uint32_t>(now), dasFlags);", self.dash
-        )
-
-        # JSON chain: every new field is bool/numeric (or an array), so all
-        # literals must be the BARE `,"key":` form — a `","key":` after any of
-        # them is the beta06 stray-quote class of bug. Pin both ways.
-        for token in (
-            ',"vehicleRefusal":', ',"rwdPressPending":', ',"vehicleRefusals":',
-            ',"rwdPressMs":', ',"lastApFlag":', ',"lastApFlagMs":',
-            ',"apFlagCounts":[', 'R"JSON(]})JSON"',
-            "for (uint8_t i = 0; i < 16; ++i)",
-        ):
-            self.assertIn(token, self.dash)
-        for stray in (
-            '","vehicleRefusal":', '","rwdPressPending":', '","vehicleRefusals":',
-            '","rwdPressMs":', '","lastApFlag":', '","lastApFlagMs":',
-            '","apFlagCounts":',
-        ):
-            self.assertNotIn(stray, self.dash)
-
-        # UI: the new cell exists in source and generated surfaces (ids are
-        # unquoted in the generated file — bare-token asserts per convention).
-        self.assertIn('id="ap-rr-vehicle"', self.ui)
-        for surface in (self.ui, self.ui_gen):
-            self.assertIn("ap-rr-vehicle", surface)
-            self.assertIn("车辆响应", surface)
-            self.assertIn("未接受激活 · 车侧拒绝", surface)
-            self.assertIn("等待车辆响应", surface)
-
-        # Simulator mirrors the firmware /status shape (beta07 lesson: a
-        # missing simulator field makes poll() flip real UI state).
-        for token in (
-            '"vehicleRefusal": False',
-            '"rwdPressPending": False',
-            '"vehicleRefusals": 0',
-            '"rwdPressMs": 0',
-            '"lastApFlag": 0',
-            '"lastApFlagMs": 0',
-            '"apFlagCounts": [0] * 16',
-        ):
-            self.assertIn(token, self.simulator)
-
     def test_release_metadata_and_waveshare_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the waveshare single CAN standalone artifact."""
         version = self.version.strip()
         # Hard version pin (dual-CAN contract convention): an accidental
         # VERSION bump without the full release pass must fail loudly here.
-        self.assertEqual("1.18", version)
+        self.assertEqual("1.19", version)
         # VERSION accepts the project's two-part release form (1.10) and the
         # existing three-part form used by older releases.
         self.assertRegex(version, r"^\d+\.\d+(?:\.\d+)?$", f"VERSION file malformed: {version!r}")

@@ -720,40 +720,38 @@ static bool app_main_loop()
 #endif
 
 #ifdef ESP32_DASHBOARD
-// v1.18 AP cancel + re-request coordinator tick (8.3.6 anti-jerk; mirrors the
-// dual-CAN firmware's t2canApReRequestTick). The permit cascade is the
-// coordinator's license to run a handshake round: canActive / Legacy handler /
-// driver / OTA / abort guard. Losing any of them mid-round locks the round
-// fail-closed (permitLost) until the mode is reconfigured.
+// v1.19 JITTER procedure tick (8.3.6 anti-jerk; replaces the v1.18
+// coordinator's appApReRequestTick). The permit cascade is the procedure's
+// license to run: canActive / Legacy handler / driver / OTA / abort guard.
+// Losing any of them mid-procedure is a plain fullReset("permitLost") —
+// LittleGong has no failure taxonomy; the human retries.
 // The AP injection gate is deliberately NOT part of the permit expression:
-// setPermit is fail-closed, so a gate toggle mid-round would trigger a
-// permitLost lock requiring an 8.3.6-switch off->on cycle. Instead, gate
-// toggles flow through dashApplyRuntimeState -> configure(), which resets
-// to Disabled (roundActive == false, never permitLost) and re-arms
-// automatically when the gate reopens.
+// gate toggles flow through dashApplyRuntimeState -> configure(), which
+// resets cleanly and re-arms automatically when the gate reopens.
 // Runs on the CAN task: the same task that feeds it observations from
-// mcpDashOnFrame, keeping dashApReRequestCtrl single-threaded.
-static void appApReRequestTick()
+// mcpDashOnFrame, keeping dashJitterCtrl single-threaded.
+static void appJitterTick()
 {
     const uint32_t now = millis();
     const bool permit = canActive && dashLegacyHandlerActive() && appDriver &&
                         !vehicleOtaActive &&
                         (!dashHandler || dashHandler->abortGuard.allowsInjection());
-    dashApReRequestCtrl.setPermit(permit, "permitLost");
-    dashApReRequestCtrl.tick(now);
+    dashJitterCtrl.setPermit(permit);
     uint8_t data[8];
-    if (dashApReRequestCtrl.nextStalkFrame(now, data) == ApReRequestAction::None)
+    const JitterAction action = dashJitterCtrl.tick(now, data);
+    if (action == JitterAction::None)
         return;
-    // Synthetic stalk frame on the single CAN bus. nextStalkFrame() already
-    // encoded byte0 stalk bits, the rolling counter, and the CRC8-J1850 byte.
+    // Stalk045 carries a fully-encoded synthetic 0x045 (gesture bits, rolling
+    // counter, CRC8-J1850); Bit46Shot carries a patched native 0x3EE mux0
+    // clone (byte5 |= 0x43). Both go out on the single CAN bus.
     CanFrame f = {};
-    f.id = 0x045;
+    f.id = action == JitterAction::Stalk045 ? 0x045 : 0x3EE;
     f.dlc = 8;
     memcpy(f.data, data, 8);
     f.bus = CAN_BUS_DEFAULT;
     const bool ok = appDriver->send(f);
     dashRecordCanFrame(f, ok ? 'T' : 'E');
-    dashApReRequestCtrl.recordStalkTxResult(ok, millis());
+    dashJitterCtrl.recordTxResult(ok);
 }
 #endif // ESP32_DASHBOARD
 
@@ -764,7 +762,7 @@ static void app_can_task(void *)
     {
         bool processed = appLoop<TWAIDriver>();
 #ifdef ESP32_DASHBOARD
-        appApReRequestTick();
+        appJitterTick();
 #endif
 #ifdef DRIVER_T2CAN_DUAL
         t2canDrainSecondary();
