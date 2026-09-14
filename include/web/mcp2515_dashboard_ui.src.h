@@ -1503,7 +1503,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">启用 JITTER 程序</div>
-      <div class="setting-desc" id="jitter-desc">0x399 事件驱动：AP 啮合（事件3）进入武装期并单发一次 bit46 解锁帧；检测到 FSD 车道捕捉（事件6）立即合成 0x045 取消（提前约 200ms 打断甩动窗），等 AP 可用（事件2）后自动重挂。失败无重试、无锁定——程序静默复位，人工再开一轮。需先开启「AP 注入门控」；门控关闭时本开关仅记忆状态、机制不运行。</div>
+      <div class="setting-desc" id="jitter-desc">0x399 事件驱动：AP 啮合（事件3）进入武装期并单发一次 bit46 解锁帧；检测到 FSD 车道捕捉（事件6）立即合成 0x045 取消（提前约 200ms 打断甩动窗），等 AP 可用（事件2）后自动重挂；重挂前补发一次 bit46 刷新以提高 FSD 落地率。失败无重试、无锁定——程序静默复位，人工再开一轮。需先开启「AP 注入门控」；门控关闭时本开关仅记忆状态、机制不运行。</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-jitter-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
@@ -1512,7 +1512,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="diag-item"><span class="lbl">阶段 / 原因</span><span class="v-dim" id="jitter-phase">-- / --</span></div>
     <div class="diag-item"><span class="lbl">AP / 周期数</span><span class="v-dim" id="jitter-ap">-- / 0</span></div>
     <div class="diag-item"><span class="lbl">取消 / 重挂</span><span class="v-dim" id="jitter-bursts">0 / 0</span></div>
-    <div class="diag-item"><span class="lbl">bit46 / 0x045 帧</span><span class="v-dim" id="jitter-frames">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">FSD落地 / EAP落地</span><span class="v-dim" id="jitter-landing">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">bit46 / 刷新</span><span class="v-dim" id="jitter-frames">0 / 0</span></div>
     <div class="diag-item"><span class="lbl">TX 成/败</span><span class="v-dim" id="jitter-tx">0 / 0</span></div>
     <div class="diag-item"><span class="lbl">转向中止/复位</span><span class="v-dim" id="jitter-steer">0 / 0</span></div>
     <div class="diag-item"><span class="lbl">超时/故障复位</span><span class="v-dim" id="jitter-resets">0 / 0</span></div>
@@ -2672,6 +2673,8 @@ function updateDefensePage(d){
   var jt=d.jitter||{};
   var jtReasonMap={off:'关闭',idle:'待机',monitoring:'监控 AP 状态',
     arming:'武装期(5s)',cancel:'取消已发',cancelSeen:'取消生效',reRequest:'重挂已发',
+    reEngagedFsd:'FSD 落地',reEngagedEap:'EAP 落地',
+    sessionCap:'本行车段已站下',parked:'P 档·已复位',
     apGateOff:'AP 门控未开启',permitLost:'许可丢失·已复位',
     timeout:'超时·已复位',apError:'AP 故障·已复位',
     steerAbort:'转向>45°·中止突发',steerReset:'转向>90°·全复位'};
@@ -2680,7 +2683,10 @@ function updateDefensePage(d){
   setText('jitter-phase',(jtPhaseMap[jt.phase]||jt.phase||'--')+' / '+(jtReasonMap[jt.reason]||jt.reason||'--'));
   setText('jitter-ap',(jt.apState!=null?jt.apState:'--')+' / '+(jt.cycles||0));
   setText('jitter-bursts',(jt.cancels||0)+' / '+(jt.requests||0));
-  setText('jitter-frames',(jt.bit46Shots||0)+' / '+(jt.pumpFrames||0));
+  // v1.19.2: landing split — FSD(state6)/EAP(state3) after our 0x42;
+  // bit46 cell shows arming shots / pre-re-request refreshes.
+  setText('jitter-landing',(jt.reengagedFsd||0)+' / '+(jt.reengagedEap||0));
+  setText('jitter-frames',(jt.bit46Shots||0)+' / '+(jt.bit46Refreshes||0));
   setText('jitter-tx',(jt.txOk||0)+' / '+(jt.txFail||0));
   setText('jitter-steer',(jt.steerAborts||0)+' / '+(jt.steerResets||0));
   setText('jitter-resets',(jt.timeoutResets||0)+' / '+(jt.apErrorResets||0));

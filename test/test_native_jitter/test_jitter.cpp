@@ -587,9 +587,10 @@ void test_v1191_reengage_success_keeps_protection_alive()
     p.observeNative045(kNative045, 1000);
     reachDisengaging(p, 1010);
     p.observeDasStatus(1, 1040);
-    p.observeDasStatus(2, 1050); // one 0x42 re-request
-    p.observeDasStatus(3, 1200); // vehicle re-engaged (EAP)
-    TEST_ASSERT_EQUAL_STRING("reEngaged", p.diag().reason);
+    p.observeDasStatus(2, 1050);                               // one 0x42 re-request
+    p.observeDasStatus(3, 1200);                               // vehicle re-engaged (EAP)
+    TEST_ASSERT_EQUAL_STRING("reEngagedEap", p.diag().reason); // v1.19.2 split
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().reengagedEap);
     p.observeDasStatus(6, 1300);
     // Deadline from the event-2 refresh (6050) expires -> success billing.
     uint8_t out[8];
@@ -653,8 +654,121 @@ void test_v1191_park_midcycle_does_not_poison_next_session()
     TEST_ASSERT_EQUAL(JitterPhase::Arming, p.diag().phase);
 }
 
-// ─── diag snapshot ────────────────────────────────────────────────────
+// ─── v1.19.2 pre-re-request bit46 refresh + landing split ─────────────
 
+void test_v1192_refresh_fires_before_re_request_pump()
+{
+    // The event-2 re-request queues ONE bit46 refresh, emitted by tick()
+    // BEFORE the pump's first 0x42 frame (2026-09-14 field data: the arming
+    // shot's unlock latch does not survive our own cancel — ~70% of
+    // re-requests landed EAP). A 1<->2 bounce must not re-queue it.
+    DashJitterProcedure p;
+    arm(p);
+    uint8_t tmpl[8] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x00, 0x26, 0x27};
+    p.observeNative3eeMux0(tmpl, 900);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    uint8_t out[8];
+    TEST_ASSERT_EQUAL(JitterAction::Bit46Shot, p.tick(1015, out)); // arming shot
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().bit46Shots);
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050); // re-request queued + pump started
+    // No fresh 0x045 carrier yet: the ONLY emittable frame is the refresh.
+    TEST_ASSERT_EQUAL(JitterAction::Bit46Shot, p.tick(1055, out));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(tmpl, out, 5); // same clone builder
+    TEST_ASSERT_EQUAL_UINT8(0x43, out[5]);
+    TEST_ASSERT_EQUAL_UINT8(tmpl[6], out[6]);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().bit46Refreshes);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().bit46Shots); // counters stay split
+    // The first 0x42 rides the next fresh carrier — after the refresh.
+    p.observeNative045(kNative045, 1060);
+    TEST_ASSERT_EQUAL(JitterAction::Stalk045, p.tick(1065, out));
+    TEST_ASSERT_EQUAL_UINT8(0x42, out[0]);
+    // A 1<->2 bounce after the consumed request: no second refresh (the
+    // next emission is just the pump continuing its 16-frame budget).
+    p.observeDasStatus(1, 1080);
+    p.observeDasStatus(2, 1090);
+    p.observeNative045(kNative045, 1100);
+    TEST_ASSERT_EQUAL(JitterAction::Stalk045, p.tick(1105, out));
+    TEST_ASSERT_EQUAL_UINT8(0x42, out[0]);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().bit46Refreshes);
+}
+
+void test_v1192_refresh_skipped_without_fresh_template()
+{
+    // Fail-closed skip mirrors the arming one-shot: no fresh native 0x3EE
+    // template -> no refresh frame, but the 0x42 pump still runs.
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050);
+    uint8_t out[8];
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(1055, out));
+    TEST_ASSERT_EQUAL_UINT32(0, p.diag().bit46Refreshes);
+    p.observeNative045(kNative045, 1060);
+    TEST_ASSERT_EQUAL(JitterAction::Stalk045, p.tick(1065, out));
+    TEST_ASSERT_EQUAL_UINT8(0x42, out[0]);
+}
+
+void test_v1192_pending_refresh_dies_with_reset()
+{
+    // A queued refresh must not fire after the cycle dies: the deadline
+    // check runs before the emission blocks, and fullReset clears both
+    // one-shot queues.
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative3eeMux0(kNative045, 1000); // fresh template
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050);
+    p.observeSteerAngle(120.0f, true, 1060); // >90 deg -> full reset
+    uint8_t out[8];
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(1070, out));
+    TEST_ASSERT_EQUAL_UINT32(0, p.diag().bit46Refreshes);
+    TEST_ASSERT_EQUAL_UINT32(0, p.diag().bit46Shots);
+}
+
+void test_v1192_landing_split_fsd_vs_eap()
+{
+    // v1.19.1 counted BOTH states as one "reEngaged" success — exactly why
+    // the ~30% FSD rate was invisible in the field diag. The split keeps
+    // the session accounting (both landings clear failedCycles) but counts
+    // and reports them separately.
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050);
+    p.observeDasStatus(6, 1200); // FSD landing
+    DashJitterDiag d = p.diag();
+    TEST_ASSERT_EQUAL_UINT32(1, d.reengagedFsd);
+    TEST_ASSERT_EQUAL_UINT32(0, d.reengagedEap);
+    TEST_ASSERT_EQUAL_STRING("reEngagedFsd", d.reason);
+    uint8_t out[8];
+    p.observeNative045(kNative045, 6100);
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6101, out)); // timeout
+    TEST_ASSERT_EQUAL_UINT8(0, p.diag().failedCycles);        // success billing
+    // An EAP landing on the next cycle counts separately.
+    p.observeDasStatus(1, 6200); // Idle -> Normal
+    p.observeNative3eeMux0(kNative045, 6250);
+    p.observeDasStatus(3, 6300); // -> Arming
+    p.observeDasStatus(6, 6400); // -> Disengaging (cancel #2)
+    p.observeDasStatus(1, 6500);
+    p.observeDasStatus(2, 6600); // re-request #2
+    p.observeDasStatus(3, 6800); // EAP landing
+    d = p.diag();
+    TEST_ASSERT_EQUAL_UINT32(1, d.reengagedFsd);
+    TEST_ASSERT_EQUAL_UINT32(1, d.reengagedEap);
+    TEST_ASSERT_EQUAL_STRING("reEngagedEap", d.reason);
+    TEST_ASSERT_EQUAL_UINT32(2, d.requests);
+    TEST_ASSERT_EQUAL_UINT32(2, d.cancels);
+}
+
+// ─── diag snapshot ────────────────────────────────────────────────────
 void test_diag_reflects_armed_state()
 {
     DashJitterProcedure p;
@@ -726,6 +840,12 @@ int main()
     RUN_TEST(test_v1191_reengage_success_keeps_protection_alive);
     RUN_TEST(test_v1191_bounce_12_fires_one_request);
     RUN_TEST(test_v1191_park_midcycle_does_not_poison_next_session);
+
+    // v1.19.2 refresh + landing split
+    RUN_TEST(test_v1192_refresh_fires_before_re_request_pump);
+    RUN_TEST(test_v1192_refresh_skipped_without_fresh_template);
+    RUN_TEST(test_v1192_pending_refresh_dies_with_reset);
+    RUN_TEST(test_v1192_landing_split_fsd_vs_eap);
 
     // Diag
     RUN_TEST(test_diag_reflects_armed_state);

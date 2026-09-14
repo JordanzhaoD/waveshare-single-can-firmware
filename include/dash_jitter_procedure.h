@@ -81,6 +81,18 @@ inline uint8_t counterOf(const uint8_t data[8])
 //      session — it will not keep pushing a car that refused FSD. Park
 //      (gear signal) or a switch/gate toggle re-opens the budget.
 //
+// v1.19.2 FSD-landing amendment (ours; the anti-jerk cycle itself is
+// FROZEN since the 2026-09-14 field pass — hundreds of opens, zero jerks):
+// the same field session showed FSD starting only ~30% of attempts — the
+// rest landed EAP. The arming one-shot's unlock latch does not reliably
+// survive our own 0x41 cancel, so the 0x42 re-request re-enters a car that
+// re-picks the EAP branch. Fix: queue ONE bit46 refresh (same clone
+// builder, same <=5 s freshness gate, skipped fail-closed) when event 2
+// fires, emitted by tick() BEFORE the pump's first 0x42 frame. Landing
+// evidence is also split now: state 6 -> reengagedFsd, state 3 ->
+// reengagedEap (v1.19.1 counted both as one "reEngaged" success, which is
+// exactly why the ~30% was invisible in the diag counters).
+//
 // 0x488 abort (same lineage as our AbortGuard): while the procedure runs,
 // DAS_trackAngle = ((b0<<8|b1)&0x7FFF − 16384) × 0.1° is parsed; >45° aborts
 // the current burst, >90° resets the procedure. Our beta08 field data adds
@@ -111,12 +123,15 @@ struct DashJitterDiag
     bool permit = false;
     JitterPhase phase = JitterPhase::Inert;
     const char *reason = "off";
-    uint8_t apState = 0;     // last observed 0x399 low nibble
-    uint8_t cycles = 0;      // cancel/re-request cycles this period
-    uint32_t cancels = 0;    // cancel bursts started
-    uint32_t requests = 0;   // re-request bursts started
-    uint32_t bit46Shots = 0; // one-shot 0x3EE frames emitted
-    uint32_t pumpFrames = 0; // synthetic 0x045 frames emitted
+    uint8_t apState = 0;         // last observed 0x399 low nibble
+    uint8_t cycles = 0;          // cancel/re-request cycles this period
+    uint32_t cancels = 0;        // cancel bursts started
+    uint32_t requests = 0;       // re-request bursts started
+    uint32_t reengagedFsd = 0;   // landings in state 6 after our 0x42
+    uint32_t reengagedEap = 0;   // landings in state 3 after our 0x42
+    uint32_t bit46Shots = 0;     // arming one-shot 0x3EE frames emitted
+    uint32_t bit46Refreshes = 0; // v1.19.2 pre-re-request refresh frames
+    uint32_t pumpFrames = 0;     // synthetic 0x045 frames emitted
     uint32_t txOk = 0;
     uint32_t txFail = 0;
     uint32_t steerAborts = 0;   // >45° burst aborts
@@ -175,7 +190,8 @@ struct DashJitterProcedure
     uint8_t pumpNextCounter_ = 0;
 
     // ── pending one-shot ────────────────────────────────────────────────
-    bool bit46Queued_ = false;
+    bool bit46Queued_ = false;        // arming-entry one-shot (LittleGong)
+    bool bit46RefreshQueued_ = false; // v1.19.2 pre-re-request refresh (ours)
 
     // ── 0x488 steering angle ────────────────────────────────────────────
     float steerAngleDeg_ = 0.0f;
@@ -184,7 +200,10 @@ struct DashJitterProcedure
     // ── diagnostics counters ────────────────────────────────────────────
     uint32_t cancels_ = 0;
     uint32_t requests_ = 0;
+    uint32_t reengagedFsd_ = 0;
+    uint32_t reengagedEap_ = 0;
     uint32_t bit46Shots_ = 0;
+    uint32_t bit46Refreshes_ = 0;
     uint32_t pumpFrames_ = 0;
     uint32_t txOk_ = 0;
     uint32_t txFail_ = 0;
@@ -275,6 +294,7 @@ struct DashJitterProcedure
         cycles_ = 0;
         pumpActive_ = false;
         bit46Queued_ = false;
+        bit46RefreshQueued_ = false;
         deadlineMs_ = 0;
         engagedAfterRequest_ = false;
     }
@@ -389,19 +409,34 @@ struct DashJitterProcedure
                 if (cycles_ < 1)
                 {
                     ++cycles_;
+                    // v1.19.2: refresh the unlock right before the
+                    // re-request — the arming one-shot's latch does not
+                    // reliably survive our own 0x41 cancel (2026-09-14
+                    // field data: ~70% of re-requests landed EAP). tick()
+                    // emits this BEFORE the pump's first 0x42 frame; a
+                    // stale template skips it fail-closed.
+                    bit46RefreshQueued_ = true;
                     startPump(2, nowMs);
                     deadlineMs_ = nowMs + kDeadlineMs;
                     ++requests_;
                     reason_ = "reRequest";
                 }
             }
-            else if (apState == 3 || apState == 6)
+            else if (apState == 6)
             {
-                // v1.19.1 success evidence: AP engaged again after our
-                // re-request — the cycle did its job and does not count
-                // against the session budget.
+                // v1.19.2: landing evidence is split — state 6 is the FSD
+                // landing this whole procedure exists to produce.
                 engagedAfterRequest_ = true;
-                reason_ = "reEngaged";
+                ++reengagedFsd_;
+                reason_ = "reEngagedFsd";
+            }
+            else if (apState == 3)
+            {
+                // ...and state 3 is the EAP landing (v1.19.1 counted both
+                // as one success, hiding the ~30% FSD rate in the field).
+                engagedAfterRequest_ = true;
+                ++reengagedEap_;
+                reason_ = "reEngagedEap";
             }
             else if (apState >= 8 && apState <= 10)
             {
@@ -425,6 +460,21 @@ struct DashJitterProcedure
                                : 0;
     }
 
+    // Shared builder for both one-shot emissions (arming shot + v1.19.2
+    // refresh): patched clone of the freshest native 0x3EE mux0 template
+    // (byte5 |= 0x43 forces the unlock bit pattern LittleGong uses;
+    // counter/checksum ride the clone). Returns false when no template is
+    // fresh within kNative3eeMaxAgeMs — the emission is skipped fail-closed.
+    bool emitBit46Clone(uint8_t outData[8], uint32_t nowMs) const
+    {
+        if (!native3eeSeen_ ||
+            static_cast<uint32_t>(nowMs - native3eeMs_) > kNative3eeMaxAgeMs)
+            return false;
+        memcpy(outData, native3ee_, 8);
+        outData[5] = static_cast<uint8_t>(outData[5] | 0x43);
+        return true;
+    }
+
     // ── tick ────────────────────────────────────────────────────────────
     // Returns the next frame the caller should transmit (see JitterAction).
     JitterAction tick(uint32_t nowMs, uint8_t outData[8])
@@ -433,7 +483,9 @@ struct DashJitterProcedure
             return JitterAction::None;
 
         // Deadline expiry: arming that never saw lane capture, or a
-        // disengage cycle that ran out of road. Silent full reset.
+        // disengage cycle that ran out of road. Silent full reset. This
+        // runs BEFORE the one-shot blocks, so a reset also drops any
+        // pending emission (a queued refresh must not fire after death).
         if (procedureActive() && deadlineMs_ != 0 &&
             static_cast<int32_t>(nowMs - deadlineMs_) >= 0)
         {
@@ -441,21 +493,32 @@ struct DashJitterProcedure
             fullReset("timeout");
         }
 
-        // One-shot bit46 at the ARMING entry: patched clone of the freshest
-        // native 0x3EE mux0 template (byte5 |= 0x43 forces the unlock bit
-        // pattern LittleGong uses; counter/checksum ride the clone).
+        // One-shot bit46 at the ARMING entry (LittleGong).
         if (bit46Queued_)
         {
             bit46Queued_ = false;
-            if (native3eeSeen_ &&
-                static_cast<uint32_t>(nowMs - native3eeMs_) <= kNative3eeMaxAgeMs)
+            if (emitBit46Clone(outData, nowMs))
             {
-                memcpy(outData, native3ee_, 8);
-                outData[5] = static_cast<uint8_t>(outData[5] | 0x43);
                 ++bit46Shots_;
                 return JitterAction::Bit46Shot;
             }
             // No fresh template: skip the shot (fail-closed), cycle continues.
+        }
+
+        // v1.19.2 refresh: one more bit46 clone right before the pump's
+        // first 0x42 frame — emitted here (above the pump block) so the
+        // unlock is on the bus tens of milliseconds ahead of the synthetic
+        // re-request, the same gap LittleGong's arming shot has from the
+        // user's own double-pull.
+        if (bit46RefreshQueued_)
+        {
+            bit46RefreshQueued_ = false;
+            if (emitBit46Clone(outData, nowMs))
+            {
+                ++bit46Refreshes_;
+                return JitterAction::Bit46Shot;
+            }
+            // Stale template: skipped fail-closed, the 0x42 pump still runs.
         }
 
         // Carrier-locked 0x045 pump: only transmit riding right behind a
@@ -513,7 +576,10 @@ struct DashJitterProcedure
         d.cycles = cycles_;
         d.cancels = cancels_;
         d.requests = requests_;
+        d.reengagedFsd = reengagedFsd_;
+        d.reengagedEap = reengagedEap_;
         d.bit46Shots = bit46Shots_;
+        d.bit46Refreshes = bit46Refreshes_;
         d.pumpFrames = pumpFrames_;
         d.txOk = txOk_;
         d.txFail = txFail_;

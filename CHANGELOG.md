@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.19.2] - 2026-09-14
+
+### Added
+- **Pre-re-request bit46 refresh** (`include/dash_jitter_procedure.h`, ~15 effective lines): when the Disengaging event-2 branch fires the 0x42 re-request, it queues ONE additional 0x3EE bit46 clone (same patched-clone builder as the arming one-shot, same ≤5000 ms native-template freshness gate), emitted by `tick()` BEFORE the pump's first 0x42 frame — so the unlock is on the bus tens of milliseconds ahead of the synthetic re-request, mirroring the gap LittleGong's arming shot has from the user's own double-pull. Rationale (2026-09-14 field pass): anti-jerk behavior was perfect (hundreds of opens, zero jerks — the cycle core is FROZEN, untouched by this change), but FSD started on only ~30% of attempts — the rest landed EAP or failed. Ledger arithmetic (38 cancels / 36 re-requests / 74 clean 16-frame bursts / TX 1222:0) puts the failure mass squarely in re-engage quality, not transport: the arming shot's unlock latch does not reliably survive our own 0x41 cancel, so the re-request re-enters a car that re-picks the EAP branch. The refresh is skipped fail-closed on a stale template (the pump still runs); a queued refresh dies with any reset (deadline check runs before the emission blocks); a 1↔2 bounce cannot re-queue it (same `cycles_ < 1` gate as the request itself). Rides the existing `Bit46Shot` send path in `appJitterTick` — zero `main.cpp` changes.
+- **FSD/EAP landing split in the diag** — v1.19.1 counted both post-request states 3 and 6 as one `reEngaged` success, which is exactly why the ~30% FSD rate was invisible in the field counters. State 6 now counts `reengagedFsd` (reason `reEngagedFsd`), state 3 counts `reengagedEap` (reason `reEngagedEap`); both still clear the failure streak identically (success billing unchanged). New `/status` + `/defense_config` keys `reengagedFsd` / `reengagedEap` / `bit46Refreshes` (chain-rule-disciplined), simulator mirror, and a defense-card cell (FSD落地 / EAP落地; the bit46 row shows one-shot / refresh split — `bit46Refreshes` should track `requests`). `env:native_jitter` +4 tests (refresh-before-pump ordering + bounce immunity, stale-template skip, pending-refresh-dies-with-reset, landing split), 39/39.
+- Mechanism write-up for the (frozen) anti-jerk solution: `docs/anti-jerk-jitter-solution-20260914.md` (problem, v1.19.1 mechanism, field ledger, diag reading guide).
+
+### Caveats
+- The anti-jerk cycle itself is untouched (field-perfect); the refresh only adds one frame ahead of the re-request. Whether it lifts the FSD start rate is **not yet vehicle-verified** — next field session reads the new landing counters directly (the success rate is finally measurable instead of inferred). 0x488 remains admitted but in evidence; 「不甩」 remains a single-vehicle small sample.
+
 ## [1.19.1] - 2026-09-14
 
 ### Fixed

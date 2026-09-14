@@ -2591,8 +2591,19 @@ static void appendJitterDiagJson(String &j)
     j += jt.cancels;
     j += R"JSON(,"requests":)JSON";
     j += jt.requests;
+    // v1.19.2 landing split: state 6 after our 0x42 is the FSD landing this
+    // procedure exists for; state 3 is the EAP landing (no-landing count is
+    // requests - reengagedFsd - reengagedEap).
+    j += R"JSON(,"reengagedFsd":)JSON";
+    j += jt.reengagedFsd;
+    j += R"JSON(,"reengagedEap":)JSON";
+    j += jt.reengagedEap;
     j += R"JSON(,"bit46Shots":)JSON";
     j += jt.bit46Shots;
+    // v1.19.2 pre-re-request refresh frames (distinct from arming shots so
+    // a field session can verify refreshes ~= requests directly).
+    j += R"JSON(,"bit46Refreshes":)JSON";
+    j += jt.bit46Refreshes;
     j += R"JSON(,"pumpFrames":)JSON";
     j += jt.pumpFrames;
     j += R"JSON(,"txOk":)JSON";

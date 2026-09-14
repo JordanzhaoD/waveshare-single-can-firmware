@@ -2768,6 +2768,12 @@ class DashboardApiContractTests(unittest.TestCase):
         ):
             with self.subTest(constant=token):
                 self.assertIn(token, module_src)
+        # v1.19.2: ONE bit46 refresh queued at event 2 (emitted before the
+        # pump's first 0x42) + the FSD/EAP landing split (field data showed
+        # ~30% FSD landings; v1.19.1 counted both states as one success).
+        self.assertIn("bit46RefreshQueued_ = true;", module_src)
+        self.assertIn("++reengagedFsd_;", module_src)
+        self.assertIn("++reengagedEap_;", module_src)
         # NVS persistence: short key, default off, saved and loaded, plus the
         # v1.18 key cleanup.
         self.assertIn('prefs.putBool("jtr_on", dashJitterEnabled)', self.dash)
@@ -2824,7 +2830,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('"jitter":{"requested"', self.dash)
         for bare in (
             ',"effective":', ',"apGateOpen":', ',"permit":', ',"apState":',
-            ',"cycles":', ',"cancels":', ',"requests":', ',"bit46Shots":',
+            ',"cycles":', ',"cancels":', ',"requests":',
+            ',"reengagedFsd":', ',"reengagedEap":', ',"bit46Shots":',
+            ',"bit46Refreshes":',
             ',"pumpFrames":', ',"txOk":', ',"txFail":', ',"steerAborts":',
             ',"steerResets":', ',"apErrorResets":', ',"timeoutResets":',
             ',"failedCycles":',
@@ -2834,8 +2842,9 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(bare, self.dash)
         for stray in (
             '","effective":', '","apGateOpen":', '","permit":', '","cycles":',
-            '","cancels":', '","requests":', '","pumpFrames":', '","txOk":',
-            '","txFail":', '","steerAborts":', '","timeoutResets":',
+            '","cancels":', '","requests":', '","reengagedFsd":',
+            '","reengagedEap":', '","bit46Refreshes":', '","pumpFrames":',
+            '","txOk":', '","txFail":', '","steerAborts":', '","timeoutResets":',
         ):
             with self.subTest(chain_stray=stray):
                 self.assertNotIn(stray, self.dash)
@@ -2846,6 +2855,7 @@ class DashboardApiContractTests(unittest.TestCase):
             self.assertIn("def-jitter-tgl", surface)
             self.assertIn("jitter-effective", surface)
             self.assertIn("jitter-phase", surface)
+            self.assertIn("jitter-landing", surface)
             self.assertIn("jtReasonMap", surface)
             self.assertIn("AP 门控未开启", surface)
             self.assertIn("jitter:jtTgl&&jtTgl.checked?'1':'0'", surface)
@@ -2856,6 +2866,9 @@ class DashboardApiContractTests(unittest.TestCase):
             '"requested": self.jitter,',
             '"phase": "inert",',
             '"reason": "apGateOff" if self.jitter else "off",',
+            '"reengagedFsd": 0,',
+            '"reengagedEap": 0,',
+            '"bit46Refreshes": 0,',
             '"failedCycles": 0,',
             '"jitter": STATE.jitter,',
             'STATE.jitter = self.form_bool(form["jitter"])',
@@ -2912,7 +2925,7 @@ class DashboardApiContractTests(unittest.TestCase):
         version = self.version.strip()
         # Hard version pin (dual-CAN contract convention): an accidental
         # VERSION bump without the full release pass must fail loudly here.
-        self.assertEqual("1.19.1", version)
+        self.assertEqual("1.19.2", version)
         # VERSION accepts the project's two-part release form (1.10) and the
         # existing three-part form used by older releases.
         self.assertRegex(version, r"^\d+\.\d+(?:\.\d+)?$", f"VERSION file malformed: {version!r}")
