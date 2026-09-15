@@ -74,12 +74,12 @@ inline uint8_t counterOf(const uint8_t data[8])
 //      a state CHANGE runs the machine now.
 //   2. The event-2 re-request passes the same `cycles_ < 1` gate as event
 //      6 — one re-request per period, so a 1<->2 bounce cannot re-fire it.
-//   3. Session give-up (ours, not LittleGong's): a disengage cycle that
-//      ends WITHOUT the vehicle re-engaging (states 3/6 after our 0x42)
-//      counts as one failed cycle. After kSessionFailCap consecutive
-//      failed cycles the machine stands down for the rest of the drive
-//      session — it will not keep pushing a car that refused FSD. Park
-//      (gear signal) or a switch/gate toggle re-opens the budget.
+//   3. Session give-up (ours, not LittleGong's; DELETED in v1.19.3 — see
+//      the amendments below): a disengage cycle that ends WITHOUT the
+//      vehicle re-engaging (states 3/6 after our 0x42) counted as one
+//      failed cycle; after one such cycle the machine stood down for the
+//      rest of the drive session. Park (gear signal) or a switch/gate
+//      toggle re-opened the budget.
 //
 // v1.19.2 FSD-landing amendment (ours; the anti-jerk cycle itself is
 // FROZEN since the 2026-09-14 field pass — hundreds of opens, zero jerks):
@@ -92,6 +92,29 @@ inline uint8_t counterOf(const uint8_t data[8])
 // evidence is also split now: state 6 -> reengagedFsd, state 3 ->
 // reengagedEap (v1.19.1 counted both as one "reEngaged" success, which is
 // exactly why the ~30% was invisible in the diag counters).
+//
+// v1.19.3 FSD-landing amendments (2026-09-15 dual-CAN five-file field
+// pass, 21/21 cycles with zero jerk — the cancel core stays FROZEN):
+//   1. WINDOW HOLD. 19 of 21 cycles saw the car ignore the 0x42
+//      re-request: the unlock latch had been washed out during the window
+//      (native 0x3EE mux0 carries bit46 cleared — zero 0x43 frames in the
+//      captures — and our base-path rewrite is paused while the procedure
+//      runs, leaving only the shot + refresh frames in-window). From the
+//      re-request until landing or any reset, tick() now keeps a fresh
+//      clone on the bus at a >=kHoldGapMs pace; the LittleGong equivalent
+//      is its continuous core-product bit46 injection.
+//   2. The Disengaging wait window widens 5 s -> 10 s (kDisengWaitMs):
+//      measured vehicle response to the re-request runs 2.8..7.1 s, so
+//      the old deadline cut late landings out of the accounting. Arming
+//      keeps the 5 s deadline.
+//   3. The v1.19.1 session cap is DELETED. It billed "timeout without
+//      landing" as failure and then stood down — in the field that left
+//      3..4 lane captures completely unprotected while the car kept
+//      engaging. Every human-initiated engagement is protected now;
+//      failedCycles_ survives as a pure diagnostic (Park / toggle still
+//      clear it). The v1.19 unbounded-re-request incident stays dead:
+//      edge semantics + the cycles_<1 gate bound each period to one
+//      request regardless of the cap.
 //
 // 0x488 abort (same lineage as our AbortGuard): while the procedure runs,
 // DAS_trackAngle = ((b0<<8|b1)&0x7FFF − 16384) × 0.1° is parsed; >45° aborts
@@ -131,6 +154,7 @@ struct DashJitterDiag
     uint32_t reengagedEap = 0;   // landings in state 3 after our 0x42
     uint32_t bit46Shots = 0;     // arming one-shot 0x3EE frames emitted
     uint32_t bit46Refreshes = 0; // v1.19.2 pre-re-request refresh frames
+    uint32_t bit46Holds = 0;     // v1.19.3 window-hold frames
     uint32_t pumpFrames = 0;     // synthetic 0x045 frames emitted
     uint32_t txOk = 0;
     uint32_t txFail = 0;
@@ -153,10 +177,14 @@ struct DashJitterProcedure
     // 0x3EE one-shot template freshness (fail-closed: no fresh template ->
     // skip the shot; 1 Hz mux0 carrier makes ~1 s the normal age).
     static constexpr uint32_t kNative3eeMaxAgeMs = 5000;
-    // v1.19.1 session give-up: consecutive failed disengage cycles before
-    // the machine stands down for the rest of the drive session (Park or
-    // a switch/gate toggle re-opens the budget).
-    static constexpr uint8_t kSessionFailCap = 1;
+    // v1.19.3 window hold: minimum spacing between consecutive bit46 hold
+    // frames (native mux0 carrier ~1 Hz; 200 ms keeps the unlock latch
+    // continuously asserted through the wait window).
+    static constexpr uint32_t kHoldGapMs = 200;
+    // v1.19.3 Disengaging wait window (Arming keeps kDeadlineMs): measured
+    // vehicle response to the 0x42 re-request runs 2.8..7.1 s, so the old
+    // 5 s deadline cut late landings out of the accounting.
+    static constexpr uint32_t kDisengWaitMs = 10000;
 
     // ── configuration ───────────────────────────────────────────────────
     bool enabled_ = false;
@@ -193,6 +221,10 @@ struct DashJitterProcedure
     bool bit46Queued_ = false;        // arming-entry one-shot (LittleGong)
     bool bit46RefreshQueued_ = false; // v1.19.2 pre-re-request refresh (ours)
 
+    // ── v1.19.3 window hold ─────────────────────────────────────────────
+    bool holdActive_ = false;   // re-request sent; keep bit46 asserted
+    uint32_t lastHoldTxMs_ = 0; // last successful hold emission
+
     // ── 0x488 steering angle ────────────────────────────────────────────
     float steerAngleDeg_ = 0.0f;
     bool steerValid_ = false;
@@ -204,6 +236,7 @@ struct DashJitterProcedure
     uint32_t reengagedEap_ = 0;
     uint32_t bit46Shots_ = 0;
     uint32_t bit46Refreshes_ = 0;
+    uint32_t bit46Holds_ = 0;
     uint32_t pumpFrames_ = 0;
     uint32_t txOk_ = 0;
     uint32_t txFail_ = 0;
@@ -225,7 +258,7 @@ struct DashJitterProcedure
         if (!enabled_)
         {
             fullReset("off");
-            failedCycles_ = 0; // a switch toggle re-opens the session budget
+            failedCycles_ = 0; // diag only (v1.19.3): toggle = fresh session
         }
         else if (!gateOpen_)
         {
@@ -257,9 +290,9 @@ struct DashJitterProcedure
 
     // Drive-session boundary (v1.19.1): the gear signal (P) is the physical
     // end of a session. A rising Park edge ends any running cycle WITHOUT
-    // letting it count against the next session and re-opens the budget —
-    // order matters, the reset's accounting runs first (this is the exit
-    // path drivers actually used in the field incident).
+    // letting it count against the next session and clears the diagnostic
+    // streak — order matters, the reset's accounting runs first (this is
+    // the exit path drivers actually used in the field incident).
     void setVehicleParked(bool parked)
     {
         if (parked == parked_)
@@ -275,11 +308,14 @@ struct DashJitterProcedure
 
     void fullReset(const char *reason)
     {
-        // v1.19.1 session accounting: a disengage cycle that never saw the
-        // vehicle re-engage (states 3/6) after our request is one failed
-        // cycle; one that did re-engage clears the failure streak. Arming
-        // resets are neutral (no cancel was ever sent). failedCycles_
-        // itself survives every reset — only Park or a toggle clears it.
+        // v1.19.3: the accounting below is DIAGNOSTIC ONLY (the v1.19.1
+        // session cap that consumed it is deleted — in the field it stood
+        // the machine down and left subsequent captures unprotected). A
+        // disengage cycle that never saw the vehicle re-engage (states 3/6)
+        // after our request is one failed cycle; one that did re-engage
+        // clears the streak. Arming resets are neutral (no cancel was ever
+        // sent). failedCycles_ itself survives every reset — only Park or
+        // a toggle clears it.
         if (phase_ == JitterPhase::Disengaging)
         {
             if (engagedAfterRequest_)
@@ -295,6 +331,8 @@ struct DashJitterProcedure
         pumpActive_ = false;
         bit46Queued_ = false;
         bit46RefreshQueued_ = false;
+        holdActive_ = false;
+        lastHoldTxMs_ = 0;
         deadlineMs_ = 0;
         engagedAfterRequest_ = false;
     }
@@ -360,21 +398,14 @@ struct DashJitterProcedure
         case JitterPhase::Normal:
             if (apState == 3 && permit_)
             {
-                // v1.19.1 session cap: after kSessionFailCap consecutive
-                // failed cycles the machine stands down for the rest of the
-                // drive session. Staying in Normal is fully passive — no
-                // one-shot, no cancel, no re-request.
-                if (failedCycles_ >= kSessionFailCap)
-                {
-                    reason_ = "sessionCap";
-                }
-                else
-                {
-                    phase_ = JitterPhase::Arming;
-                    deadlineMs_ = nowMs + kDeadlineMs;
-                    bit46Queued_ = true;
-                    reason_ = "arming";
-                }
+                // v1.19.3: no session cap — every human-initiated
+                // engagement is protected (the field cap left 3..4 captures
+                // bare; each cycle is human-initiated anyway, the machine
+                // cannot loop on its own). failedCycles_ stays diagnostic.
+                phase_ = JitterPhase::Arming;
+                deadlineMs_ = nowMs + kDeadlineMs;
+                bit46Queued_ = true;
+                reason_ = "arming";
             }
             break;
         case JitterPhase::Arming:
@@ -384,7 +415,7 @@ struct DashJitterProcedure
                 // the lane-capture entry, ~200 ms ahead of the beta08 jerk
                 // window (state6 + 200..330 ms).
                 phase_ = JitterPhase::Disengaging;
-                deadlineMs_ = nowMs + kDeadlineMs;
+                deadlineMs_ = nowMs + kDisengWaitMs; // v1.19.3: 10 s window
                 startPump(1, nowMs);
                 ++cancels_;
                 reason_ = "cancel";
@@ -417,7 +448,14 @@ struct DashJitterProcedure
                     // stale template skips it fail-closed.
                     bit46RefreshQueued_ = true;
                     startPump(2, nowMs);
-                    deadlineMs_ = nowMs + kDeadlineMs;
+                    deadlineMs_ = nowMs + kDisengWaitMs;
+                    // v1.19.3 window hold: with the re-request sent, keep
+                    // asserting the unlock until the vehicle lands — the
+                    // 2026-09-15 field pass had 19/21 re-requests ignored
+                    // while the latch sat washed out. The 10 s deadline
+                    // above spans the measured 2.8..7.1 s response band.
+                    holdActive_ = true;
+                    lastHoldTxMs_ = nowMs;
                     ++requests_;
                     reason_ = "reRequest";
                 }
@@ -427,6 +465,7 @@ struct DashJitterProcedure
                 // v1.19.2: landing evidence is split — state 6 is the FSD
                 // landing this whole procedure exists to produce.
                 engagedAfterRequest_ = true;
+                holdActive_ = false; // v1.19.3: landed — hold stands down
                 ++reengagedFsd_;
                 reason_ = "reEngagedFsd";
             }
@@ -435,6 +474,7 @@ struct DashJitterProcedure
                 // ...and state 3 is the EAP landing (v1.19.1 counted both
                 // as one success, hiding the ~30% FSD rate in the field).
                 engagedAfterRequest_ = true;
+                holdActive_ = false; // v1.19.3: landed — hold stands down
                 ++reengagedEap_;
                 reason_ = "reEngagedEap";
             }
@@ -521,6 +561,26 @@ struct DashJitterProcedure
             // Stale template: skipped fail-closed, the 0x42 pump still runs.
         }
 
+        // v1.19.3 window hold: keep the bit46 unlock asserted through the
+        // wait window — the 2026-09-15 five-file field pass showed the car
+        // ignoring the 0x42 re-request in 19/21 cycles whenever the unlock
+        // latch had been washed out (native mux0 carries bit46 cleared; the
+        // base path is paused while the procedure runs). One fresh-template
+        // clone every >=kHoldGapMs until the vehicle lands (3/6) or any
+        // reset kills holdActive_. A stale template is skipped silently and
+        // retried at the next eligible tick (no frame goes out).
+        if (holdActive_ && phase_ == JitterPhase::Disengaging &&
+            !engagedAfterRequest_ &&
+            static_cast<uint32_t>(nowMs - lastHoldTxMs_) >= kHoldGapMs)
+        {
+            if (emitBit46Clone(outData, nowMs))
+            {
+                lastHoldTxMs_ = nowMs;
+                ++bit46Holds_;
+                return JitterAction::Bit46Shot;
+            }
+        }
+
         // Carrier-locked 0x045 pump: only transmit riding right behind a
         // fresh native frame (<47 ms old), >=3 ms apart, <=16 per burst.
         if (pumpActive_)
@@ -580,6 +640,7 @@ struct DashJitterProcedure
         d.reengagedEap = reengagedEap_;
         d.bit46Shots = bit46Shots_;
         d.bit46Refreshes = bit46Refreshes_;
+        d.bit46Holds = bit46Holds_;
         d.pumpFrames = pumpFrames_;
         d.txOk = txOk_;
         d.txFail = txFail_;

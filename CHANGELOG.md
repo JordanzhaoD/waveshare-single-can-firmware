@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.19.3] - 2026-09-15
+
+### Changed
+
+- **FSD-landing amendments (v1.19.3), synced verbatim with dual-CAN 4.5.0-beta16** — the trigger evidence is the dual-CAN beta15 field pass (same JITTER machine, same car, same stalk; five CSV captures, 21 anti-jerk cycles): the cancel core was perfect (21/21 cancels landed +32..235 ms inside the jerk window, TX 935:0, zero steering aborts — **the cycle core stays FROZEN, constants/timing untouched**), but the car ignored the 0x42 re-request in 19/21 cycles (direct FSD landing only 2/21 = 7.4%; the driver re-stalked 3-7 s later — the native g2 gesture frames are in the captures, and the machine's wait window mis-billed those as `reengagedEap`). LittleGong alignment (disassembly): its machine does NOTHING between cancel and re-request either — the machines are verbatim-equivalent; the difference is **in-window bit46 continuity** (its core-product injection runs continuously; our base path pauses while the procedure runs, and the native 0x3EE mux0 carrier carries bit46 cleared — zero 0x43 R-frames across all five files). Three amendments, all in `include/dash_jitter_procedure.h`:
+  1. **WINDOW HOLD** — after the 0x42 re-request fires, `tick()` keeps a fresh patched 0x3EE clone on the bus at a ≥`kHoldGapMs`=200 ms pace until the vehicle lands (state 3/6) or any reset kills `holdActive_`; a stale template is skipped silently fail-closed and retried at the next eligible tick. Rides the existing `Bit46Shot` path in `appJitterTick` (zero `main.cpp` changes). New diag `bit46Holds` (22→23 keys) + UI cell 「bit46 / 刷新 / 保持」 — on an unresponsive car it reads ≈ window/200 ms, ~0 once the car lands (a live in-field verdict on whether the car is eating the re-request).
+  2. **Disengaging wait window 5 s → 10 s** (`kDisengWaitMs`; Arming keeps the 5 s deadline): measured vehicle response to the re-request runs 2.8..7.1 s, so the old deadline cut late landings out of the accounting and interrupted the hold.
+  3. **The v1.19.1 session cap is DELETED** — it billed "timeout without landing" as failure and stood the machine down for the rest of the drive session; in the field that left 3-4 lane captures completely unprotected while the car kept engaging. Every human-initiated engagement is protected now; `failedCycles_` survives as a pure diagnostic (Park / toggle still clear it); the `sessionCap` reason and its UI map entry are removed. The v1.19 unbounded-re-request incident stays dead regardless: edge semantics + the `cycles_ < 1` gate bound each period to one request.
+- UI: the defense-card badge now reads **「实车验证防甩 · 单车样本」** (was 「实验 · 未验证实车防甩」) — 2026-09-15, one car (CN 2026.8.3.6), 21/21 cycles, zero jerk; the copy states the hold cadence, the 10 s window, and the no-session-cap semantics.
+- `env:native_jitter` 39 → **45 cases**: hold lifecycle (200 ms pacing until landing, dies with any reset, stale-template silent skip that does not block the pump), the split deadlines (Disengaging 10 s / Arming 5 s), the session-cap deletion regression (a failed cycle no longer stands the machine down — event 3 re-arms), and a +7 s late landing now counted inside the widened window; the v1.19.1 incident replay is updated to the new deadlines and the deleted cap (the level feed still fires exactly one 0x42 burst, 16-frame cap, one-shot deadline expiry).
+- Contract pins migrated: `kHoldGapMs`/`kDisengWaitMs` constant pins + `kSessionFailCap`/`"sessionCap"` extinction asserts, the 23-key chain-rule emission (bare `,"bit46Holds":` / stray `","bit46Holds":` both pinned), UI mirror (badge + triple cell + no sessionCap entry), simulator `"bit46Holds": 0,`; hard version pin → 1.19.3.
+
+### Caveats
+
+- The hold's landing-rate effect is **not yet vehicle-verified on this firmware** — the evidence chain is the dual-CAN beta15 field data plus the mechanism parity (verbatim-same machine). Next field session reads the three numbers directly: direct-FSD landings (target ≥50%), `bit46Holds` (≈window/200 ms on an unresponsive car, stops at landing), and `failedCycles` (diagnostic only now). If the direct rate is still <50%, the beta17预案 is a double-pull emulation (2-5 frames @ 40-100 ms, the measured native gesture shape) — deliberately NOT in this release.
+- 「不甩」 remains a single-vehicle small sample (same car, same driver); not generalized across vehicles.
+- Cancel-pump constants/timing are untouched (47 ms / 3 ms / 16 frames / CRC frozen); no post-landing auto-retry (the v1.19 incident-shaped prohibition).
+
 ## [1.19.2] - 2026-09-14
 
 ### Added

@@ -2604,6 +2604,11 @@ static void appendJitterDiagJson(String &j)
     // a field session can verify refreshes ~= requests directly).
     j += R"JSON(,"bit46Refreshes":)JSON";
     j += jt.bit46Refreshes;
+    // v1.19.3 window-hold frames: landing support — while the car sits on
+    // the re-request the unlock stays asserted (~window/kHoldGapMs frames
+    // on an unresponsive car, 0 once it lands).
+    j += R"JSON(,"bit46Holds":)JSON";
+    j += jt.bit46Holds;
     j += R"JSON(,"pumpFrames":)JSON";
     j += jt.pumpFrames;
     j += R"JSON(,"txOk":)JSON";

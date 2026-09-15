@@ -2763,11 +2763,18 @@ class DashboardApiContractTests(unittest.TestCase):
             "static constexpr uint8_t kPumpMaxFrames = 16;",
             "static constexpr float kSteerAbortDeg = 45.0f;",
             "static constexpr float kSteerResetDeg = 90.0f;",
-            # v1.19.1 session give-up cap (the EAP-loop field fix).
-            "static constexpr uint8_t kSessionFailCap = 1;",
+            # v1.19.3 window hold + widened Disengaging wait (Arming keeps
+            # kDeadlineMs above).
+            "static constexpr uint32_t kHoldGapMs = 200;",
+            "static constexpr uint32_t kDisengWaitMs = 10000;",
         ):
             with self.subTest(constant=token):
                 self.assertIn(token, module_src)
+        # v1.19.3: the session cap is DELETED (in the field it stood the
+        # machine down and left subsequent captures unprotected; edge
+        # semantics + the cycles_<1 gate already bound the machine).
+        self.assertNotIn("kSessionFailCap", module_src)
+        self.assertNotIn('"sessionCap"', module_src)
         # v1.19.2: ONE bit46 refresh queued at event 2 (emitted before the
         # pump's first 0x42) + the FSD/EAP landing split (field data showed
         # ~30% FSD landings; v1.19.1 counted both states as one success).
@@ -2832,7 +2839,7 @@ class DashboardApiContractTests(unittest.TestCase):
             ',"effective":', ',"apGateOpen":', ',"permit":', ',"apState":',
             ',"cycles":', ',"cancels":', ',"requests":',
             ',"reengagedFsd":', ',"reengagedEap":', ',"bit46Shots":',
-            ',"bit46Refreshes":',
+            ',"bit46Refreshes":', ',"bit46Holds":',
             ',"pumpFrames":', ',"txOk":', ',"txFail":', ',"steerAborts":',
             ',"steerResets":', ',"apErrorResets":', ',"timeoutResets":',
             ',"failedCycles":',
@@ -2843,7 +2850,7 @@ class DashboardApiContractTests(unittest.TestCase):
         for stray in (
             '","effective":', '","apGateOpen":', '","permit":', '","cycles":',
             '","cancels":', '","requests":', '","reengagedFsd":',
-            '","reengagedEap":', '","bit46Refreshes":', '","pumpFrames":',
+            '","reengagedEap":', '","bit46Refreshes":', '","bit46Holds":', '","pumpFrames":',
             '","txOk":', '","txFail":', '","steerAborts":', '","timeoutResets":',
         ):
             with self.subTest(chain_stray=stray):
@@ -2858,6 +2865,11 @@ class DashboardApiContractTests(unittest.TestCase):
             self.assertIn("jitter-landing", surface)
             self.assertIn("jtReasonMap", surface)
             self.assertIn("AP 门控未开启", surface)
+            # v1.19.3: field-verified badge (single-car sample) + the hold
+            # cell; the sessionCap reason is gone with the gate.
+            self.assertIn("实车验证防甩 · 单车样本", surface)
+            self.assertIn("bit46 / 刷新 / 保持", surface)
+            self.assertNotIn("sessionCap", surface)
             self.assertIn("jitter:jtTgl&&jtTgl.checked?'1':'0'", surface)
         self.assertIn('id="def-jitter-tgl"', self.ui)
         # Simulator mirrors the firmware /status shape (beta07 lesson).
@@ -2869,6 +2881,7 @@ class DashboardApiContractTests(unittest.TestCase):
             '"reengagedFsd": 0,',
             '"reengagedEap": 0,',
             '"bit46Refreshes": 0,',
+            '"bit46Holds": 0,',
             '"failedCycles": 0,',
             '"jitter": STATE.jitter,',
             'STATE.jitter = self.form_bool(form["jitter"])',
@@ -2925,7 +2938,7 @@ class DashboardApiContractTests(unittest.TestCase):
         version = self.version.strip()
         # Hard version pin (dual-CAN contract convention): an accidental
         # VERSION bump without the full release pass must fail loudly here.
-        self.assertEqual("1.19.2", version)
+        self.assertEqual("1.19.3", version)
         # VERSION accepts the project's two-part release form (1.10) and the
         # existing three-part form used by older releases.
         self.assertRegex(version, r"^\d+\.\d+(?:\.\d+)?$", f"VERSION file malformed: {version!r}")
